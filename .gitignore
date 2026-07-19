@@ -1,0 +1,40 @@
+# Secrets
+secrets/
+.env
+*.key
+
+# MetaTrader generated files
+*.ex5
+*.log
+MQL5/Logs/
+MQL5/Profiles/
+MQL5/Files/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Large data and reports
+*.hcc
+*.hc
+*.fxt
+*.ticks
+04_NEWS_SYSTEM/cache/*
+06_MARKET_DATA/tick_data/*
+08_RESULTS/raw/*
+
+# Copyrighted reference books/PDFs: SOURCE_LIBRARY.md forbids committing full
+# copyrighted books/courses to the repository. Keep them local only.
+02_STRATEGY_KNOWLEDGE/raw_materials/**/*.pdf
+*.pdf
+
+# Legacy pre-audit flat folders: superseded by 01_BASELINE/ and
+# 02_STRATEGY_KNOWLEDGE/raw_materials/ (Phase 0 restructure, TASK-001).
+# Left on disk untouched as extra unmodified proof, not tracked in git.
+/01 BASELINEEA V637/
+/01 BASELINEEA V811/
+/EA Files/
+/screenshots of past trades/
