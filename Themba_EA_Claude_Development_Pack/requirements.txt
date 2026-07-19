@@ -1,0 +1,16 @@
+pandas
+numpy
+matplotlib
+scipy
+scikit-learn
+statsmodels
+jupyterlab
+MetaTrader5
+pyarrow
+pydantic
+requests
+lxml
+openpyxl
+onnx
+onnxruntime
+skl2onnx

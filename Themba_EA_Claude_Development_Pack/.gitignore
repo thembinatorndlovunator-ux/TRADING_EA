@@ -1,0 +1,27 @@
+# Secrets
+secrets/
+.env
+*.key
+
+# MetaTrader generated files
+*.ex5
+*.log
+MQL5/Logs/
+MQL5/Profiles/
+MQL5/Files/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Large data and reports
+*.hcc
+*.hc
+*.fxt
+*.ticks
+04_NEWS_SYSTEM/cache/*
+06_MARKET_DATA/tick_data/*
+08_RESULTS/raw/*
