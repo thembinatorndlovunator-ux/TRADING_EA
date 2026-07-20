@@ -1246,20 +1246,49 @@ EMA-trend read and "price is above the EMA" are not independently scored
 count the same evidence, only the stronger of the two contributes, and
 the other is logged as `suppressed_duplicate`.
 
-**Trade decision object — full field list (restored):** `timestamp`,
-`symbol`, `direction`, `mode` (§1), `mode_score` and per-component
-breakdown, `regime` and `confidence` (§2), `strategy_family` (§3),
-`eligibility_multiplier`, `risk_multiplier` (§3/§8, kept distinct), `base_score`,
-`final_score`, `rejected_alternatives` (family + score + reason, §3),
-`entry_price_requested`, `entry_price_actual_fill`, `stop_price`,
-`target_price`, `expected_R`, `risk_cash`, `per_trade_risk_pct`,
-`volume`, `pattern_ids` (§5/§6 instances contributing), `location_refs`
-(§3/§4 structure objects contributing), `news_state` (§10), `learning_
-bucket` (symbol+strategy+setup+regime+mode, below), `sample_count_at_
-decision`, `confidence_interval_at_decision`, `outcome` (filled on
-close: `win`/`loss`/`breakeven`, realized R, exit reason from §7's
-priority list), `logic_version` (below), `intent_id` (§8's durable-intent
-correlation).
+**Trade decision object — reconciled with the canonical schema (fixes a
+real gap found while scoping Phase 3: `TRADE_DECISION_SCHEMA.json`,
+pre-existing at repo root, is the canonical serialization contract for
+this object and was not previously cross-checked against this section).**
+`TradeDecision.mqh`'s in-memory object serializes to exactly
+`TRADE_DECISION_SCHEMA.json`'s field set, with this document's richer
+Phase-2 detail nested inside that schema's existing container fields
+rather than added as new top-level fields:
+
+- `signal_id`, `timestamp_utc`, `symbol`, `market_family`
+  (`METAL`/`SYNTHETIC`, §3), `intraday_mode` (§1's `mode`), `regime`,
+  `regime_confidence` (§2 — schema scale `0-100`; this document's internal
+  `[0,1]` confidence, below, is multiplied by 100 at serialization),
+  `direction`, `strategy` (§3's `strategy_family`), `setup` (the specific
+  §4/§5/§6 pattern or structure that triggered the candidate),
+  `candlestick_pattern`/`chart_pattern` (§5/§6 pattern IDs, `null` if
+  none), `score` (§9's `final_score`, schema scale `0-100`), `entry`,
+  `stop`, `targets` (array — §7's target-selection candidates, nearest
+  first), `risk_percent` (`per_trade_risk_pct`, §8), `news_state` (§10),
+  `session_state` (§1's session-time-remaining bucket, e.g.
+  `OPEN`/`CLOSING_SOON`/`CLOSED`), `reasons_passed`/`reasons_rejected`
+  (human-readable strings — includes §3's `rejected_alternatives` and
+  §9's `suppressed_duplicate` notes), `ea_version` (this document's
+  `logic_version`, renamed to match the schema exactly — one name, not
+  two), `git_commit`.
+- **`score_breakdown` (schema object field) carries every Phase-2 detail
+  not itself a top-level schema field:** `mode_score` and its
+  per-component breakdown (§1), `eligibility_multiplier` and
+  `risk_multiplier` kept distinct (§3/§8), `base_score`,
+  `entry_price_requested` vs. `entry_price_actual_fill` (distinct from
+  the schema's single `entry`, which records the actual fill once known
+  and the requested price beforehand), `risk_cash`, `volume`,
+  `pattern_ids`/`location_refs` (§3/§4/§5/§6 contributing object
+  references), `learning_bucket` (symbol+strategy+setup+regime+mode,
+  §9), `sample_count_at_decision`, `confidence_interval_at_decision`,
+  `outcome` (filled on close: win/loss/breakeven, realized R, exit reason
+  from §7's priority list), `intent_id` (§8's durable-intent correlation).
+
+This keeps `TRADE_DECISION_SCHEMA.json` as the single on-disk contract —
+`DecisionJournal.mqh` (Phase 3) serializes against it directly — while
+`score_breakdown` is where this document's additional Phase-2 detail
+lives, exactly as the pre-existing schema already provides for via that
+open object field.
 
 **Learning buckets and rules (restored, five-way bucket):** buckets are
 keyed by **symbol + strategy family + setup + regime + mode** — every
