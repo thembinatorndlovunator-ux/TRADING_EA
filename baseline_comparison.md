@@ -1,5 +1,10 @@
 # Baseline Comparison: SmartCoreEngine V6.37 vs. NdlovuSMC V8.11
 
+**Independent Codex review completed** (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
+disposition: changes requested) — corrections are integrated throughout this
+document and in both underlying audit files, and are marked inline where
+they occur.
+
 Synthesizes `baseline_v637_audit.md` and `baseline_v811_audit.md` per
 `00_MASTER_PROMPT_FOR_CLAUDE.md` section 4 "Comparison." No winner is
 selected by code size or comment density — this is a feature/risk matrix to
@@ -7,40 +12,58 @@ inform which modules get reused, retired, or isolated-tested in the new
 `Themba Adaptive Intraday Engine`. Nothing here claims compilation,
 correctness, or profitability; both source audits are static reads only.
 
-## Orphaned set file — resolved
+## Orphaned set file — not usable for either baseline; provenance unresolved
 
-`01_BASELINE/setfiles/SmartCore_v3_Tuned.set.txt` does **not** belong to
-either baseline. Evidence:
+**Corrected per independent Codex review** — the original version of this
+section overreached by calling the provenance "resolved" and attributing it
+to the planned new architecture. The evidence only supports the narrower
+conclusion below; independent review found no support for the new-engine
+attribution and flagged the "resolved" framing as an internal inconsistency
+against `01_BASELINE/inventory.md` and `01_BASELINE/setfiles/IDENTITY.md`,
+which correctly describe it as unresolved.
 
-- Its keys have no `Inp` prefix (`RiskPercent=0.5`, `MagicNumber=123456`,
-  `MaxDailyLoss=5.0`), but every actual input in both baselines is declared
-  with an `Inp` prefix as part of the real MQL5 variable name
-  (`InpRiskPercent`, `InpMagicNumber`, etc. in both files). A genuine `.set`
-  export from either EA would show the `Inp`-prefixed name as the key —
-  this file never does, for any of its 40 keys.
+`01_BASELINE/setfiles/SmartCore_v3_Tuned.set.txt` is **not a usable native
+preset for either reviewed baseline.** Evidence:
+
+- It contains 79 key/value lines across 11 INI-style bracketed section
+  headings (`[Common]`, `[Filters]`, `[Indicators]`, `[SMC]`, `[Protection]`,
+  `[PartialClose]`, `[Stagnation]`, `[TrailTiers]`, `[Learning]`,
+  `[ChartPatterns]`, `[SRBounce]`) — corrected from an earlier miscount of
+  "40 keys." Native MT5 `.set` files are always flat `Key=Value` with no
+  sections at all, so the bracketed-section structure alone rules out a
+  genuine `.set` export from any MQL5 EA.
+- None of its keys exactly matches an input-variable name in either baseline.
+  Every actual input in both baselines is declared with an `Inp` prefix as
+  part of the real MQL5 variable name (`InpRiskPercent`, `InpMagicNumber`,
+  etc.); this file's keys never carry that prefix (`RiskPercent=0.5`,
+  `MagicNumber=123456`, `MaxDailyLoss=5.0`, etc.).
 - `MagicNumber=123456` matches neither V637's default (`312003`, line 64)
   nor V811's default (`800001`, line 48).
-- It uses bracketed INI sections (`[SMC]`, `[ChartPatterns]`, `[SRBounce]`,
-  `[Learning]`, `[TrailTiers]`, `[PartialClose]`, `[Stagnation]`); native MT5
-  `.set` files are always flat `Key=Value` with no sections at all.
-- Its section names — `SMC`, `ChartPatterns`, `SRBounce`, `Learning` — map
-  suggestively onto the *planned new EA's* module names in
-  `00_MASTER_PROMPT_FOR_CLAUDE.md` section 22 (`SMCStrategy.mqh`,
-  `ChartPatternEngine.mqh`, `SRBounceStrategy.mqh`, `LearningStatistics.mqh`),
-  not onto either baseline's actual function/input organization. Neither
-  baseline has a `ChartPatternEngine`-equivalent module at all (chart-pattern
-  detection per `CHART_PATTERN_SPEC.md` doesn't exist in either V6.37 or
-  V8.11 — see "unverified/absent functionality" below).
+- Neither baseline source contains a parser for this file's format or
+  references any of its distinctive keys.
 
-**Conclusion:** this file is best treated as an early draft/target parameter
-sketch for the new architecture (or a generic template written before either
-baseline's real input names were finalized), not a usable configuration for
-either baseline EA. It should not be loaded into either baseline during
-testing. It may still be useful later as a rough starting point for the new
-EA's own default `.set` file, once the corresponding modules actually exist
-— but that is a future decision, not one this audit makes.
+**What the evidence does *not* support:** it does not follow that this file
+belongs to the planned new engine architecture. Its section names (`SMC`,
+`ChartPatterns`, `SRBounce`, `Learning`) are suggestive of module names in
+`00_MASTER_PROMPT_FOR_CLAUDE.md` section 22, but suggestive naming overlap
+is not evidence of origin — `SmartCore_v3` in the filename could equally
+refer to an absent third EA version never delivered into this repo, or a
+manually drafted configuration unconnected to any of these codebases.
+**Provenance remains genuinely unresolved** unless source history or the
+original author is located; this document does not claim to resolve it.
 
-## Verified functionality (present and working as designed, per static read)
+It should not be loaded into either baseline during testing regardless of
+its origin. Whether it has any future value as a starting point for the new
+engine's own default `.set` file is a separate, later decision this audit
+does not make.
+
+## Verified functionality (present in source, per static read)
+
+**Wording corrected per independent review:** "present and working as
+designed" overstated what a static read alone can establish. Nothing here
+has been compiled or executed — this table reports what is genuinely
+present and internally consistent in the source, not confirmed runtime
+behavior.
 
 | Capability | V6.37 | V8.11 |
 |---|---|---|
@@ -197,26 +220,67 @@ EA's own default `.set` file, once the corresponding modules actually exist
 
 ## Failure modes (most operationally significant, both files)
 
+**Ranking revised per independent Codex review** (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
+disposition: changes requested, now integrated into both audit documents).
+
+0. **V6.37 — BLOCKER, category-topping finding: `IsBullishInsideFalseBreak`/
+   `IsBearishInsideFalseBreak` read the forming, incomplete bar (`rates[0]`)
+   and feed live signal evidence at roughly ten call sites** — a confirmed
+   violation of the project's hard completed-candle/no-repainting rule
+   (`PROJECT_RULES.md` #4–5). This is categorically more severe than the
+   evidence-dependent operational risks below because it's a rule violation,
+   not a risk to weigh — it blocks reuse of these two specific helpers
+   outright. See `baseline_v637_audit.md`, "Completed-candle / repainting
+   check." (V8.11 was independently confirmed clean of any equivalent
+   forming-bar dependency in its trade-decision paths.)
 1. **V6.37 — `CloseAllOurPositions`'s position-closing loop filters only by
    magic number, not symbol** (unlike every other position-scanning
    function in the file, and unlike its own sibling pending-order loop
-   three lines below). With the default shared magic number, a daily-loss
-   lock on one symbol force-closes positions on every symbol sharing that
-   magic number in a multi-symbol deployment — including unrelated,
-   profitable trades. **Highest-severity finding in the V637 audit.**
-2. **V8.11 — a restart while a basket is open permanently disables every
-   dynamic risk control** (break-even, runner trail, giveback guard, time
-   exit, direction-flip exit) for that basket's remaining lifetime, while
-   the dashboard reports "Basket: flat," hiding the fact that real,
-   unmanaged exposure is still open. **Highest-severity finding in the V811
-   audit**, and arguably the single most concerning finding across both
-   baselines — it silently strips all protection with no visible signal to
-   the operator.
-3. Both files have at least one gate that blocks the exact condition a
-   specific setup was built to trade (V6.37's ROTATION-vs-regime-router;
-   V8.11's momentum-breakout-vs-expansion-filter) — a shared pattern of
-   "gates not jointly reasoned through," not a coincidence, and worth a
-   systematic gate-interaction test in the new engine's `ConflictResolver`.
+   three lines below). **Qualified per independent review:** all four daily
+   thresholds default to zero (inactive out of the box), and the underlying
+   P/L computation was already magic-wide rather than truly per-symbol —
+   the sharper inconsistency is that the two loops in the same function
+   disagree with each other regardless of which scope was intended. Still
+   the most operationally dangerous *evidence-dependent* finding in the
+   V637 audit.
+2. **V8.11 — a restart while a basket is open disables the dynamic risk
+   controls** (break-even, runner trail, giveback guard, time exit,
+   direction-flip exit) for that basket's remaining lifetime, while the
+   dashboard reports "Basket: flat." **Qualified per independent review:**
+   the original broker-side SL/TP placed at basket-open time remains live
+   regardless, and the daily-lock path can still force-close the basket —
+   so this is not "every protection disappears," but the loss of all
+   *dynamic* management (plus, additionally discovered, the daily basket
+   cap, cooldown markers, and the live drawdown-lock's peak-balance
+   reference all being restart-resettable too) remains the clearest
+   capital-risk-relevant defect in either baseline.
+3. Both files have at least one gate that blocks a condition a specific
+   setup was built to trade (V6.37's ROTATION-vs-regime-router; V8.11's
+   momentum-breakout-vs-expansion-filter). **Reframed per independent
+   review:** these are verified, reachable policy/control-flow conflicts,
+   not proven bugs — each needs an explicit specification decision (was the
+   restriction intended?) and backtest evidence (does it actually cost
+   good trades?) before being treated as a defect to fix.
+4. **New, added by independent review — applies to both EAs:** neither file
+   branches on `ACCOUNT_MARGIN_MODE`; both have netting-account defects
+   (V637's add-on cap doesn't bind, risk state gets overwritten across
+   merged positions; V811's leg count desyncs from actual position count,
+   causing premature break-even) and V637 additionally has a hedging-mode
+   ticket-association defect. See each audit's "Netting versus hedging
+   account compatibility" section.
+5. **New, added by independent review — applies to both EAs:** trade
+   submission and modification results are not verified against the
+   broker's actual result code in either file — a `true` Boolean from
+   `CTrade` is treated as proof of execution. Broker filling-mode selection,
+   stop/freeze-level/tick-size validation, and final `OrderCheck` are all
+   incomplete in both files. See each audit's "Trade-submission result
+   handling" and "Broker filling mode, stop/freeze level, and tick-size
+   validation" sections.
+6. **New, added by independent review — applies to both EAs:** duplicate-
+   signal protection is runtime-only, not restart-safe, in both files; both
+   EAs' RSI wrappers fall back to `50` on a read failure, which sits inside
+   their own "neutral" acceptance windows, masking a data/indicator failure
+   as a valid neutral reading rather than failing the signal closed.
 
 ## Reusable modules (concepts worth carrying forward, re-implemented cleanly)
 

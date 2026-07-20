@@ -23,14 +23,14 @@ Both baselines are read-only source of truth for this task — nothing in
 `01_BASELINE/` was modified. Their behavior as documented by static reading:
 
 - **SmartCoreEngine V6.37** (`01_BASELINE/EA_V637/Thembabot14 Max.mq5`,
-  8,821 lines, 307 inputs): fractal SR, triple-redundant trendline logic,
+  8,822 lines, 282 input variables + 25 input-group headings): fractal SR, triple-redundant trendline logic,
   FVG retest, range cycle/rotation, premium/discount/equilibrium/OTE, BOS/
   CHoCH, M30 order-block confluence, pilot trade + add-ons, regime-aware
   journal-learning, daily limits, ATR stop floor/cap, profit-lock +
   giveback guard, staged historical-target ladder, NFP heuristic news
   logic. Full detail: `baseline_v637_audit.md`.
 - **NdlovuSMC V8.11** (`01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5`, 2,397
-  lines, 116 inputs): H1/M30/M15/M5/M1 hierarchy, SMC sweep-and-shift,
+  lines, 107 input variables + 9 input-group headings): H1/M30/M15/M5/M1 hierarchy, SMC sweep-and-shift,
   clustered SR bounce, two-stage order blocks, first-return-only FVG, M1
   BOS retest, ASQ momentum breakout, 1–4 leg baskets with fixed R-ladder,
   giveback guard, hard 45-minute time exit, peak-drawdown lock, manual
@@ -143,8 +143,16 @@ integrity:
       documented as unresolved with reasoning) in `baseline_comparison.md`.
 - [x] Profit-giveback document is a plan, not a diagnosis (no trade data
       exists to diagnose from).
-- [ ] Independent Codex review completed and findings resolved — **pending**,
-      this is the next step after this task's commit (see Reviewer below).
+- [x] Independent Codex review completed
+      (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, disposition:
+      **changes requested**) and findings resolved — corrections integrated
+      into all three affected documents (`baseline_v637_audit.md`,
+      `baseline_v811_audit.md`, `baseline_comparison.md`) in the follow-up
+      commit. Includes one BLOCKER (V6.37's completed-candle violation in
+      `IsBullishInsideFalseBreak`/`IsBearishInsideFalseBreak`) and several
+      new cross-cutting findings (netting/hedging compatibility,
+      trade-result handling, broker filling/stop/tick-size validation,
+      restart idempotency) neither original audit had covered.
 
 ## Rejection criteria
 
@@ -188,27 +196,48 @@ grep -n -i "giveback" "01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5"
 
 ## Compiler result
 
-Not applicable — no code changes in this task. MetaEditor was not invoked;
-no compilation claim is made.
+No code changed in this task, so MetaEditor compilation is not relevant to
+it — **wording corrected per independent review**: rather than a blanket
+"not applicable," the accurate statement is that no compilation was
+performed or claimed, because this task produces documentation only.
 
 ## Test results
 
-Not applicable — no code changes in this task. All verification above is
-documentation/hash integrity checking, not software testing.
+**Wording corrected per independent review** — rather than a blanket "not
+applicable," the accurate statement is: no compilation, backtest, restart
+simulation, multi-symbol test, or netting/hedging execution test was
+performed or is claimed anywhere in this document set. Those tests remain
+relevant *to the baseline EAs themselves* and are exactly what several of
+the audits' HYPOTHESIS-labeled findings (e.g. restart-idempotency, netting/
+hedging behavior, NFP filter reliability) call for before they could be
+confirmed — the audits identify what needs testing, they do not perform it.
+All verification actually performed for this task was documentation/hash
+integrity checking (see Test plan above), not software testing.
 
 ## Commit
 
-To be recorded after commit: single commit on `claude/task-001-baseline-audit`
-containing all files listed under "Files affected."
+- Initial deliverables commit: `c61903f` on `claude/task-001-baseline-audit`
+  (9 files — see "Files affected").
+- Codex independent review: `09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
+  disposition **changes requested**.
+- Corrections-in-response-to-review commit: recorded once committed (see
+  Final decision below) — updates `baseline_v637_audit.md`,
+  `baseline_v811_audit.md`, `baseline_comparison.md`, and this file to
+  integrate every required change from the review. No file under
+  `01_BASELINE/` is touched by the correction commit either.
 
 ## Reviewer
 
-Codex — independent review requested via
-`09_HANDOVERS/claude_to_codex/TASK-001_handover.md`. Not yet reviewed.
+Codex — independent review completed via
+`09_HANDOVERS/claude_to_codex/TASK-001_handover.md` →
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md`. Disposition: **changes
+requested**. All required changes from that review have been applied in
+the corrections commit referenced above.
 
 ## Final decision
 
-**Pending.** This task's deliverables are complete and internally
-consistent; merge to `main` is blocked on independent Codex review per
-`00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release gates) and must not be
+**Pending re-review.** All required changes from Codex's first review pass
+have been applied. Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release
+gates), this branch still needs Codex to confirm the corrections resolve
+the disposition before `main` merge is considered, and merge must not be
 performed by the same agent that produced the audit.
