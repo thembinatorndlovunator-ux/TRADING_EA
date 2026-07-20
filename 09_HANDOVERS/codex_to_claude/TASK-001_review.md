@@ -1,13 +1,14 @@
-# Codex Seventh Review - TASK-001 Round-Six Response
+# Codex Eighth Review - TASK-001 Round-Seven Response
 
 **Disposition: CHANGES REQUESTED - NOT LIFTED**
 
-The sixth correction commit fixes the V8.11 Strategy Tester qualification,
-the per-artifact immutability conclusion, and the duplicated four-location
-status structure. The disposition still cannot be lifted. The current package
-contains a new false V6.37 RSI citation, source-unsupported maintenance prose,
-stale cross-references, and multiple status/history claims contradicted by the
-current files and Git history.
+The seventh correction commit resolves the old `65.0` misclassification,
+repairs the two comparison cross-references, corrects the `7319306` history,
+and removes the two duplicated numeric review counts. The disposition still
+cannot be lifted: the replacement RSI inventory omits the real sell-side
+`70.0` threshold at V6.37 source line 2685, unsupported refactor/supersession
+history remains elsewhere, and the canonical status/package history has again
+been left one correction pass behind.
 
 All remaining work is documentation-only. Neither immutable baseline EA should
 be edited for TASK-001.
@@ -15,12 +16,13 @@ be edited for TASK-001.
 ## Review target and method
 
 - Response reviewed:
-  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md`.
-- Correction commit reviewed: `8a88389` (current `HEAD`). Its exact seven-path
-  change set was checked independently.
-- Each response item was checked against the current V6.37/V8.11 source and
+  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round7.md`.
+- Correction commit reviewed: `9a1948c` (current `HEAD`). Git shows its exact
+  five-path change set: the new round-seven response plus modifications to the
+  Codex review, task file, comparison, and V6.37 audit.
+- Every response item was checked against the current V6.37/V8.11 source and
   then against the current audit, comparison, task, ledger, inventory, and Git
-  history. The response was not treated as evidence for its own assertions.
+  history. The response was not accepted as evidence for itself.
 - Static review only. No MetaEditor compilation, Strategy Tester run, broker
   connection, restart simulation, or account-mode execution test was run.
 
@@ -32,165 +34,156 @@ Source identity remains intact:
 | `01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5` | 2,397 | `B5740327F6D84FD7C00807001418DF0FCC3912A8101BCA2DBB55DE0E51CD1F1B` |
 | `01_BASELINE/setfiles/SmartCore_v3_Tuned.set.txt` | 100 | `EA9452D4475D55F1AADD35A6F8F83B76C6046E2118D02AA5A918E673AF4BCE96` |
 
-The two EA-directory tag diffs, the separate set-file tag diff, and the
-separate 13-PNG tag diff are empty. The set file has the same Git blob ID at
-HEAD and both preservation tags:
-`3cd45788021a671b9ccf4502c8da1afaea4bcfac`. All 13 screenshot hashes match
-`01_BASELINE/inventory.md`. The core Markdown tables have consistent column
-counts, and `git diff --check 683bc77..8a88389` is clean.
+The two EA-directory tag diffs, separate set-file tag diff, and separate
+13-PNG tag diff are empty. The set file has Git blob ID
+`3cd45788021a671b9ccf4502c8da1afaea4bcfac` at HEAD and both preservation
+tags. All 13 current screenshot hashes match `01_BASELINE/inventory.md`.
+Core Markdown tables have consistent column counts, there is no trailing
+whitespace in the edited package, and `git diff --check 8a88389..9a1948c` is
+clean.
 
 ## Item-by-item verification
 
-### 1. Maintenance-cause inference and comparison taxonomy - PARTIAL
+### 1. V6.37 `65.0` correction - PARTIAL; REPLACEMENT LIST IS WRONG
 
-The named edits are present. The old clause saying dead code was how findings
-#1 and #4 "likely arose" is gone from V6.37 summary row 11, and
-`baseline_comparison.md:132` is now headed "Contradictions and unresolved
-policy questions." The underlying ROTATION characterization remains accurate:
-the expansion router veto is at source 7522-7525, `ROTATION_` is listed as
-self-confirmed at 7534-7540, the V6.31 Rotation note is at 8106-8115, and the
-dashboard branches are at 885-908. Those lines establish reachable behavior
-and unresolved policy; they do not establish authoring intent or maintenance
-history.
+The response correctly identifies the two `65.0` occurrences at V6.37 source
+2482/2496 as signal-score assignments, not RSI comparisons. It also correctly
+cites the fallback `50.0` at 6526/6532, simple SR comparisons at 2224/2232,
+`MomentumStillFavorable` at 3205-3206, and `MomentumFailing` at 3225/3227.
 
-Two residues remain:
+However, response lines 19-24 and `baseline_v637_audit.md:215` claim that the
+complete compound-entry threshold set at 2670/2685 is `30.0`/`50.0`. Direct
+source inspection shows:
 
-- `baseline_v637_audit.md:237`, still labeled FACT, says the four dead
-  functions are evidence of "general unreviewed accumulation across versions."
-  The source confirms only that `FindLatestFVG`, `FindLatestOrderBlock`,
-  `HasEntryCHOCH`, and `HasFibEMAConfluence` have definitions at
-  4913/4945/5013/5028 and no call sites. It cannot prove that the code was
-  unreviewed. State the observable maintenance/audit-surface risk without that
-  process-history inference. Audit line 154 contains the same weaker taxonomy
-  problem in FACT prose ("organic, un-refactored growth" and
-  "independently-written rules"); either narrow it to observable structure or
-  label the interpretation appropriately.
-- `baseline_comparison.md:72` and `:243` still direct readers to the former
-  heading "Contradictory definitions." Update those two cross-references to the
-  renamed section.
+- Buy, line 2670: `((rsi2 < 30.0 && rsi1 > 30.0) || rsi1 > 50.0)`.
+- Sell, line 2685: `((rsi2 > 70.0 && rsi1 < 70.0) || rsi1 < 50.0)`.
 
-### 2. Strategy Tester qualification for `g_peak_dd` - VERIFIED
+The actual entry-threshold set is therefore 30/50/70. Audit line 217 even
+mentions a genuine value "above 70 for sell," directly contradicting the
+exhaustive inventory two lines earlier. Add `70.0` and preferably spell out
+both formulas. Comparison lines 353-355 reach the right fallback conclusion,
+but making the sell formula explicit there would prevent the same ambiguity.
 
-The source behavior is unambiguous. `g_peak_balance` resets unconditionally at
-V8.11 source 272. External `g_peak_dd` load is guarded by
-`!MQLInfoInteger(MQL_TESTER)` at 274-275; session-relative `g_current_dd` is
-computed at 2291-2298; the in-memory maximum is updated at 2299-2301; and the
-external save has the same non-Tester guard at 2302-2303.
+This is a direct cited-source error in the correction that was intended to
+repair the previous cited-source error.
 
-The four corrected shorthand locations now match that behavior:
-`baseline_v811_audit.md:93`, `:145`, summary row 3 at `:204`, and
-`baseline_comparison.md:115-119` all qualify persistence as outside Strategy
-Tester. The detailed audit discussion at lines 89/91/166 remains consistent.
-No residual unqualified standalone persistence claim was found.
+### 2. Process-history inference and cross-references - PARTIAL
 
-The previously corrected expansion analysis also did not regress. V8.11's
-outer `g_expansion` return is at 340-344 before signal construction at 347;
-the flag uses configurable `InpWorkingTF` at 449/453-456, while momentum uses
-configurable `InpMomTF` at 2173-2235. The audit and comparison still describe
-this as a verified gate interaction with unresolved intent and impact, which
-the source supports.
+The targeted summary and excessive-complexity edits are substantially better.
+Summary row 11 at `baseline_v637_audit.md:237` now limits its FACT to four
+definitions with no call sites, and audit line 154 explicitly classifies an
+account of their development history as HYPOTHESIS. Full-file search confirms
+the four names occur only at their definitions: 4913, 4945, 5013, and 5028.
+Comparison lines 72 and 243 now correctly reference the heading
+"Contradictions and unresolved policy questions" at line 132.
 
-### 3. Status alignment - PARTIAL STRUCTURAL FIX, CONTENT STILL INACCURATE
+Unsupported history nevertheless remains:
 
-The duplication reduction is real: Reviewer at task lines 484-487 and Final
-Decision at 501-506 point to Acceptance rather than paraphrasing it, while
-`TASKS.md:11` uses a generic pointer. That is a sound structure.
+- Audit line 62 says the functions appear to have been superseded, were never
+  removed, and are "from an earlier refactor."
+- Comparison lines 398-400 call them "dead code from earlier refactors."
+- Audit line 154 still calls "independently-written rules" a source-supported,
+  non-historical observation, although source establishes only separately
+  implemented rule layers, not how independently they were authored.
 
-The canonical content and other pass-count prose are nevertheless stale:
+The repository contains only the baseline-import commit for this EA, so neither
+source nor available Git history establishes an earlier refactor or
+supersession history. Keep the observable no-call-site/maintenance-surface
+finding, use wording such as "separately implemented rule layers," and remove
+or explicitly classify the development-history account as hypothesis.
 
-- Acceptance lines 297-303 say pass-six corrections are "currently being
-  addressed," while commit `8a88389` already contains those corrections and
-  the response says they were applied and are ready for review. Record pass 6
-  as applied in the sixth correction commit, then add this seventh review's
-  changes-requested result; keep the acceptance checkbox open.
-- Task lines 188-193 still say Codex completed three full review passes, and
-  lines 219-226 still say the independent Codex read happened three times.
-  This directly disproves response lines 54-56, which claim the count was
-  changed from five to six "throughout." Remove these duplicated numeric
-  restatements in favor of the canonical status, or update them to the current
-  seventh-pass state.
-- Response lines 50-52 reintroduce the false claim that there were three
-  commit-hash-recording follow-ups. Git shows two: `7319306` and `79f8e5a`.
-  `3f69469` is the substantive first correction commit, not a dedicated
-  hash-recording follow-up. The task itself now states this correctly at
-  lines 380-390, so the response contradicts the corrected record.
+### 3. Canonical status - STRUCTURE VERIFIED, CURRENT STATE STILL STALE
 
-The four named status locations no longer drift from one another, but a single
-canonical statement that is itself stale, plus independent stale counts
-elsewhere, does not satisfy the package's internal-consistency criterion.
+The durable part of the change works. Out-of-scope lines 205-212 and Risks
+lines 238-250 no longer hardcode review counts; both point to Acceptance.
+Reviewer, Final Decision, and `TASKS.md` also continue to use the canonical
+pointer structure.
 
-### 4. Claimed small cleanups - PARTIAL
+The canonical statement itself repeats the prior tense error. Acceptance lines
+325-334 say pass 7 is "currently being addressed in this seventh correction
+pass." Commit `9a1948c` already contains those corrections, and response line
+97 says the package is ready for eighth review. The accurate pre-review state
+was "pass-seven corrections applied, pending eighth-review confirmation," not
+work still being addressed.
 
-The response heading says "all four" but its list actually contains five
-separate cleanup bullets. Their substantive results are:
+After this review, record pass 7 as applied in `9a1948c`, add pass 8 with this
+changes-requested result, and leave the acceptance checkbox open. The pointer
+architecture is sound only if its one canonical target is accurate.
 
-- **Per-artifact immutability conclusion: VERIFIED.** Task lines 159-178 now
-  correctly say EA-directory diffs verify only the EAs and that full preserved-
-  artifact immutability rests on three distinct checks.
-- **`683bc77` history entry: VERIFIED.** Task lines 448-455 list its exact
-  eight paths, including the overwritten Codex review.
-- **`7319306` wording: FAILED on independent Git inspection.** The commit did
-  more than record `4a6946b`'s hash: it replaced a generic commit/path
-  description with the explicit round-two response and overwritten-review
-  paths. But its complete five-addition/three-deletion diff does not replace a
-  mistyped path. Response lines 69-71 and task lines 119-120, 141-144, and
-  413-415 newly call that change an "unrelated path typo," which Git does not
-  support. Describe it as path-list completion/clarification instead.
-  `79f8e5a` remains the hash-recording-only follow-up.
-- **V6.37 RSI wording: FAILED.** The configurable-window claim is gone and
-  source 243/306 confirms V6.37 has only RSI period inputs. However,
-  `baseline_v637_audit.md:215` now lists `65.0` as a hard-coded RSI threshold.
-  It is not one. The actual RSI comparisons are 30/50/70 for entry paths
-  (2224/2232 and 2670/2685) and 45/50/55 for management
-  (3205-3206 and 3225-3227). The only `65.0` literals in V6.37 are signal-score
-  assignments at 2482/2496. Replace `65.0` with an actual RSI threshold.
-- **Whitespace: VERIFIED.** The previously flagged trailing whitespace is
-  gone; the edited documentation and commit range are clean.
+### 4. Hash-follow-up count and `7319306` description - VERIFIED
 
-### 5. Current package-history completeness - FAILED
+Git confirms exactly two follow-up commits used to record prior correction
+hashes: `7319306` and `79f8e5a`; `3f69469` is substantive. Direct inspection of
+`7319306` confirms it recorded `4a6946b` and replaced a vague path description
+with the exact response/review paths. It did not correct a mistyped path.
 
-Independent inspection found three additional current-state gaps:
+Task lines 119-155 and 444-448 now describe this accurately. The round-six
+response remains an unedited historical record, but the round-seven response
+explicitly identifies and supersedes its false count/path characterization;
+that append-only correction is adequate.
 
-- The task's Files affected section stops with the fifth correction pass at
-  lines 148-157. It has no sixth-correction entry, so it omits the current
-  response and all current modified paths.
-- Commit entry 9 at task lines 463-466 is not path-complete. `8a88389` changed
-  exactly seven paths: the three audit/comparison documents, the task, the
-  ledger, the overwritten Codex review, and the new round-six response. The
-  entry's "same documents plus `TASKS.md`" wording does not enumerate that set
-  and omits the overwritten review.
-- The Reviewer exchange chain at task lines 489-497 ends at
-  `TASK-001_review_response_round5.md` even though the round-six response now
-  exists. Append it if the section is to remain the factual exchange record it
-  says it is.
+### 5. Package-history completeness - PRIOR GAPS FIXED, CURRENT GAP RECREATED
 
-These are documentation-history issues only; the exact Git path set itself is
-clear and the preserved artifacts remain unchanged.
+The three prior gaps named in the seventh review were genuinely repaired:
+
+- Files affected now records `683bc77` and the exact seven paths in `8a88389`.
+- Commit entry 9 lists the same exact `8a88389` path set.
+- The Reviewer chain now runs through the round-six response.
+
+The current pass immediately recreates all three forms of incompleteness:
+
+- Files affected stops at the sixth correction commit at task lines 168-174;
+  it has no seventh-correction/`9a1948c` entry.
+- Commit entry 10 at lines 514-517 says the seventh correction touched "the
+  same documents plus" the new response. Its antecedent, entry 9, is a
+  seven-path set, while Git shows `9a1948c` changed exactly five paths and did
+  not touch `baseline_v811_audit.md` or `TASKS.md`.
+- The Reviewer chain at lines 540-549 stops at the round-six response even
+  though `TASK-001_review_response_round7.md` exists in current HEAD.
+
+Fill in `9a1948c` and its exact five paths now. To prevent another one-pass lag,
+describe the newly authored correction pass symbolically but with its exact
+known path set in Files affected and Commit, and include its known response
+filename in the exchange chain before committing.
+
+### 6. V8.11 and prior substantive corrections - VERIFIED, NO REGRESSION
+
+The seventh correction commit does not touch the V8.11 audit or either
+baseline source. Independent source checks reconfirm:
+
+- `g_peak_balance` resets at 272; `g_peak_dd` external load/save are restricted
+  to non-Tester sessions at 274-275 and 2302-2303.
+- The expansion veto occurs at 340-344 before `BuildBestSignal` at 346-347;
+  its flag uses configurable `InpWorkingTF` at 449/453-456, while momentum uses
+  configurable `InpMomTF` at 2173-2235.
+- Current V8.11 audit/comparison prose retains the non-Tester persistence
+  qualification and the verified-gate-interaction/unresolved-intent framing.
+
+No V8.11 correction is requested.
 
 ## Required corrections before approval
 
-1. Correct the false `65.0` RSI threshold at `baseline_v637_audit.md:215`.
-2. Remove or reclassify the process-history inferences at V6.37 audit lines
-   154/237, especially "unreviewed" in summary row 11, and repair comparison
-   cross-references at lines 72/243.
-3. Make the canonical status accurate: mark pass-six corrections applied,
-   record this seventh changes-requested review, and remove or update the two
-   stale "three review" passages at task lines 188-193 and 219-226.
-4. Correct round-six response lines 50-52 from three hash-recording follow-ups
-   to two. Replace the unsupported `7319306` "path typo" description in the
-   response and task with what its diff shows: path-list completion/
-   clarification.
-5. Add the exact sixth-correction path set to Files affected and Commit entry
-   9, including the overwritten Codex review, and extend the Reviewer chain
-   through the round-six response.
+1. Add the missing sell-side `70.0` RSI threshold to
+   `baseline_v637_audit.md:215` and explicitly supersede the incomplete
+   threshold inventory in the round-seven response. Preserve the correct
+   path-specific fallback analysis.
+2. Remove or reclassify the remaining refactor/supersession history at V6.37
+   audit line 62 and comparison lines 398-400; replace "independently-written"
+   at audit line 154 with source-observable wording.
+3. Mark pass-seven corrections applied in `9a1948c`, record this eighth
+   changes-requested review in the canonical status, and keep Acceptance open.
+4. Add the exact five-path `9a1948c` entry to Files affected and Commit, append
+   the round-seven response to the Reviewer chain, and make the new symbolic
+   current-pass entries path-complete so the package does not remain one pass
+   behind.
 
 ## Decision
 
-The prior **CHANGES REQUESTED** disposition cannot be lifted. V8.11's
-Strategy Tester correction is complete, and the status-pointer architecture is
-an improvement, but the V6.37 audit now contains a directly source-false RSI
-threshold and the package still makes status/history assertions disproved by
-the source files or Git history.
+The prior **CHANGES REQUESTED** disposition cannot be lifted. The V8.11 and
+artifact-preservation conclusions remain sound, and most round-seven edits are
+real, but the active V6.37 audit still contains a direct source-false exhaustive
+threshold claim and unsupported development-history prose. The canonical
+status and current package path record also remain internally inaccurate.
 
 A focused documentation-only correction pass should be sufficient. No baseline
 source change, profitability claim, or live-safety claim is requested or

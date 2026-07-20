@@ -350,10 +350,12 @@ disposition: changes requested, now integrated into both audit documents).
      fifth-pass review, an earlier draft here also overgeneralized.** `50`
      deterministically *fails* the simple SR strict-threshold checks
      (2224/2232, single-sided comparisons). It does **not** reliably fail
-     the compound MA-momentum entry expression (2670/2685: `(rsi2<30 &&
-     rsi1>30) || rsi1>50`, mirrored for sell) — a fallback on one of the two
-     RSI reads can still let the other genuine reading satisfy the
-     compound condition. Separately, the fallback can pass the more
+     the compound MA-momentum entry expression (2670/2685 — **sell formula
+     spelled out explicitly in eighth-pass review to avoid the "mirrored"
+     shorthand hiding the actual threshold**: buy is `(rsi2<30 && rsi1>30)
+     || rsi1>50`, sell is `(rsi2>70 && rsi1<70) || rsi1<50`) — a fallback on
+     one of the two RSI reads can still let the other genuine reading
+     satisfy the compound condition. Separately, the fallback can pass the more
      permissive `MomentumStillFavorable` management subcondition
      (3205/3206), and suppresses the optional, off-by-default
      `MomentumFailing` exit (3219–3227, exit itself disabled by default at
@@ -397,7 +399,10 @@ disposition: changes requested, now integrated into both audit documents).
 
 - V6.37's four vestigial, never-called functions (`HasEntryCHOCH`,
   `HasFibEMAConfluence`, `FindLatestFVG`, `FindLatestOrderBlock`) — dead
-  code from earlier refactors.
+  code with no live call sites (**"from earlier refactors" removed in
+  eighth-pass review — this repo's Git history has no commit history prior
+  to the baseline import that would establish a refactor/supersession
+  account; only the no-call-sites fact is source/Git-supported**).
 - V6.37's three-times-duplicated trendline logic — consolidate to one
   definition if trendlines are carried into the new engine at all.
 - V8.11's `BuildStructureMarks` chart-mark logic as currently written —
