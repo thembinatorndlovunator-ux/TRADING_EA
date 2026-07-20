@@ -142,25 +142,32 @@ behavior.
   second-pass review:** this is a verified, reachable policy question, not a
   confirmed contradiction — "self-confirmed" was documented to mean
   bypassing value-area/SR confirmation gates specifically, not regime
-  policy. **Dashboard-visibility claim corrected, third-pass review:** the
-  router's rejection reason only reaches the dashboard when Rotation was
-  the sole candidate in that direction (no-surviving-candidate path) and is
-  overwritten whenever another same-direction candidate survives — so the
-  veto is often invisible everywhere (dashboard and journal alike), not
-  merely "silent to the journal only" as an earlier draft claimed. Needs a
-  specification decision (should Rotation trade during Expansion?) and
-  backtest evidence, not a fix applied by assumption.
+  policy. The Volatile Expansion design note doesn't itself say Rotation
+  should be allowed to trade during Expansion, so this may be intentional
+  mean-reversion exclusion rather than an oversight — source alone can't
+  settle which. **Dashboard-visibility condition corrected precisely,
+  fourth-pass review (stated wrong in two prior drafts):** the router's
+  rejection reason only reaches the dashboard when **no candidate survives
+  in either direction that tick**, not "Rotation was the sole candidate in
+  its own direction" — this is a global, not per-direction, condition. No
+  claim is made about how often it occurs. It never reaches the journal
+  regardless. Needs a specification decision (should Rotation trade during
+  Expansion?) and backtest evidence, not a fix applied by assumption.
 - **V6.37's ATR-based stop floor and percent-of-price stop cap are
   different units**, never cross-validated, and can conflict on certain
   symbols/sessions, silently rejecting trades.
-- **V8.11's momentum-breakout setup is explicitly exempted from the
-  location gate to trade volatility expansion, then blocked entirely by a
-  separate blanket expansion gate.** **Corrected in second-pass review:**
-  the M5-scale momentum-breakout condition and the M15-ATR-expansion flag
-  that trips the blanket gate are related but not definitionally identical
-  — the setup remains reachable for M5 breakouts below the M15 expansion
-  threshold. This is a verified policy/comment conflict in the control flow
-  (confirmed: the outer gate unconditionally wins whenever it's true), but
+- **V8.11's momentum-breakout setup is exempted from the location gate to
+  trade price expansion beyond value (its own `InpMomTF`, M5 default), then
+  blocked by a separate blanket expansion gate keyed to `InpWorkingTF` ATR
+  (M15 default) — opening framing rewritten in fourth-pass review to avoid
+  first overclaiming "explicitly exempted... to trade volatility expansion"
+  before conceding otherwise.** The `InpMomTF`-scale momentum-breakout
+  condition and the `InpWorkingTF`-scale expansion flag that trips the
+  blanket gate are related but not definitionally identical — the setup
+  remains reachable for `InpMomTF`-scale breakouts below the
+  `InpWorkingTF`-scale expansion threshold. This is a verified gate
+  interaction confirmed by control flow (the outer gate unconditionally
+  wins whenever it's true), with intent and impact otherwise unresolved —
   static review does not establish it as "the sharpest internal
   inconsistency" across either file — that's an empirical question about
   how often the two conditions actually coincide, requiring backtest
@@ -281,15 +288,24 @@ disposition: changes requested, now integrated into both audit documents).
    cap, cooldown markers, and the live drawdown-lock's peak-balance
    reference all being restart-resettable too) remains the clearest
    capital-risk-relevant defect in either baseline.
-3. Both files have at least one gate whose relationship to a specific
-   setup's stated purpose is a verified control-flow conflict (V6.37's
+3. Both files have at least one verified, reachable gate interaction whose
+   intent and impact are unresolved from static reading alone (V6.37's
    ROTATION-vs-regime-router; V8.11's momentum-breakout-vs-expansion-
-   filter). **Reframed per independent review, precision-corrected in
-   third-pass review:** V8.11's case specifically is not "a setup blocked
-   by exactly the condition it was built to trade" — the setup's own
-   `InpMomTF`-scale (M5 default) breakout condition and the blocking
-   `InpWorkingTF`-scale (M15 default) expansion flag are related but not
-   the same measurement (see `baseline_v811_audit.md`'s expansion section).
+   filter). **Reframed per independent review, precision-corrected across
+   third- and fourth-pass review:** neither case should be described as a
+   setup "conflicting with its own stated purpose." V6.37's Volatile
+   Expansion design note never says Rotation should be allowed to trade
+   during Expansion, so excluding it may be intentional, not an oversight.
+   V8.11's momentum-breakout setup is not "blocked by exactly the condition
+   it was built to trade" — its stated purpose (comment 2213–2218) is a
+   premium/discount *location-gate* exemption for trading expansion beyond
+   value, which the source does not equate with the specific, separately-
+   defined `g_expansion` state; the setup's own `InpMomTF`-scale (M5
+   default) breakout condition and the blocking `InpWorkingTF`-scale (M15
+   default) expansion flag are related but not the same measurement (see
+   `baseline_v811_audit.md`'s expansion section). Both are best described
+   as verified gate interactions with unresolved intent and impact, not
+   confirmed conflicts.
    Both cases are verified, reachable policy/control-flow conflicts,
    not proven bugs — each needs an explicit specification decision (was the
    restriction intended?) and backtest evidence (does it actually cost
@@ -316,13 +332,24 @@ disposition: changes requested, now integrated into both audit documents).
    runtime-only": both files *do* scan existing positions/orders before
    entering (V637: 605–607; V811: `CountOurPositions` gate, see each
    audit), so many but not all duplicate scenarios are already caught. Both
-   EAs' RSI wrappers fall back to `50` on a read failure, which sits inside
-   their own "neutral" acceptance windows — but this is a mixed, not
-   blanket, effect: it fails strict entry-threshold RSI comparisons in both
-   files while it can pass more permissive management-path RSI
-   subconditions (V637: `MomentumStillFavorable`, and separately suppresses
-   the optional, off-by-default `MomentumFailing` exit; V811: one of four
-   ANDed momentum-flag conditions) — see each audit's restart-idempotency
+   EAs' RSI wrappers fall back to `50` on a read failure, but **the effect
+   is EA-specific, not a shared blanket behavior — corrected in fourth-pass
+   review after an earlier draft wrongly generalized V637's behavior to
+   "both files"**:
+   - **V637:** `50` *fails* the strict entry-threshold RSI comparisons
+     (2224/2232, 2670/2685), but can pass the more permissive
+     `MomentumStillFavorable` management subcondition (3205/3206), and
+     separately suppresses the optional, off-by-default `MomentumFailing`
+     exit (3219–3227, exit itself disabled by default at 351).
+   - **V811:** `50` *passes* — it sits inside **both** default momentum-
+     engine RSI windows (`InpMomRsiBuyMin/Max`=40–65, `InpMomRsiSellMin/Max`=35–60,
+     inputs 147–150), so the fallback satisfies the RSI subcondition
+     (2205–2206) in either direction. This still does not, by itself, make
+     the overall momentum flag true — `g_mom_bull_ok`/`g_mom_bear_ok`
+     require three other ANDed conditions (trend, position, momentum,
+     lines 2208–2209) to also hold.
+
+   See each audit's restart-idempotency
    section for the precise scope.
 
 ## Reusable modules (concepts worth carrying forward, re-implemented cleanly)
