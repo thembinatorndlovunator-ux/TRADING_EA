@@ -113,10 +113,11 @@ behavior.
   trendline touch/break" implementations with different swing-depth inputs.
   V8.11 has none, by design.
 - **"Drawdown from peak," three unrelated definitions within V8.11 alone**:
-  a persisted display-only `g_peak_dd`, a restart-vulnerable `g_current_dd`/
-  `g_peak_balance` pair that actually gates new baskets, and a same-tick
-  `RiskBudgetCash` throttle using `MathMax(balance,equity)` — none reference
-  each other.
+  a display-only `g_peak_dd`, persisted outside Strategy Tester only
+  (**qualifier added in sixth-pass review**); a restart-vulnerable
+  `g_current_dd`/`g_peak_balance` pair that actually gates new baskets; and
+  a same-tick `RiskBudgetCash` throttle using `MathMax(balance,equity)` —
+  none reference each other.
 - **Giveback guard, conceptually shared, differently parameterized**: V6.37
   arms at 1.25R and tolerates 60% giveback of peak; V8.11 arms at 0.8R and
   requires falling back to 0.1R floor. Different philosophies (percentage-
@@ -128,7 +129,13 @@ behavior.
   default to 2 but a comment implies one shared definition — never enforced
   equal.
 
-## Contradictory definitions
+## Contradictions and unresolved policy questions
+
+**Heading broadened in sixth-pass review** — this section previously mixed
+confirmed contradictions with items whose own text says they are *not*
+confirmed contradictions (the ROTATION bullet below), a taxonomy mismatch.
+The heading now reflects both categories; each bullet still states its own
+correct classification individually.
 
 - **V8.11's chart-mark structure vs. trading structure are different
   algorithms.** `BuildStructureMarks` (drawing-only BOS/CHoCH/EQL/EQH) uses
