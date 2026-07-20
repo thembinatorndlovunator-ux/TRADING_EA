@@ -684,13 +684,16 @@ addressing Codex's actual review content, not a dedicated hash-recording
 follow-up, even though it's also listed below). For the actual current
 tip, run `git log --oneline claude/task-001-baseline-audit`.**
 
-**Wording note, thirteenth-pass review:** entries below describing pass N's
-review as "narrower"/"narrower still" than the *immediately preceding* pass
-describe that one specific transition, verified from that round's own
-comparison — they are not a claim that passes 2 through 9 collectively
-formed a monotonic narrowing trend (the Acceptance criteria section above
-already corrects that broader claim; passes 10–12 explicitly returned to
-broad sweeps, breaking any such trend even if one had held through pass 9).
+**Wording note, thirteenth-pass review, completed in a same-round follow-up
+correction before the fourteenth review:** the individual Commit entries
+below previously described each pass N's review as "narrower"/"narrower
+still" than the prior pass. The initial thirteenth-pass fix added a scoping
+note here rather than editing every entry, given that round's volume; this
+follow-up removes the comparative wording itself from every entry (2
+through 9) rather than merely reframing it, leaving only the concrete,
+verifiable content of what each pass found. See the Acceptance criteria
+section above for the same correction to the broader monotonic-narrowing
+claim.
 
 1. `c61903f` — initial deliverables commit (9 files — see "Files
    affected"), including two new files added under `01_BASELINE/`
@@ -703,7 +706,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    `baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`; added
    `09_HANDOVERS/codex_to_claude/TASK-001_review.md` and
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`. Re-reviewed
-   by Codex; disposition **changes requested again** (narrower — most
+   by Codex; disposition **changes requested again** (most
    source-level findings verified, but several summary/comparison sections
    were stale relative to the corrected detailed prose, plus a few
    precision fixes and one omitted netting finding).
@@ -718,7 +721,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    typo" description corrected to this in seventh-pass review — the
    original diff shows no typo fix**). Reviewed by Codex a third time;
    disposition
-   **changes requested a third time** (narrower still — most items
+   **changes requested a third time** (most items
    verified, a handful of remaining internal-consistency gaps, two false
    claims in the round-two response file, and several precision fixes).
 5. `538bc39` — third correction-pass commit, responding to Codex's third
@@ -731,7 +734,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    note above; omitted from this list until now — exactly the kind of gap
    this section's structural fix, above, is meant to prevent going
    forward**). Reviewed by Codex a fourth time; disposition
-   **changes requested a fourth time** (narrower still — most items
+   **changes requested a fourth time** (most items
    verified, remaining precision issues in the ROTATION-visibility
    condition, cross-EA RSI synthesis, persisted-drawdown wording, momentum-
    vs-expansion framing, and package metadata, including this section's
@@ -749,7 +752,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    file needed a correction) and added
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md`.
    Reviewed by Codex a fifth time; disposition **changes requested a fifth
-   time** (narrower still — most items verified, remaining precision
+   time** (most items verified, remaining precision
    issues in the ROTATION source-note name and citations, the V6.37 RSI-
    fallback claim for its compound entry expression, persisted-drawdown
    wording, momentum-vs-expansion classification consistency, an
@@ -765,7 +768,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place,
    and added `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md`.
    Reviewed by Codex a sixth time; disposition **changes requested a sixth
-   time** (narrower still — most items verified, remaining issues an
+   time** (most items verified, remaining issues an
    unsupported maintenance-cause inference, a missing Strategy Tester
    qualifier on four `g_peak_dd` mentions, a comparison-heading taxonomy
    mismatch, minor prose/citation cleanup, and — again — a false
@@ -779,7 +782,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
    `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md`.
    Reviewed by Codex a seventh time; disposition **changes requested a
-   seventh time** (narrower still — most items verified or resolved
+   seventh time** (most items verified or resolved
    (Strategy Tester qualification, status-pointer architecture), remaining
    issues a false `65.0` RSI-threshold citation this audit introduced
    while fixing a prior finding, unproven process-history/"unreviewed"
@@ -796,7 +799,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
     `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round7.md`. Did
     **not** touch `baseline_v811_audit.md` or `TASKS.md`. Reviewed by Codex
     an eighth time; disposition **changes requested an eighth time**
-    (narrower still — most items verified or resolved (the `65.0`
+    (most items verified or resolved (the `65.0`
     misclassification, the two comparison cross-references, the `7319306`
     history, the duplicated numeric review counts), remaining issues an
     incomplete RSI-threshold inventory missing the sell-side `70.0` value,
@@ -813,7 +816,7 @@ broad sweeps, breaking any such trend even if one had held through pass 9).
     wording here read as an independent restatement rather than a pointer,
     which is the same cross-section-drift risk the sixth-pass structural
     fix exists to avoid. Reviewed by Codex a ninth time; disposition
-    **changes requested a ninth time** (narrower still — most items
+    **changes requested a ninth time** (most items
     verified or resolved (the complete 30/50/70 RSI inventory, the
     refactor/supersession/authorship wording, the one-pass-lag structural
     fix itself), remaining issues a V6.37 journal-history conclusion the
