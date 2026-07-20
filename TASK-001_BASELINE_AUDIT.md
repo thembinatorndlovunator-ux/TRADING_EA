@@ -192,16 +192,25 @@ correctly here before it existed — the eighth-pass structural fix held):
 **not** touch `baseline_v811_audit.md`, `TASKS.md`, or any `01_BASELINE/`
 path.
 
-**Modified in the ninth correction pass** (**hash omitted because it was
-unknowable at authoring time — see current branch tip via
-`git log --oneline claude/task-001-baseline-audit` — timeless wording
-adopted in ninth-pass review, replacing "not yet known," which itself
-needed updating once the commit existed**): `baseline_v637_audit.md`,
-`TASK-001_BASELINE_AUDIT.md`, overwriting
-`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
-file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md`.
-Not touching `baseline_v811_audit.md`, `baseline_comparison.md`,
+**Modified in the ninth correction commit `acb8e45`** (**hash filled in now
+that it exists, tenth-pass review**; its path set was already stated
+correctly here before it existed): `baseline_v637_audit.md`,
+`TASK-001_BASELINE_AUDIT.md`, overwrote
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md`. Did
+**not** touch `baseline_v811_audit.md`, `baseline_comparison.md`,
 `TASKS.md`, or any `01_BASELINE/` path.
+
+**Modified in the tenth correction pass** (hash not embedded here —
+unknowable at authoring time; **locator corrected in tenth-pass review to
+be durable rather than a moving target** — see the first commit after
+`acb8e45` in `git log --oneline claude/task-001-baseline-audit`, since
+"current branch tip" wording goes stale the moment a further commit is
+made): `baseline_v637_audit.md`, `baseline_v811_audit.md`,
+`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, overwriting
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md`.
+Not touching `TASKS.md` or any `01_BASELINE/` path.
 
 **Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (the EA-directory diffs below verify only the two `.mq5` files, not the set file or screenshots — an earlier draft cited them for all three together):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
@@ -327,7 +336,7 @@ integrity:
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** nine review passes so far, all returning changes
+      **Status:** ten review passes so far, all returning changes
       requested, each narrower than the last:
       - Pass 1 → addressed in commit `3f69469`.
       - Pass 2 (internal-consistency gaps between corrected detail and
@@ -378,18 +387,39 @@ integrity:
         configured filenames, an overstated "zero occurrences" grep claim
         in the round-eight response, and — for the third round running —
         the canonical status describing an already-applied pass as "in
-        progress") → **applied in the current symbolic correction commit;
-        pending review** (**wording adopted in ninth-pass review per
-        Codex's own suggestion — accurate both before and after this
-        commit exists, unlike "currently being addressed," which this
-        canonical status has now gotten wrong three rounds running**).
+        progress") → addressed in `acb8e45`.
+      - Pass 10 (a remaining unsupported universal schema-mismatch
+        sentence, a narrowed duplicate-row conclusion and expanded
+        concurrent-file-access risk (missing `FILE_SHARE_READ`/
+        `FILE_SHARE_WRITE`, silent open failures, a duplicate-header race),
+        a Reviewer chain one pass behind despite the round-nine response
+        claiming it was current, a moving-tip locator claimed as timeless,
+        a regime-bench "permanent fixed point" overclaim, a V6.36
+        stop-history claim treated as FACT when only comment-claimed, a
+        stop-floor/cap "incompatible units, never cross-validated"
+        mischaracterization, a peak-R "cleaned up on every close" overclaim,
+        a pilot-risk "objectively higher" overclaim, a binomial-probability
+        arithmetic error, stale `HasFreshStructureShiftMomentum` call-site
+        citations, a V8.11 `RiskBudgetCash` mischaracterized as a third
+        peak-drawdown definition, a V8.11 magic-number "hard-coded"
+        overclaim, an unqualified basket-risk-cap claim, a non-exhaustive
+        45-minute exit description, and an all-nine-passes
+        independently-reconfirmed process-history overclaim) → **applied in
+        the current symbolic correction commit; pending review**.
 
-      All nine passes independently confirmed the BLOCKER (V6.37's
+      **Overclaim corrected in tenth-pass review:** the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
       `IsBearishInsideFalseBreak`) and the cross-cutting findings (netting/
       hedging compatibility, trade-result handling, broker filling/stop/
-      tick-size validation, restart idempotency). Not checked off until a
-      review pass returns approval rather than changes-requested.
+      tick-size validation, restart idempotency) were established by
+      independent review and have remained carried forward and unresolved
+      across the subsequent passes — it is not accurate that all nine passes
+      *independently re-confirmed* them: the first review pass established
+      these findings; several later passes were deliberately narrow,
+      item-by-item checks of the latest response and did not re-run the full
+      blocker/account-mode/result/broker/restart analysis each time. Not
+      checked off until a review pass returns approval rather than
+      changes-requested.
 
 ## Rejection criteria
 
@@ -594,12 +624,26 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
     configurable filename doesn't support, the canonical status again
     describing already-applied pass-8 work as in progress, and two minor
     package-history/verification-wording cleanups).
-12. Ninth correction-pass commit (hash not embedded here — unknowable at
-    authoring time; see current branch tip via
-    `git log --oneline claude/task-001-baseline-audit`) — responding to
-    this ninth review. This entry likewise references, rather than
-    restates, the ninth-pass path list already stated above in "Files
-    affected."
+12. Ninth correction-pass commit, `acb8e45` (**hash filled in now that it
+    exists, tenth-pass review**) — responding to the ninth review. This
+    entry likewise references, rather than restates, the ninth-pass path
+    list already stated above in "Files affected." Reviewed by Codex a
+    tenth time; disposition **changes requested a tenth time** (narrower on
+    the requested journal/status items — most resolved (the configurable-
+    filename and clean-slate corrections, the pass-8/9 status tense) —
+    but Codex's independent full-package sweep found several further
+    source-factual errors elsewhere in both audits and the comparison that
+    the ninth-pass response had not been asked to check: see Acceptance
+    criteria pass 10 below for the complete list).
+13. Tenth correction-pass commit (hash not embedded here — unknowable at
+    authoring time; **locator corrected in tenth-pass review to be durable
+    rather than a moving target** — Codex noted "current branch tip"
+    wording goes stale the moment a further commit is made, exactly like
+    the tense problem this same fix pattern solved for canonical status
+    prose; see the first commit in `git log --oneline
+    claude/task-001-baseline-audit` *after* `acb8e45`) — responding to this
+    tenth review. This entry likewise references, rather than restates, the
+    tenth-pass path list already stated above in "Files affected."
 
 **Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
@@ -633,10 +677,15 @@ each subsequent pass) →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round7.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md`
-(**chain extended through both round 7 — already existing — and round 8
-— its known filename stated now, before this correction commit exists,
-per the eighth-pass structural fix above**).
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md`
+(**chain corrected in tenth-pass review to actually include round 9 —
+Codex's tenth review found this chain still ending at round 8 despite
+`acb8e45` already having added the round-9 response file, which directly
+falsified the round-9 response's own claim that this chain was current;
+round 10's filename is stated now, before its commit exists, per the
+eighth-pass structural fix above**).
 
 ## Final decision
 

@@ -112,12 +112,17 @@ behavior.
   `BuildTrendlineBreakRetestSignal` pair are four separate "what counts as a
   trendline touch/break" implementations with different swing-depth inputs.
   V8.11 has none, by design.
-- **"Drawdown from peak," three unrelated definitions within V8.11 alone**:
-  a display-only `g_peak_dd`, persisted outside Strategy Tester only
-  (**qualifier added in sixth-pass review**); a restart-vulnerable
-  `g_current_dd`/`g_peak_balance` pair that actually gates new baskets; and
-  a same-tick `RiskBudgetCash` throttle using `MathMax(balance,equity)` —
-  none reference each other.
+- **"Drawdown from peak," two peak-based definitions plus one non-peak sizing
+  haircut within V8.11 (recharacterized in tenth-pass review — `RiskBudgetCash`
+  is not a third peak-drawdown definition)**: a display-only `g_peak_dd`,
+  persisted outside Strategy Tester only (**qualifier added in sixth-pass
+  review**); a restart-vulnerable `g_current_dd`/`g_peak_balance` pair that
+  actually gates new baskets; and, separately, `RiskBudgetCash`'s same-tick
+  `equity - MathMax(balance,equity) * InpMaxDrawdownPercent/100` haircut,
+  which references neither peak value and is not itself a drawdown-from-peak
+  comparison — under shipped defaults it returns ~0.8% of equity per basket,
+  not the nominal 1% the input name suggests. None of the three reference
+  each other.
 - **Giveback guard, conceptually shared, differently parameterized**: V6.37
   arms at 1.25R and tolerates 60% giveback of peak; V8.11 arms at 0.8R and
   requires falling back to 0.1R floor. Different philosophies (percentage-
@@ -161,9 +166,15 @@ correct classification individually.
   claim is made about how often it occurs. It never reaches the journal
   regardless. Needs a specification decision (should Rotation trade during
   Expansion?) and backtest evidence, not a fix applied by assumption.
-- **V6.37's ATR-based stop floor and percent-of-price stop cap are
-  different units**, never cross-validated, and can conflict on certain
-  symbols/sessions, silently rejecting trades.
+- **V6.37's ATR-based stop floor and percent-of-price stop cap are converted
+  to the same price-distance unit and ARE cross-validated at runtime**
+  (**recharacterized in tenth-pass review — was previously described as
+  "different units, never cross-validated"**); the real gap is the absence
+  of any preflight check that the floor fits under the caps for the
+  attached instrument, so the two can still legitimately conflict on
+  certain symbols/sessions and reject trades at runtime with no advance
+  warning (the resting-limit path's own cap check also fails silently, with
+  no journal row).
 - **V8.11's momentum-breakout setup is exempted from the location gate to
   trade price expansion beyond value (its own `InpMomTF`, M5 default), then
   blocked by a separate blanket expansion gate keyed to `InpWorkingTF` ATR
