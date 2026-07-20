@@ -142,10 +142,14 @@ behavior.
   second-pass review:** this is a verified, reachable policy question, not a
   confirmed contradiction — "self-confirmed" was documented to mean
   bypassing value-area/SR confirmation gates specifically, not regime
-  policy, and the router does log a dashboard reason (not silent to an
-  operator watching it, only to the journal). Needs a specification
-  decision (should Rotation trade during Expansion?) and backtest evidence,
-  not a fix applied by assumption.
+  policy. **Dashboard-visibility claim corrected, third-pass review:** the
+  router's rejection reason only reaches the dashboard when Rotation was
+  the sole candidate in that direction (no-surviving-candidate path) and is
+  overwritten whenever another same-direction candidate survives — so the
+  veto is often invisible everywhere (dashboard and journal alike), not
+  merely "silent to the journal only" as an earlier draft claimed. Needs a
+  specification decision (should Rotation trade during Expansion?) and
+  backtest evidence, not a fix applied by assumption.
 - **V6.37's ATR-based stop floor and percent-of-price stop cap are
   different units**, never cross-validated, and can conflict on certain
   symbols/sessions, silently rejecting trades.
@@ -171,7 +175,7 @@ behavior.
 | Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, but it can let a single leg risk up to 2.0% instead of the intended 1.0% "total" |
 | Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — correct when the split succeeds |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
-| Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | Broken — gating variable resets to current balance on restart, silently clearing the lock's basis |
+| Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | **Corrected in third-pass review** — gating variable's peak-balance reference resets to current balance on restart, which can *understate* current drawdown relative to the true historical peak (conditional on how much higher that prior peak was — not an unconditional reset to zero, since floating loss at restart still shows up) |
 | Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | None — `RiskBudgetCash` sizes off total account equity per instance with no cross-instance awareness |
 
 ## Exit-management differences
@@ -265,18 +269,28 @@ disposition: changes requested, now integrated into both audit documents).
 2. **V8.11 — a restart while a basket is open disables the dynamic risk
    controls** (break-even, runner trail, giveback guard, time exit,
    direction-flip exit) for that basket's remaining lifetime, while the
-   dashboard reports "Basket: flat." **Qualified per independent review:**
-   the original broker-side SL/TP placed at basket-open time remains live
-   regardless, and the daily-lock path can still force-close the basket —
+   dashboard reports "Basket: flat." **Qualified per independent review,
+   precision-corrected in third-pass review:** the broker-held SL/TP
+   remains live regardless — but it is the *current* SL/TP (which may
+   already have been modified by break-even/trailing before the restart,
+   since `MoveBasketStops` can change the stop), not necessarily the
+   *original* values placed at basket-open time. The daily-lock path can
+   still force-close the basket —
    so this is not "every protection disappears," but the loss of all
    *dynamic* management (plus, additionally discovered, the daily basket
    cap, cooldown markers, and the live drawdown-lock's peak-balance
    reference all being restart-resettable too) remains the clearest
    capital-risk-relevant defect in either baseline.
-3. Both files have at least one gate that blocks a condition a specific
-   setup was built to trade (V6.37's ROTATION-vs-regime-router; V8.11's
-   momentum-breakout-vs-expansion-filter). **Reframed per independent
-   review:** these are verified, reachable policy/control-flow conflicts,
+3. Both files have at least one gate whose relationship to a specific
+   setup's stated purpose is a verified control-flow conflict (V6.37's
+   ROTATION-vs-regime-router; V8.11's momentum-breakout-vs-expansion-
+   filter). **Reframed per independent review, precision-corrected in
+   third-pass review:** V8.11's case specifically is not "a setup blocked
+   by exactly the condition it was built to trade" — the setup's own
+   `InpMomTF`-scale (M5 default) breakout condition and the blocking
+   `InpWorkingTF`-scale (M15 default) expansion flag are related but not
+   the same measurement (see `baseline_v811_audit.md`'s expansion section).
+   Both cases are verified, reachable policy/control-flow conflicts,
    not proven bugs — each needs an explicit specification decision (was the
    restriction intended?) and backtest evidence (does it actually cost
    good trades?) before being treated as a defect to fix.
@@ -295,11 +309,21 @@ disposition: changes requested, now integrated into both audit documents).
    incomplete in both files. See each audit's "Trade-submission result
    handling" and "Broker filling mode, stop/freeze level, and tick-size
    validation" sections.
-6. **New, added by independent review — applies to both EAs:** duplicate-
-   signal protection is runtime-only, not restart-safe, in both files; both
+6. **New, added by independent review — scope narrowed in third-pass
+   review, applies to both EAs:** neither file persists an atomic market-
+   signal/deal identity or reliably reconciles ambiguous submissions across
+   a restart — this is narrower than "duplicate-signal protection is
+   runtime-only": both files *do* scan existing positions/orders before
+   entering (V637: 605–607; V811: `CountOurPositions` gate, see each
+   audit), so many but not all duplicate scenarios are already caught. Both
    EAs' RSI wrappers fall back to `50` on a read failure, which sits inside
-   their own "neutral" acceptance windows, masking a data/indicator failure
-   as a valid neutral reading rather than failing the signal closed.
+   their own "neutral" acceptance windows — but this is a mixed, not
+   blanket, effect: it fails strict entry-threshold RSI comparisons in both
+   files while it can pass more permissive management-path RSI
+   subconditions (V637: `MomentumStillFavorable`, and separately suppresses
+   the optional, off-by-default `MomentumFailing` exit; V811: one of four
+   ANDed momentum-flag conditions) — see each audit's restart-idempotency
+   section for the precise scope.
 
 ## Reusable modules (concepts worth carrying forward, re-implemented cleanly)
 

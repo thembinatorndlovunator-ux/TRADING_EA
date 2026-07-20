@@ -31,7 +31,11 @@ Both baselines are read-only source of truth for this task — nothing in
   logic. Full detail: `baseline_v637_audit.md`.
 - **NdlovuSMC V8.11** (`01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5`, 2,397
   lines, 107 input variables + 9 input-group headings): H1/M30/M15/M5/M1 hierarchy, SMC sweep-and-shift,
-  clustered SR bounce, two-stage order blocks, first-return-only FVG, M1
+  clustered SR bounce, two-stage order blocks, partially-enforced-first-return
+  FVG (**corrected per third-pass review — was still unqualified here**: the
+  touch scan omits the trigger bar and stores no consumed flag, so a cached
+  gap can in principle be reconsidered — see `baseline_v811_audit.md`'s "M5
+  FVG" section), M1
   BOS retest, ASQ momentum breakout, 1–4 leg baskets with fixed R-ladder,
   giveback guard, hard 45-minute time exit, peak-drawdown lock, manual
   session/news filters, no journal/learning system by design. Full detail:
@@ -89,14 +93,36 @@ Codex's first review — `baseline_v637_audit.md`, `baseline_v811_audit.md`,
 new files `09_HANDOVERS/codex_to_claude/TASK-001_review.md` and
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`.
 
-**Modified in the second correction pass** (commit recorded once made —
-see Commit section below), responding to Codex's second review — the same
-four documents (`baseline_v637_audit.md`, `baseline_v811_audit.md`,
-`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`) plus `TASKS.md`,
-plus a new response file for this round.
+**Modified in the second correction commit (`4a6946b`)**, responding to
+Codex's second review, exact path set corrected in third-pass review —
+`baseline_v637_audit.md`, `baseline_v811_audit.md`, `baseline_comparison.md`,
+`TASK-001_BASELINE_AUDIT.md`, `TASKS.md`, plus overwriting
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place (Codex's own
+edit to record its second review) and adding new file
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`.
 
-No file under `01_BASELINE/` was modified by any of the above commits
-(verified — see Test plan).
+**Modified in follow-up commit `7319306`** — `TASK-001_BASELINE_AUDIT.md`
+only (filled in the `4a6946b` hash and fixed a path typo, both of which
+could only be known after `4a6946b` existed).
+
+**Modified in the third correction pass** (commit recorded once made — see
+Commit section below), responding to Codex's third review — the same four
+documents plus `TASKS.md`, plus a new response file for this round.
+
+**Precision correction, third-pass review (C3/R3-10):** the claim "no file
+under `01_BASELINE/` was modified" is accurate for the *preserved baseline
+artifacts* specifically (both `.mq5` files, the set file, and all 13
+screenshots — none of these has ever been altered, verified by hash and by
+`git diff <tag> -- 01_BASELINE/EA_V637` / `-- 01_BASELINE/EA_V811` staying
+empty after every commit). It is **not** accurate as a claim that no commit
+touched anything under the `01_BASELINE/` path at all: the initial commit
+(`c61903f`) **added** two new files there — `01_BASELINE/inventory.md` and
+`01_BASELINE/screenshots/visual_notes.md` — as new audit documentation
+alongside the preserved evidence, not as edits to it. `git diff
+<baseline-tag> -- 01_BASELINE` (unscoped to the EA subdirectories) is
+therefore *not* empty; the scoped per-EA-subdirectory diffs are what
+verify immutability, and that is the check this task actually relies on
+(see Test plan).
 
 ## Out of scope
 
@@ -108,7 +134,7 @@ No file under `01_BASELINE/` was modified by any of the above commits
 
 **Note (C3, stale text removed per independent review):** an earlier draft
 of this section stated "no actual Codex review execution" as an out-of-scope
-item. That is no longer accurate — Codex has since completed two full
+item. That is no longer accurate — Codex has since completed three full
 review passes (see Reviewer and Commit sections below); review execution
 itself happened in a separate Codex session/branch per `AGENTS.md`, but it
 did occur, and is not out of scope for this task's final state.
@@ -129,21 +155,24 @@ did occur, and is not out of scope for this task's final state.
   behind all four daily thresholds defaulting to zero; when active, force-
   closes positions across symbols sharing a magic number) and V8.11's
   restart defect (loses *dynamic* risk management — break-even, trailing,
-  giveback, time exit — for an open basket, though the broker-held SL/TP
-  and the daily-lock's `CloseBasket` path both survive; the dashboard still
-  misreports "Basket: flat"). None of these are fixed here — fixing
+  giveback, time exit, and direction-flip exit (**added, missing from this
+  list per third-pass review**) — for an open basket, though the current
+  broker-held SL/TP and the daily-lock's `CloseBasket` path both survive;
+  the dashboard still misreports "Basket: flat"). None of these are fixed
+  here — fixing
   baseline code would violate "preserve both original EAs as immutable
   baselines" (`PROJECT_RULES.md` #1). These are inputs to the *new*
   engine's design, not patches to the old ones.
 - **Audit depth vs. agent variance**: the two deep-audit passes were done
   by independent agent runs reading the full files end-to-end; line numbers
   were independently re-verified in each pass rather than trusted from the
-  prior structural survey. **Updated per independent review (C3) — no
+  prior structural survey. **Updated per independent review — no
   longer a forward-looking risk:** the independent Codex read has since
-  happened (twice), each pass catching real precision issues the prior pass
-  missed. This remains listed as a risk category because a third pass
-  cannot be ruled out as still finding something, not because no review has
-  occurred yet.
+  happened three times, each pass catching real precision issues the prior
+  pass missed (including, in the third pass, two false claims made in the
+  correction responses themselves). This remains listed as a risk category
+  because a further pass cannot be ruled out as still finding something,
+  not because no review has occurred yet.
 
 ## Test plan
 
@@ -176,19 +205,23 @@ integrity:
 - [x] Profit-giveback document is a plan, not a diagnosis (no trade data
       exists to diagnose from).
 - [ ] Independent Codex review completed and findings resolved — **in
-      progress, two passes so far, updated per independent review (C6)**:
+      progress, three passes so far, updated per independent review**:
       pass 1 (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, first
       version) returned changes requested, addressed in commit `3f69469`;
       pass 2 (same file, updated in place) returned changes requested again
       — narrower, mostly internal-consistency issues between corrected
       detailed sections and stale summaries, plus a handful of precision
-      fixes — now being addressed in the second correction pass. Both
-      passes independently confirmed the BLOCKER (V6.37's completed-candle
-      violation in `IsBullishInsideFalseBreak`/`IsBearishInsideFalseBreak`)
-      and the new cross-cutting findings (netting/hedging compatibility,
-      trade-result handling, broker filling/stop/tick-size validation,
-      restart idempotency). Not checked off until a review pass returns
-      approval.
+      fixes, addressed in commit `4a6946b`; pass 3 (same file, updated in
+      place again) returned changes requested a third time — narrower
+      still, including two false claims found in the round-two response
+      file itself (`git diff <tag> -- 01_BASELINE` is not actually empty;
+      "full commit history" omitted the current HEAD) — now being addressed
+      in the third correction pass. All three passes independently
+      confirmed the BLOCKER (V6.37's completed-candle violation in
+      `IsBullishInsideFalseBreak`/`IsBearishInsideFalseBreak`) and the new
+      cross-cutting findings (netting/hedging compatibility, trade-result
+      handling, broker filling/stop/tick-size validation, restart
+      idempotency). Not checked off until a review pass returns approval.
 
 ## Rejection criteria
 
@@ -252,12 +285,16 @@ integrity checking (see Test plan above), not software testing.
 
 ## Commit
 
-**Filled in per independent review (C5) — full commit history on this
-branch:**
+**Filled in per independent review (C5), updated for completeness in the
+third-pass review — full commit history on this branch, through current
+`HEAD`:**
 
 1. `c61903f` — initial deliverables commit (9 files — see "Files
-   affected"). Reviewed by Codex; disposition **changes requested**
-   (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, first version).
+   affected"), including two new files added under `01_BASELINE/`
+   (`inventory.md`, `screenshots/visual_notes.md` — new audit
+   documentation, not edits to the preserved evidence). Reviewed by Codex;
+   disposition **changes requested** (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
+   first version).
 2. `3f69469` — first correction-pass commit, responding to that review.
    Touched `baseline_v637_audit.md`, `baseline_v811_audit.md`,
    `baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`; added
@@ -268,31 +305,49 @@ branch:**
    were stale relative to the corrected detailed prose, plus a few
    precision fixes and one omitted netting finding).
 3. `4a6946b` — second correction-pass commit, responding to that second
-   review. Touched the same four documents plus `TASKS.md`; added
-   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`
-   (also updated `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in
-   place, reflecting Codex's own second-pass edit to that file).
+   review. Touched the same four documents plus `TASKS.md`; overwrote
+   `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place (Codex's own
+   second-pass edit); added
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`.
+4. `7319306` (`HEAD` at the time of this third-pass correction) — follow-up
+   commit, `TASK-001_BASELINE_AUDIT.md` only, filling in the `4a6946b` hash
+   and fixing a path typo. Reviewed by Codex a third time; disposition
+   **changes requested a third time** (narrower still — most items
+   verified, a handful of remaining internal-consistency gaps, two false
+   claims in the round-two response file, and several precision fixes).
+5. Third correction-pass commit — recorded once made (see Final decision
+   below), responding to this third review.
 
-No file under `01_BASELINE/` is touched by any commit in this history
-(verified before and after each commit).
+**Precision correction, third-pass review:** "no file under `01_BASELINE/` is
+touched by any commit in this history" was inaccurate as stated — see the
+identical correction and its full reasoning under "Files affected" above.
+The accurate, verified claim is that the *preserved baseline artifacts*
+(both `.mq5` files, the set file, all 13 screenshots) are unmodified by
+every commit above (scoped `git diff <tag> -- 01_BASELINE/EA_V637` /
+`-- 01_BASELINE/EA_V811` empty throughout), while `01_BASELINE/inventory.md`
+and `01_BASELINE/screenshots/visual_notes.md` were intentionally added as
+new audit documentation in commit 1.
 
 ## Reviewer
 
-Codex — two independent review passes completed via
+Codex — three independent review passes completed via
 `09_HANDOVERS/claude_to_codex/TASK-001_handover.md` →
-`09_HANDOVERS/codex_to_claude/TASK-001_review.md` (updated in place for the
-second pass) → `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`.
-Both passes returned **changes requested**. All required changes from both
-passes have been applied as of the second correction-pass commit above.
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` (updated in place for each
+subsequent pass) → `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`
+→ `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`. All
+three passes returned **changes requested**. All required changes from the
+first two passes were applied in commits `3f69469` and `4a6946b`
+respectively; the third pass's required changes are being applied in the
+correction commit referenced below.
 
 ## Final decision
 
-**Pending third review pass.** **Corrected per independent review (C6) —
-does not overclaim completeness:** all changes requested by Codex's *second*
-review have been applied, but per that review's own finding, a document
+**Pending fourth review pass.** All changes requested by Codex's *third*
+review have been applied in this correction pass — but consistent with
+this task's own repeated finding across all three prior passes (a document
 package that looks complete does not always survive its own consistency
-check — so this is stated as "applied," not "resolved," until Codex
-confirms. Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release gates),
-this branch needs Codex to confirm the corrections resolve the disposition
+check), this is stated as "applied, pending confirmation," not "resolved."
+Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release gates), this
+branch needs Codex to confirm the corrections resolve the disposition
 before `main` merge is considered, and merge must not be performed by the
 same agent that produced the audit.
