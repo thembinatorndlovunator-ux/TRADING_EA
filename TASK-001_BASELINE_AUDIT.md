@@ -267,9 +267,11 @@ branch:**
    source-level findings verified, but several summary/comparison sections
    were stale relative to the corrected detailed prose, plus a few
    precision fixes and one omitted netting finding).
-3. Second correction-pass commit — recorded here once made — responding to
-   that second review. Touches the same four documents plus `TASKS.md`,
-   plus a new second-round response file.
+3. `4a6946b` — second correction-pass commit, responding to that second
+   review. Touched the same four documents plus `TASKS.md`; added
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`
+   (also updated `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in
+   place, reflecting Codex's own second-pass edit to that file).
 
 No file under `01_BASELINE/` is touched by any commit in this history
 (verified before and after each commit).
