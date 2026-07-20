@@ -12,6 +12,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-002 | Phase 2 specification: modes, regimes, strategies, patterns, risk, news | `claude/task-002-phase2-specification` | Self-certified after round-3 review (no round-4 review available); not independently approved | 2026-07-20 | `TASK-002_PHASE2_SPECIFICATION.md` |
 | TASK-003 | Phase 3 common core: StateManager (account-wide scalar persistence) | `claude/task-003-state-manager` | In progress — compiled (real evidence); runtime logic-test confirmation pending manual desktop run | 2026-07-20 | `TASK-003_STATE_MANAGER.md` |
 | TASK-004 | Phase 3 common core: SymbolProfile + BrokerValidator | `claude/task-004-symbol-profile` | In progress — compiled (real evidence); runtime logic-test confirmation pending manual desktop run | 2026-07-21 | `TASK-004_SYMBOL_PROFILE.md` |
+| TASK-005 | Phase 3 common core: MarketData (completed-bar logical-index accessor) | `claude/task-005-market-data` | In progress — compiled (real evidence); runtime logic-test confirmation batched with TASK-003/004 for one manual session | 2026-07-21 | `TASK-005_MARKET_DATA.md` |
 
 ## Status legend
 
