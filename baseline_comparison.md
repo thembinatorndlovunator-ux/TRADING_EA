@@ -112,17 +112,26 @@ behavior.
   `BuildTrendlineBreakRetestSignal` pair are four separate "what counts as a
   trendline touch/break" implementations with different swing-depth inputs.
   V8.11 has none, by design.
-- **"Drawdown from peak," two peak-based definitions plus one non-peak sizing
-  haircut within V8.11 (recharacterized in tenth-pass review — `RiskBudgetCash`
-  is not a third peak-drawdown definition)**: a display-only `g_peak_dd`,
-  persisted outside Strategy Tester only (**qualifier added in sixth-pass
-  review**); a restart-vulnerable `g_current_dd`/`g_peak_balance` pair that
-  actually gates new baskets; and, separately, `RiskBudgetCash`'s same-tick
-  `equity - MathMax(balance,equity) * InpMaxDrawdownPercent/100` haircut,
-  which references neither peak value and is not itself a drawdown-from-peak
-  comparison — under shipped defaults it returns ~0.8% of equity per basket,
-  not the nominal 1% the input name suggests. None of the three reference
-  each other.
+- **"Drawdown from peak" within V8.11: one session-relative drawdown
+  calculation, its persisted running maximum, plus a separate non-peak
+  sizing haircut (recharacterized in tenth-pass review — `RiskBudgetCash` is
+  not a third peak-drawdown definition; taxonomy corrected again in
+  eleventh-pass review — `g_current_dd` and `g_peak_dd` DO reference each
+  other, an earlier draft said neither of the three did)**: `g_current_dd`
+  is computed fresh each call from the restart-vulnerable `g_peak_balance`
+  (`UpdateDrawdownGuard`, 2289–2296) — this is the gating value new baskets
+  are checked against; `g_peak_dd` (display-only, persisted outside
+  Strategy Tester — **qualifier added in sixth-pass review**) is directly
+  derived from it, updated via `if(g_current_dd > g_peak_dd) g_peak_dd =
+  g_current_dd` (2299–2301) — so `g_peak_dd` is the running maximum of
+  `g_current_dd` readings, not an independent, unrelated figure. Separately,
+  `RiskBudgetCash`'s `MathMax(0.0, equity - MathMax(balance,equity) *
+  InpMaxDrawdownPercent/100)` haircut (1509–1511) references neither peak
+  value and is not itself a drawdown-from-peak comparison — under shipped
+  defaults, when equity is at or above balance, it returns ~0.8% of equity
+  per basket, not the nominal 1% the input name suggests (see the V8.11
+  audit's corrected note for the balance-above-equity case). `RiskBudgetCash`
+  is the one item of the three that references neither of the other two.
 - **Giveback guard, conceptually shared, differently parameterized**: V6.37
   arms at 1.25R and tolerates 60% giveback of peak; V8.11 arms at 0.8R and
   requires falling back to 0.1R floor. Different philosophies (percentage-
@@ -197,12 +206,12 @@ correct classification individually.
 | Aspect | V6.37 | V8.11 |
 |---|---|---|
 | Base risk per trade | 1.0%–2.0% standing budget | 1.0% "total per basket" (nominal) |
-| Weak-sample risk *increase* | Yes — pilot trade explicitly allowed 5.0% actual risk (the least-confirmed trade of a new trend) vs. 1–2% standing budget | No equivalent "increase on low confidence" path found |
-| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, but it can let a single leg risk up to 2.0% instead of the intended 1.0% "total" |
+| Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up**) | Looser ceiling only — pilot trade permitted up to 5.0% actual risk (the least-confirmed trade of a new trend) vs. 1–2% standing budget, but actual risk can be below the standing budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
+| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the implemented budget) |
 | Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — correct when the split succeeds |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
 | Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | **Corrected in third-pass review** — gating variable's peak-balance reference resets to current balance on restart, which can *understate* current drawdown relative to the true historical peak (conditional on how much higher that prior peak was — not an unconditional reset to zero, since floating loss at restart still shows up) |
-| Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | None — `RiskBudgetCash` sizes off total account equity per instance with no cross-instance awareness |
+| Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | None — `RiskBudgetCash` sizes off total account equity **and balance** (**"equity alone" corrected, eleventh-pass review**) per instance with no cross-instance awareness; this is independent of magic-number configuration, not conditioned on sharing one |
 
 ## Exit-management differences
 
@@ -389,9 +398,15 @@ disposition: changes requested, now integrated into both audit documents).
   well-reasoned and independently verified to work as documented.
 - V6.37's minimum-sample-gated, bench-with-safety-valve journal-learning
   pattern is a reasonable starting point for the new engine's
-  `LearningStatistics.mqh` — provided the self-perpetuating regime-bench
-  lockout (a benched strategy can never re-accumulate the data needed to
-  un-bench itself) is fixed before reuse.
+  `LearningStatistics.mqh` — provided the regime-bench gap is fixed before
+  reuse (**narrowed in eleventh-pass review — not a proven self-perpetuating
+  lockout**: the bench only blocks ordinary combined-signal-pipeline
+  candidates via the separate minimum-score threshold, not an inability to
+  occupy a direction slot; the NFP-displacement and OB-limit-order paths
+  bypass it entirely; and a trade opened in a different, unbenched regime
+  can still close into and update the benched bucket, since the update
+  reads the regime at close time, not at entry — see the V6.37 audit's
+  Regime-aware score adjustment section for the full correction).
 - V8.11's two-stage M15→M5 order-block refinement with a single shared
   accessor (`ActiveOB()`) consumed identically by both drawing and trading
   code is a clean pattern worth reusing directly for the new engine's
@@ -432,11 +447,21 @@ disposition: changes requested, now integrated into both audit documents).
   fixed."
 - Regime-based strategy benching with a hard zero-score lock — needs a
   guaranteed un-bench/re-evaluation path before reuse, given the
-  self-perpetuating lockout identified in V6.37.
-- Pilot-trade risk escalation on unconfirmed trends (V6.37) — the new
+  same-regime entry-driven recovery gap identified in V6.37 (**"self-
+  perpetuating lockout" corrected in eleventh-pass review — see the audit's
+  Regime-aware score adjustment section: the gap is narrower and does not
+  apply to every entry path**).
+- Pilot-trade looser risk *ceiling* on unconfirmed trends (V6.37) —
+  **"escalation"/"increase" corrected to "looser ceiling" in eleventh-pass
+  review**: the pilot always sizes at the broker minimum lot rather than
+  scaling to the ceiling, so its actual risk is not necessarily higher than
+  the ordinary budget, only permitted to be up to 2.5–5× looser — the new
   engine's risk policy explicitly requires risk to never increase on weak
-  evidence; this pattern should not be ported without redesign.
+  evidence, so this looser-ceiling pattern should still not be ported
+  without redesign.
 - Basket/multi-leg sizing — the new engine's `RISK_POLICY.md` disables
   multi-leg baskets by default until independently proven; V8.11's minimum-
-  lot fallback path (which can silently double intended basket risk) is a
+  lot fallback path (which can silently push realized risk up to ~2.5× the
+  implemented budget, not simply "double" the nominal 1% input — **corrected
+  in eleventh-pass review**, see the V8.11 audit's corrected note) is a
   concrete example of why that default caution is warranted.
