@@ -105,9 +105,11 @@ edit to record its second review) and adding new file
 only (filled in the `4a6946b` hash and fixed a path typo, both of which
 could only be known after `4a6946b` existed).
 
-**Modified in the third correction pass** (commit recorded once made — see
-Commit section below), responding to Codex's third review — the same four
-documents plus `TASKS.md`, plus a new response file for this round.
+**Modified in the third correction commit (`538bc39`)**, responding to
+Codex's third review — the same four documents plus `TASKS.md`, plus new
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md`
+(also overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place
+again, Codex's own third-pass edit).
 
 **Precision correction, third-pass review (C3/R3-10):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
@@ -315,8 +317,10 @@ third-pass review — full commit history on this branch, through current
    **changes requested a third time** (narrower still — most items
    verified, a handful of remaining internal-consistency gaps, two false
    claims in the round-two response file, and several precision fixes).
-5. Third correction-pass commit — recorded once made (see Final decision
-   below), responding to this third review.
+5. `538bc39` — third correction-pass commit, responding to this third
+   review. Touched the same four documents plus `TASKS.md`; overwrote
+   `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place again; added
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md`.
 
 **Precision correction, third-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
