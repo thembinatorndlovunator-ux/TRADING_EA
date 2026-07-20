@@ -149,8 +149,15 @@ review after the sixth-pass correction itself introduced a false "path
 typo" description**: `7319306`'s actual diff shows it also completed/
 clarified that entry's response-file path, not a typo fix, so
 "hash-recording-only" still overstates its sole purpose, just not for the
-reason previously claimed; `79f8e5a` for `538bc39`'s hash, which genuinely
-was hash-recording-only) because the hash cannot be known before the
+reason previously claimed; `79f8e5a` for `538bc39`'s hash — **"genuinely
+hash-recording-only" corrected in twelfth-pass review**: `git show 79f8e5a`
+shows the same pattern as `7319306` — a 14-line diff (9 insertions, 5
+deletions) that, beyond filling in the hash, also replaced a vague
+placeholder path description with the exact response-file path and
+explicitly recorded that the Codex review file was overwritten in place, in
+both the Files-affected and Commit sections. The commit message describes
+only the intended primary purpose; the actual diff is what this audit
+relies on) because the hash cannot be known before the
 commit exists; this entry breaks that loop by referencing the commit
 symbolically instead.
 
@@ -210,36 +217,50 @@ locator held): `baseline_v637_audit.md`, `baseline_v811_audit.md`,
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md`. Did
 **not** touch `TASKS.md` or any `01_BASELINE/` path.
 
-**Modified in the eleventh correction pass** (hash not embedded here —
-unknowable at authoring time; durable locator per the tenth-pass fix — see
-the first commit after `b1a8ea5` in `git log --oneline
-claude/task-001-baseline-audit`): `baseline_v637_audit.md`,
+**Modified in the eleventh correction commit `a0f4ac3`** (**hash filled in
+now that it exists, twelfth-pass review** — the durable locator from the
+tenth-pass fix resolved correctly to this commit): `baseline_v637_audit.md`,
 `baseline_v811_audit.md`, `baseline_comparison.md`,
+`TASK-001_BASELINE_AUDIT.md`, overwrote
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md`. Did
+**not** touch `TASKS.md` or any `01_BASELINE/` path.
+
+**Modified in the twelfth correction pass** (hash not embedded here —
+unknowable at authoring time; durable locator — see the first commit after
+`a0f4ac3` in `git log --oneline claude/task-001-baseline-audit`):
+`baseline_v637_audit.md`, `baseline_v811_audit.md`, `baseline_comparison.md`,
 `TASK-001_BASELINE_AUDIT.md`, overwriting
 `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
-file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md`.
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`.
 Not touching `TASKS.md` or any `01_BASELINE/` path.
 
-**Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (the EA-directory diffs below verify only the two `.mq5` files, not the set file or screenshots — an earlier draft cited them for all three together):** the claim "no file
+**Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (scope of the EA-directory diffs corrected in twelfth-pass review — they verify each entire tracked EA directory, not only the `.mq5` file within it):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
-artifacts* specifically, verified by three separate checks: both `.mq5`
-files via `git diff <tag> -- 01_BASELINE/EA_V637` / `-- 01_BASELINE/EA_V811`
-staying empty after every commit; the set file via its SHA-256 (recorded in
-`inventory.md`) and Git blob-ID equality at the preservation tags (see
-Evidence section above); and all 13 screenshots via their individually
-recorded SHA-256 hashes in `inventory.md`, unchanged across every commit.
+artifacts* specifically, verified by three separate checks: **both complete
+EA directories** — `EA_V637` (the `.mq5` file **and** its `IDENTITY.md`, the
+only two tracked files in that directory) and `EA_V811` (same pair) — via
+`git diff <tag> -- 01_BASELINE/EA_V637` / `-- 01_BASELINE/EA_V811` staying
+empty after every commit (these are directory-scoped diffs, so they cover
+every tracked file in each directory, not the `.mq5` alone); the set file
+via its SHA-256 (recorded in `inventory.md`) and Git blob-ID equality at the
+preservation tags (see Evidence section above); and all 13 screenshots via
+their individually recorded SHA-256 hashes in `inventory.md`, unchanged
+across every commit.
 It is **not** accurate as a claim that no commit
 touched anything under the `01_BASELINE/` path at all: the initial commit
 (`c61903f`) **added** two new files there — `01_BASELINE/inventory.md` and
 `01_BASELINE/screenshots/visual_notes.md` — as new audit documentation
 alongside the preserved evidence, not as edits to it. `git diff
 <baseline-tag> -- 01_BASELINE` (unscoped to the EA subdirectories) is
-therefore *not* empty. **Closing statement corrected in sixth-pass
-review** — the scoped per-EA-subdirectory diffs verify only the two
-`.mq5` files' immutability specifically; they are not, by themselves, the
-complete evidence this task relies on. Full artifact immutability is the
-combination of all three checks named above (EA-source diffs, set-file
-hash/blob-ID equality, screenshot hashes) — see Test plan.
+therefore *not* empty. **Closing statement corrected in sixth-pass review,
+scope corrected again in twelfth-pass review** — the scoped per-EA-directory
+diffs verify complete-directory immutability for `EA_V637` and `EA_V811`
+(each `.mq5` plus its `IDENTITY.md`), not merely the two `.mq5` files in
+isolation; they are not, by themselves, the complete evidence this task
+relies on. Full artifact immutability is the combination of all three
+checks named above (EA-directory diffs, set-file hash/blob-ID equality,
+screenshot hashes) — see Test plan.
 
 ## Out of scope
 
@@ -323,8 +344,10 @@ integrity:
       and was never meant to contain, a matching per-file deliverable list —
       that level of detail lives only in this task file's "Files affected"
       section.
-- [x] Both baseline `.mq5` files, screenshots, and set file are unchanged
-      (hash match).
+- [x] Both complete preserved EA directories (`.mq5` file plus `IDENTITY.md`
+      each — **scope corrected in twelfth-pass review, was understated as
+      "the .mq5 files"**), screenshots, and set file are unchanged (hash and
+      directory-diff match).
 - [x] Every master-prompt section-4 checklist bullet, both EAs, has a
       cited, line-numbered entry in the respective audit document.
 - [x] Orphaned set-file provenance question is resolved (or explicitly
@@ -344,13 +367,21 @@ integrity:
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** eleven review passes so far, all returning changes requested
+      **Status:** twelve review passes so far, all returning changes requested
       (**"each narrower than the last" removed as a blanket claim in
-      eleventh-pass review** — Codex's own round-ten response noted that
-      round 10 was the first full independent package sweep and found more
-      source-factual errors than any prior single round, directly
-      contradicting a monotonic-narrowing description of every pass; passes
-      1–9 did narrow progressively, but pass 10 was broader, not narrower):
+      eleventh-pass review; the replacement "passes 1–9 narrowed
+      progressively" and "round 10 was the first full package sweep" claims
+      were themselves unsupported and are removed in twelfth-pass review**
+      — Git/history evidence does not establish either a monotonic
+      narrowing across passes 1–9 (the number and breadth of corrections
+      rose again in several passes) or that any single pass was uniquely
+      "first" to sweep broadly: the initial review of the `c61903f` package
+      already ranged across both audit files, the comparison, task
+      metadata, preserved evidence, and source. The durable, supportable
+      fact is only this: some intermediate passes were narrow, targeted
+      checks of the immediately prior response; passes 10, 11, and 12
+      explicitly returned to broad, open-ended sweeps that found issues
+      outside anything the prior response had been asked to address):
       - Pass 1 → addressed in commit `3f69469`.
       - Pass 2 (internal-consistency gaps between corrected detail and
         stale summaries, plus precision fixes) → addressed in `4a6946b`.
@@ -419,9 +450,10 @@ integrity:
         45-minute exit description, and an all-nine-passes
         independently-reconfirmed process-history overclaim) → addressed in
         `b1a8ea5`.
-      - Pass 11 (the first full independent package sweep found a
-        substantially broader set of scope/precision errors than any prior
-        single pass: an incomplete journal FileOpen-failure description
+      - Pass 11 (another open-ended full package sweep — **"first" claim
+        removed, twelfth-pass review**, found a substantially broader set of
+        scope/precision errors than the immediately preceding narrow-check
+        passes: an incomplete journal FileOpen-failure description
         (the read probe doesn't abandon like the other three paths), an
         incomplete `OnInit` clean-slate correction (the unconditional
         runtime print, not just the changelog comment), an overstated
@@ -446,9 +478,62 @@ integrity:
         news-filter distinction, an H1/M30 reversal-lag overgeneralization
         (M30 can lead when H1 is neutral), a monotonic-narrowing overclaim
         this canonical status made about its own pass history, and a tense
-        issue in the Commit section — see the round-11 response for the
-        complete mapping) → **applied in the current symbolic correction
-        commit; pending review**.
+        issue in the Reviewer-chain annotation, not the Commit section as
+        the round-11 canonical status itself mislocated it — see the
+        round-11 response for the complete mapping) → addressed in
+        `a0f4ac3`.
+      - Pass 12 (another open-ended full package sweep, 26 findings across
+        package/Git history, V6.37 source, and V8.11 source: two package-
+        history findings this canonical status made about itself — both
+        passes 10 and 11 called "first" to sweep broadly, and an unsupported
+        "passes 1–9 narrowed progressively" claim, both now removed; a
+        mislocated tense-fix reference and a still-stale round-11
+        Reviewer-chain tense clause; a mischaracterized `79f8e5a` follow-up
+        commit; an understated preservation-tag evidence description
+        (verifies complete EA directories including `IDENTITY.md`, not only
+        the `.mq5` files); a V6.37 pilot-ceiling ratio recomputed from the
+        EA's *implemented* cash budget rather than raw input percentages
+        (6.25×/25× non-XAU/XAU, not 2.5–5×); three configuration-dependent
+        gaps in the pilot single-position-until-confirmation claim
+        (configurable `InpMaxPositionsPerSymbol`, the OB-limit
+        placement-before-fill path, and the journal-gated pilot-reset path);
+        a V6.37 journal learning-contamination path via same-symbol/
+        different-magic instances (no magic column in the journal schema);
+        a mischaracterized "unconditionally every tick" `ManageOrderBlockLimitOrders`
+        call; an incomplete V6.37 fractal-depth caller taxonomy (a fourth
+        input and a hard-coded literal, beyond the three named inputs); one
+        remaining stale pilot-risk "increase" mirror; a live XAU input
+        comment still claiming M5 ATRs when the code uses M15; an
+        overstated symbol-classifier vocabulary overlap (only "boom"/
+        "crash" actually overlap between the two functions); an unsupported
+        "ordinary row interleaving" journal hypothesis removed, and
+        `FILE_COMMON` scope corrected to every client terminal on the
+        computer; a "verified to work as documented" overclaim softened to
+        match this task's static-only method; a trendline-duplication count
+        mismatch (three mechanisms, four implementations, not "tripled");
+        two V8.11 `RiskBudgetCash` formula errors (missing `MathMax(0.01,
+        ...)` floors, and an impossible zero-crossing claim in the wrong
+        branch); a per-leg-percentage error (~0.8% is per-basket, ~0.4% is
+        per-leg, not "~0.8%/leg"); an executable runtime print repeating the
+        stale "0.5% per leg" figure at every EA start; an incomplete
+        minimum-lot-fallback conditioning (missing the underwater-branch
+        case where the ratio to the implemented budget widens further); a
+        residual "force-closed"/"hard cutoff"/"enforced" characterization of
+        the V8.11 time exit inconsistent with its own unchecked-result-code
+        caveat; an overstated news-time validation ("syntactically invalid"
+        when only three specific forms are actually rejected); a missing
+        four-week terminal-global-expiry condition on `g_peak_dd`'s restart
+        persistence (mirroring the same V6.37 correction from round 11); a
+        new finding that basket management computes R/break-even/trail/
+        giveback from requested quotes, never actual fill prices; an
+        overbroad same-symbol/same-magic cross-instance exposure claim
+        (`CountOurPositions` already blocks that specific combination); a
+        new finding that the persisted peak-DD key truncates a `long` magic
+        number to `int` and omits an account/server identifier, risking
+        collisions; and a new finding that a partial-leg-submission status
+        message can print the wrong TP rung — see the round-12 response for
+        the complete mapping) → **applied in the current symbolic
+        correction commit; pending review**.
 
       **Overclaim corrected in tenth-pass review:** the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
@@ -582,9 +667,11 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
    `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place again; added
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md`.
 6. `79f8e5a` — follow-up commit, `TASK-001_BASELINE_AUDIT.md` only, filling
-   in the `538bc39` hash (**omitted from this list until now — exactly the
-   kind of gap this section's structural fix, above, is meant to prevent
-   going forward**). Reviewed by Codex a fourth time; disposition
+   in the `538bc39` hash and completing that entry's exact path record
+   (**"hash-only" corrected in twelfth-pass review — see the Files-affected
+   note above; omitted from this list until now — exactly the kind of gap
+   this section's structural fix, above, is meant to prevent going
+   forward**). Reviewed by Codex a fourth time; disposition
    **changes requested a fourth time** (narrower still — most items
    verified, remaining precision issues in the ROTATION-visibility
    condition, cross-EA RSI synthesis, persisted-drawdown wording, momentum-
@@ -706,14 +793,32 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
     minimum-lot-fallback reachability boundary, the magic-number/exposure
     framing, the 45-minute exit's further caveats), a blank-vs-stale news-
     filter distinction, an H1/M30 reversal-lag overgeneralization, a
-    monotonic-narrowing overclaim, and a tense issue in this very Commit
-    section: see Acceptance criteria pass 11 below for the complete list).
-14. Eleventh correction-pass commit (hash not embedded here — unknowable at
-    authoring time; durable locator per the tenth-pass fix — see the first
-    commit after `b1a8ea5` in `git log --oneline
-    claude/task-001-baseline-audit`) — responding to this eleventh review.
-    This entry likewise references, rather than restates, the eleventh-pass
-    path list already stated above in "Files affected."
+    monotonic-narrowing overclaim, and a tense issue in the Reviewer-chain
+    annotation (**location corrected in twelfth-pass review — the eleventh
+    review located this in the Reviewer-chain annotation, not this Commit
+    section**): see Acceptance criteria pass 11 below for the complete list).
+14. Eleventh correction-pass commit, `a0f4ac3` (**hash filled in now that it
+    exists, twelfth-pass review**) — responding to the eleventh review. This
+    entry references, rather than restates, the eleventh-pass path list
+    already stated above in "Files affected." Reviewed by Codex a twelfth
+    time; disposition **changes requested a twelfth time** (Codex's twelfth
+    review confirmed thirteen prior corrections held (immutable-baseline
+    verification passed; the journal FileOpen-failure distinction, the
+    OnInit clean-slate print, the regime-bench scope, the stop-path
+    visibility split, the binomial arithmetic, the peak-R sole-deletion
+    site, the broadened call-site role, `RiskBudgetCash`'s non-peak
+    reclassification, the configurable-magic-number correction, the V8.11
+    time-exit caveats, the news-time distinction, the canonical-status pass
+    tracking, and the Files-affected/Commit path consistency) but its own
+    26-item open sweep found further errors spanning package/Git history
+    and both EA audits — see Acceptance criteria pass 12 below for the
+    complete list).
+15. Twelfth correction-pass commit (hash not embedded here — unknowable at
+    authoring time; durable locator — see the first commit after `a0f4ac3`
+    in `git log --oneline claude/task-001-baseline-audit`) — responding to
+    this twelfth review. This entry likewise references, rather than
+    restates, the twelfth-pass path list already stated above in "Files
+    affected."
 
 **Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
@@ -750,7 +855,8 @@ each subsequent pass) →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md`
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`
 (**chain corrected in tenth-pass review to actually include round 9 —
 Codex's tenth review found this chain still ending at round 8 despite
 `acb8e45` already having added the round-9 response file, which directly
@@ -758,7 +864,12 @@ falsified the round-9 response's own claim that this chain was current;
 round 10's filename **was** predeclared before its commit existed — **tense
 corrected to past in eleventh-pass review**, since that commit (`b1a8ea5`)
 now exists, per the eighth-pass structural fix above; round 11's filename
-is stated now, before its own commit exists, for the same reason**).
+**was** likewise predeclared before its commit existed — **tense corrected
+to past in twelfth-pass review**, since that commit (`a0f4ac3`) now exists —
+the eleventh-pass fix corrected round 10's tense but repeated the same
+self-expiring wording for round 11, which the twelfth review caught; round
+12's filename is stated now, before its own commit exists, for the same
+reason**).
 
 ## Final decision
 

@@ -79,7 +79,7 @@ behavior.
 | Laddered take-profits | Partial — staged TP1→TP3→runner extension, not fixed R-ladder | Yes — fixed `ladder[0..3]` at 1.0/1.5/2.0/2.5R, defaults use only first 2 rungs |
 | Giveback guard | Yes — `GuardOpenProfits`, arm/tolerance percent model | Yes — `ManageBasket` giveback block, arm/floor R model |
 | Profit-lock floor (raise SL as % of distance-to-TP covered) | Yes — distinct from giveback guard | No equivalent found |
-| Time exit | No fixed universal time exit (structural/momentum-based instead) | Yes — hard 45-minute wall-clock cutoff, uniform across all setup types |
+| Time exit | No fixed universal time exit (structural/momentum-based instead) | Yes — 45-minute wall-clock trigger, uniform across all setup types (**"hard cutoff" softened, twelfth-pass review** — attempts a close, doesn't confirm it, and the restart defect can suppress it entirely) |
 | Drawdown lock | No dedicated equity-peak lock (giveback guard + daily limits instead) | Yes — but restart-vulnerable (see Contradictions) |
 | Baskets/trades-per-day cap | Daily money/percent limits only, no trade-count cap found | Yes — `InpMaxDayBaskets` |
 | Journal/learning system | Yes — CSV journal, per-strategy and per-strategy-per-regime win-rate adjustment | **None** — explicitly no journal files by design (header comment, verified by full-file grep for `FileOpen`) |
@@ -107,11 +107,15 @@ behavior.
 
 ## Duplicated concepts
 
-- **Trendlines, tripled within V6.37 alone**: `EvaluateSRChannel`,
+- **Trendlines, duplicated within V6.37 alone (count corrected in
+  twelfth-pass review — "tripled" and "three-times-duplicated" mixed a
+  mechanism count with an implementation count)**: `EvaluateSRChannel`,
   `EvaluateTrendBreaker`, and the dedicated `BuildTrendlineTouchSignal`/
-  `BuildTrendlineBreakRetestSignal` pair are four separate "what counts as a
-  trendline touch/break" implementations with different swing-depth inputs.
-  V8.11 has none, by design.
+  `BuildTrendlineBreakRetestSignal` pair are **three conceptual mechanisms
+  containing four separate entry implementations** (the dedicated pair
+  counts as one mechanism, two implementations) — "what counts as a
+  trendline touch/break" is answered four different ways with different
+  swing-depth inputs. V8.11 has none, by design.
 - **"Drawdown from peak" within V8.11: one session-relative drawdown
   calculation, its persisted running maximum, plus a separate non-peak
   sizing haircut (recharacterized in tenth-pass review — `RiskBudgetCash` is
@@ -206,8 +210,8 @@ correct classification individually.
 | Aspect | V6.37 | V8.11 |
 |---|---|---|
 | Base risk per trade | 1.0%–2.0% standing budget | 1.0% "total per basket" (nominal) |
-| Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up**) | Looser ceiling only — pilot trade permitted up to 5.0% actual risk (the least-confirmed trade of a new trend) vs. 1–2% standing budget, but actual risk can be below the standing budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
-| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the implemented budget) |
+| Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up; ratio corrected in twelfth-pass review**) | Looser ceiling only — pilot trade permitted up to 5.0% actual risk (the least-confirmed trade of a new trend) vs. the EA's implemented cash budget of ~0.8% (non-XAU) / ~0.2% (XAU) at shipped defaults — a 6.25×/25× ceiling, not "1–2% standing budget"/2.5–5× as earlier stated — but actual risk can be below the implemented budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
+| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget when equity ≥ balance (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the implemented budget in that case; the ratio widens further if the account is underwater — **condition added, twelfth-pass review**) |
 | Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — correct when the split succeeds |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
 | Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | **Corrected in third-pass review** — gating variable's peak-balance reference resets to current balance on restart, which can *understate* current drawdown relative to the true historical peak (conditional on how much higher that prior peak was — not an unconditional reset to zero, since floating loss at restart still shows up) |
@@ -223,10 +227,13 @@ correct classification individually.
   under current 2-leg default); break-even at 1.0R; runner trail arms at
   1.5R (identical to the last live leg's own TP under current defaults,
   making the trail dead code as shipped); giveback guard checked before the
-  hard 45-minute time exit and before direction-flip exit.
+  45-minute time-exit attempt and before direction-flip exit.
 - Both giveback guards are genuinely enforced, verified by reading the exit
   code, not merely comment-claimed.
-- V8.11's hard wall-clock time exit is a design choice absent from V6.37;
+- V8.11's wall-clock time exit (**"hard"/"enforced" softened in
+  twelfth-pass review — `CloseBasket` attempts but does not confirm the
+  close, and the restart defect can suppress this exit entirely**) is a
+  design choice absent from V6.37;
   whether a volatility/structure-conditioned time exit (as the new engine's
   spec requires — "evidence-based, not universally fixed at 45 minutes")
   performs better is exactly the kind of isolated experiment the new engine
@@ -395,7 +402,12 @@ disposition: changes requested, now integrated into both audit documents).
 
 - V6.37's SR touch-decay scoring, second-distinct-retest confirmation
   requirement, and dealing-range lock/persist-until-break behavior are
-  well-reasoned and independently verified to work as documented.
+  well-reasoned and are implemented consistently with their documented
+  behavior (**"verified to work as documented" corrected in twelfth-pass
+  review** — static source reading, this task's method throughout, can
+  confirm implementation matches description; it cannot confirm runtime
+  "working," which would require compilation and execution this task
+  explicitly did not perform).
 - V6.37's minimum-sample-gated, bench-with-safety-valve journal-learning
   pattern is a reasonable starting point for the new engine's
   `LearningStatistics.mqh` — provided the regime-bench gap is fixed before
@@ -429,8 +441,10 @@ disposition: changes requested, now integrated into both audit documents).
   eighth-pass review — this repo's Git history has no commit history prior
   to the baseline import that would establish a refactor/supersession
   account; only the no-call-sites fact is source/Git-supported**).
-- V6.37's three-times-duplicated trendline logic — consolidate to one
-  definition if trendlines are carried into the new engine at all.
+- V6.37's trendline logic, duplicated across three conceptual mechanisms /
+  four implementations (**count corrected in twelfth-pass review, see
+  "Duplicated concepts" above**) — consolidate to one definition if
+  trendlines are carried into the new engine at all.
 - V8.11's `BuildStructureMarks` chart-mark logic as currently written —
   either delete it or rewire it to read from the same structure functions
   that actually drive trades, so the chart stops showing a disconnected
@@ -453,15 +467,19 @@ disposition: changes requested, now integrated into both audit documents).
   apply to every entry path**).
 - Pilot-trade looser risk *ceiling* on unconfirmed trends (V6.37) —
   **"escalation"/"increase" corrected to "looser ceiling" in eleventh-pass
-  review**: the pilot always sizes at the broker minimum lot rather than
-  scaling to the ceiling, so its actual risk is not necessarily higher than
-  the ordinary budget, only permitted to be up to 2.5–5× looser — the new
+  review; ratio corrected in twelfth-pass review**: the pilot always sizes
+  at the broker minimum lot rather than scaling to the ceiling, so its
+  actual risk is not necessarily higher than the EA's implemented budget,
+  only permitted to be up to 6.25×/25× (non-XAU/XAU) looser at shipped
+  defaults, not 2.5–5× — the new
   engine's risk policy explicitly requires risk to never increase on weak
   evidence, so this looser-ceiling pattern should still not be ported
   without redesign.
 - Basket/multi-leg sizing — the new engine's `RISK_POLICY.md` disables
   multi-leg baskets by default until independently proven; V8.11's minimum-
   lot fallback path (which can silently push realized risk up to ~2.5× the
-  implemented budget, not simply "double" the nominal 1% input — **corrected
-  in eleventh-pass review**, see the V8.11 audit's corrected note) is a
+  implemented budget when equity ≥ balance, and further still if the account
+  is underwater — not simply "double" the nominal 1% input — **corrected in
+  eleventh-pass review, underwater case added twelfth-pass review**, see the
+  V8.11 audit's corrected note) is a
   concrete example of why that default caution is warranted.
