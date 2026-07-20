@@ -10,7 +10,9 @@ Synthesizes `baseline_v637_audit.md` and `baseline_v811_audit.md` per
 selected by code size or comment density — this is a feature/risk matrix to
 inform which modules get reused, retired, or isolated-tested in the new
 `Themba Adaptive Intraday Engine`. Nothing here claims compilation,
-correctness, or profitability; both source audits are static reads only.
+correctness, or profitability, **with one limited, explicitly modeled
+exception noted where it occurs (row 78 below) — corrected in
+fourteenth-pass review**: both source audits are static reads only.
 
 ## Orphaned set file — not usable for either baseline; provenance unresolved
 
@@ -69,13 +71,13 @@ behavior.
 |---|---|---|
 | Fractal/swing detection | Yes — `IsSwingHigh/Low`, depth-configurable | Yes — `FindLastTwoSwings`, `InpSwingDepth` |
 | Support/resistance with touch-decay scoring | Yes — `FindSRZone` | Yes (simpler) — `FindClusterBoundary`, ranked primarily by touch count but also using distance-to-price as a tie-breaker and consecutive-close invalidation (**"touch-count only" corrected, thirteenth-pass review**, source 644–669) |
-| BOS/CHoCH structural break detection | Yes — `AnalyzeStructure`, one consistent definition | Yes for `StructureTrend`/M30 direction, but **a second, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see "Contradictions and unresolved policy questions" |
+| BOS/CHoCH structural break detection | Multiple live definitions coexist, not one (**"one consistent definition" corrected, fourteenth-pass review**) — `AnalyzeStructure` is self-consistent, but `FindRecentStructureShiftLevel` is a separately-coded, also-live shift test, and `BuildBOSRetestSignal` combines both; a fourth, dead definition (`HasEntryCHOCH`) also exists | Yes for `StructureTrend`/M30 direction, plus a live `BuildBOSRetest` (1209–1271) traded structural-break definition **omitted from this row** (added, fourteenth-pass review) — and **a further, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see "Contradictions and unresolved policy questions" |
 | Order blocks | Yes — M30, with SR confluence requirement | Yes — two-stage M15→M5 refinement, single shared accessor `ActiveOB()` |
 | FVG detection with "fresh/untouched, first-return-only" rule | Yes — enforced, verified | **Overstated, corrected in second-pass review** — partially enforced: touch scan omits the trigger bar and there is no persistent consumed-flag, so a cached gap can in principle be reconsidered on a later bar (see `baseline_v811_audit.md`'s "M5 FVG" section) |
-| Trendlines | Yes — three independent implementations (see Duplicated concepts) | Deliberately absent by design (header comment: SMC treats diagonal lines as "edgeless") |
+| Trendlines | Yes — three conceptual mechanisms, four implementations (**"three independent implementations" corrected, fourteenth-pass review** — see Duplicated concepts) | Deliberately absent by design (header comment: SMC treats diagonal lines as "edgeless") |
 | Premium/discount/equilibrium/OTE | Yes — hard gate with 4 documented escape hatches | Yes (as PD bands feeding `LocationOK`), simpler, no OTE-specific pocket |
 | Range cycle / rotation | Yes — both, with a regime-routing policy question for Rotation (see below; **wording corrected in second-pass review** — verified reachable behavior, not a confirmed contradiction) | Not present as a named strategy (clustered SR bounce covers similar ground) |
-| Basket/multi-leg entries | No — single-position pilot/add-on model instead | Yes — 1–4 legs, risk-budget-split sizing (core math correct, fallback path breaks it — see Contradictions) |
+| Basket/multi-leg entries | No — single-position pilot/add-on model instead | Yes — 1–4 legs, risk-budget-split sizing (modeled, requested-price-basis math is internally consistent when the split succeeds — **"core math correct" narrowed, fourteenth-pass review**, not a claim about realized outcomes; fallback path breaks it — see Contradictions) |
 | Laddered take-profits | Partial — staged TP1→TP3→runner extension, not fixed R-ladder | Yes — fixed `ladder[0..3]` at 1.0/1.5/2.0/2.5R, defaults use only first 2 rungs |
 | Giveback guard | Yes — `GuardOpenProfits`, arm/tolerance percent model | Yes — `ManageBasket` giveback block, arm/floor R model |
 | Profit-lock floor (raise SL as % of distance-to-TP covered) | Yes — distinct from giveback guard | No equivalent found |
@@ -144,10 +146,14 @@ behavior.
   of-peak vs. absolute-R-floor) solving the same problem — a natural
   candidate for an isolated A/B experiment in the new engine rather than
   picking one by inspection.
-- **Fractal/swing depth, fragmented within V6.37**: three independent inputs
-  (`InpFractalDepth`, `InpStructureSwingDepth`, `InpTrendSwingDepth`) all
-  default to 2 but a comment implies one shared definition — never enforced
-  equal.
+- **Fractal/swing depth, fragmented within V6.37 (broadened, fourteenth-pass
+  review)**: at least four independent depth inputs (`InpFractalDepth`,
+  `InpStructureSwingDepth`, `InpTrendSwingDepth`, `InpMajorSwingDepth`) plus
+  a hard-coded literal, never enforced equal — the concrete contradiction is
+  narrower than "a comment implies one shared definition": the FVG pathway
+  specifically mixes `InpStructureSwingDepth` (via `AnalyzeStructure`) and
+  `InpFractalDepth` (via `FindTwoConfirmedSwingsBefore`) even though the
+  line-201 comment only promises `InpStructureSwingDepth` covers FVG checks.
 
 ## Contradictions and unresolved policy questions
 
@@ -212,9 +218,9 @@ correct classification individually.
 | Aspect | V6.37 | V8.11 |
 |---|---|---|
 | Base risk per trade | 1.0%–2.0% standing budget | 1.0% "total per basket" (nominal) |
-| Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up; ratio corrected in twelfth-pass review**) | Looser ceiling only — pilot trade permitted up to 5.0% actual risk (the least-confirmed trade of a new trend) vs. the EA's implemented cash budget of ~0.8% (non-XAU) / ~0.2% (XAU) at shipped defaults — a 6.25×/25× ceiling, not "1–2% standing budget"/2.5–5× as earlier stated — but actual risk can be below the implemented budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
-| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget when equity ≥ balance (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the **modeled, requested-price-basis** budget in that case, not a cap on realized risk — **"realized risk" corrected to "modeled requested-basis risk," thirteenth-pass review**, since fills are never read back into the risk figures used, see finding #16; the ratio widens further if the account is underwater — **condition added, twelfth-pass review**) |
-| Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — modeled correctly when the split succeeds, **conditional on requested submissions succeeding, before volume rounding, fill differences, gaps, and slippage** (**qualifier added, thirteenth-pass review**) — see finding #16 |
+| Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up; ratio corrected in twelfth-pass review; "new trend" identity claim and Rotation compounding corrected, fourteenth-pass review**) | Looser ceiling only — pilot (symbol/magic stage-0 state, not tied to any particular trend) permitted up to 5.0% actual risk vs. the EA's implemented cash budget of ~0.8% (non-XAU) / ~0.2% (XAU) at shipped defaults — a 6.25×/25× ceiling for non-Rotation setups, 8.33×/33.33× for Rotation (which compounds a further 0.75× reduction) — but actual risk can be below the implemented budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
+| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget when equity ≥ balance (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the **modeled, requested-price-basis** budget in that case, not a cap on realized risk — **"realized risk" corrected to "modeled requested-basis risk," thirteenth-pass review**, since fills are never read back into the risk figures used, see the V8.11 audit's summary row 16 (requested-vs-actual-fill R/BE/trail/giveback defect); the ratio widens further if the account is underwater — **condition added, twelfth-pass review**) |
+| Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — modeled correctly when the split succeeds, **conditional on requested submissions succeeding, before volume rounding, fill differences, gaps, and slippage** (**qualifier added, thirteenth-pass review**) — see the V8.11 audit's summary row 16 (requested-vs-actual-fill R/BE/trail/giveback defect) |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
 | Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | **Corrected in third-pass review** — gating variable's peak-balance reference resets to current balance on restart, which can *understate* current drawdown relative to the true historical peak (conditional on how much higher that prior peak was — not an unconditional reset to zero, since floating loss at restart still shows up) |
 | Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | Partial — `RiskBudgetCash` sizes off total account equity **and balance** (**"equity alone" corrected, eleventh-pass review**) per instance with no cross-instance risk-budget awareness, but `CountOurPositions`/`OnTick`'s gate (1639–1653/307–308) *does* see same-symbol/same-magic exposure and normally blocks a second basket there (**"no cross-instance awareness ... independent of magic" narrowed, thirteenth-pass review**) — the actual gap is different symbols (any magic) or the same symbol with different magic numbers, not every instance pair |
@@ -287,8 +293,10 @@ correct classification individually.
   actually drive score adjustment, only downstream analytics.
 - V8.11 has no journal at all, by design — nothing to corrupt, but also
   nothing to learn from outcome history; base scores are fixed per-input,
-  but several setups layer live, tick-dynamic market-evidence bonuses on
-  top (**"all scoring is static" corrected in thirteenth-pass review** —
+  but several setups layer market-dependent, bar-updated market-evidence
+  bonuses on top (**"all scoring is static" corrected in thirteenth-pass
+  review, "tick-dynamic" corrected to "bar-updated" in fourteenth-pass
+  review** —
   see the V8.11 audit's "No journal-learning system" section).
 
 ## Failure modes (most operationally significant, both files)
@@ -428,8 +436,13 @@ disposition: changes requested, now integrated into both audit documents).
   explicitly did not perform).
 - V6.37's minimum-sample-gated, bench-with-safety-valve journal-learning
   pattern is a reasonable starting point for the new engine's
-  `LearningStatistics.mqh` — provided the regime-bench gap is fixed before
-  reuse (**narrowed in eleventh-pass review — not a proven self-perpetuating
+  `LearningStatistics.mqh` — provided **both** the regime-bench gap **and**
+  the confirmed sign-error defect (the "penalty" branch of both the base and
+  regime-level multiplier boosts, rather than penalizes, a strategy with win
+  rate above 50% but net loss — see `baseline_v637_audit.md`'s Journal
+  memory section) are fixed before reuse (**sign-error condition added,
+  fourteenth-pass review — a prior draft of this recommendation named only
+  the regime-bench gap**) (**narrowed in eleventh-pass review — not a proven self-perpetuating
   lockout**: the bench only blocks ordinary combined-signal-pipeline
   candidates via the separate minimum-score threshold, not an inability to
   occupy a direction slot; the NFP-displacement and OB-limit-order paths
@@ -441,8 +454,10 @@ disposition: changes requested, now integrated into both audit documents).
   accessor (`ActiveOB()`) consumed identically by both drawing and trading
   code is a clean pattern worth reusing directly for the new engine's
   `OrderBlockEngine.mqh`.
-- V8.11's shared pin-bar/engulfing helper functions (one definition, four
-  call sites) are a clean, verified, directly portable pattern. Its FVG
+- V8.11's shared pin-bar/engulfing helper functions (four helper
+  definitions, reused across eight call sites in four setup builders —
+  **count corrected in fourteenth-pass review, was "one definition, four
+  call sites"**) are a clean, verified, directly portable pattern. Its FVG
   "first-return-only, untouched" rule is a reasonable starting point but
   **not, as written, a clean lifecycle state machine to port directly**
   (**corrected in second-pass review** — see the FVG detection row above):
@@ -469,6 +484,15 @@ disposition: changes requested, now integrated into both audit documents).
   second opinion.
 - The orphaned `SmartCore_v3_Tuned.set.txt` should not be loaded into
   either baseline for any testing (see resolution above).
+
+## Additional confirmed behaviors relevant to a combined engine (added fourteenth-pass review)
+
+Several newly confirmed source behaviors materially affect what a combined engine should and shouldn't inherit, and were previously omitted from this synthesis:
+
+- **V6.37:** the pending-order-fill misassociation (a market fill can be mislabeled as an OB-limit fill by direction alone, orphaning the real pending order — see the V6.37 audit's Pending order-block limits section); the two-anchor trendline-projection geometry (the "three-point" line never tests its own middle point, and break confirmation compares against one constant projected level, not a re-projected line); the `InpUseTradingJournal`/`InpUseJournalLearning` coupling (disabling the journal silently freezes live learning updates even with learning left on); the NFP displacement builder's weak release-linkage (any qualifying spike in the lookback window, not specifically the configured release); and the confirmed learning-penalty sign error (a losing-but-high-win-rate strategy is boosted, not penalized, at both the base and regime level).
+- **V8.11:** the daily-limit numerator/denominator anchor mismatch across a mid-day restart; the configurable-depth forming-bar dependency in `BuildStructureMarks` (closed-bar-safe only at the shipped default); the chart-mark retention bias (oldest four breaks kept, not most recent) and the always-CHoCH first-label artifact; and the range-visual/status-message divergence from what actually trades (only boundary prices/equilibrium are shared with trade logic — `g_range_start` and the sweep flags are drawing/dashboard-only semantics, not trade inputs).
+
+None of these are reasons to discard the underlying concepts (sweep-and-shift, basket sizing, trendline break confirmation, journal-driven learning) — they are specific, fixable defects to correct during a combined redesign, not architectural dead ends.
 
 ## Modules needing isolated experiments before reuse
 

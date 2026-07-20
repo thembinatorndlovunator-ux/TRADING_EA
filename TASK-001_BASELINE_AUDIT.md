@@ -28,7 +28,7 @@ preserved evidence — see "Files affected" and "Commit" below for the full
 distinction). Their behavior as documented by static reading:
 
 - **SmartCoreEngine V6.37** (`01_BASELINE/EA_V637/Thembabot14 Max.mq5`,
-  8,822 lines, 282 input variables + 25 input-group headings): fractal SR, triple-redundant trendline logic,
+  8,822 lines, 282 input variables + 25 input-group headings): fractal SR, trendline logic duplicated across three mechanisms/four implementations (**"triple-redundant" corrected in fourteenth-pass review**),
   FVG retest, range cycle/rotation, premium/discount/equilibrium/OTE, BOS/
   CHoCH, M30 order-block confluence, pilot trade + add-ons, regime-aware
   journal-learning, daily limits, ATR stop floor/cap, profit-lock +
@@ -42,7 +42,10 @@ distinction). Their behavior as documented by static reading:
   gap can in principle be reconsidered — see `baseline_v811_audit.md`'s "M5
   FVG" section), M1
   BOS retest, ASQ momentum breakout, 1–4 leg baskets with fixed R-ladder,
-  giveback guard, hard 45-minute time exit, peak-drawdown lock, manual
+  giveback guard, a 45-minute time-exit close attempt (**"hard" corrected,
+  fourteenth-pass review — the mechanism ignores its own close result and
+  can be suppressed entirely across a restart, see `baseline_v811_audit.md`**),
+  peak-drawdown lock, manual
   session/news filters, no journal/learning system by design. Full detail:
   `baseline_v811_audit.md`.
 
@@ -234,13 +237,30 @@ now that it exists, thirteenth-pass review**): `baseline_v637_audit.md`,
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`. Did
 **not** touch `TASKS.md` or any `01_BASELINE/` path.
 
-**Modified in the thirteenth correction pass** (hash not embedded here —
+**Modified in the thirteenth correction commit `3eb6ac5`** (**hash filled in
+now that it exists, fourteenth-pass review**): `baseline_v637_audit.md`,
+`baseline_v811_audit.md`, `baseline_comparison.md`,
+`TASK-001_BASELINE_AUDIT.md`, overwrote
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md`. Did
+**not** touch `TASKS.md` or any `01_BASELINE/` path.
+
+**Modified in a same-round follow-up commit `81a4bf2`** (**added in
+fourteenth-pass review — this two-commit split for round 13 was previously
+missing from this history entirely**), closing two items the round-13
+response had flagged as incomplete: `baseline_v811_audit.md` (four new
+V8.11 findings) and `TASK-001_BASELINE_AUDIT.md` (removing, not just
+scoping, the unsupported "narrower"/"narrower still" comparative wording
+from Commit entries 2–9). Exactly two paths; did not touch `TASKS.md` or
+any `01_BASELINE/` path.
+
+**Modified in the fourteenth correction pass** (hash not embedded here —
 unknowable at authoring time; durable locator — see the first commit after
-`ce9f712` in `git log --oneline claude/task-001-baseline-audit`):
+`81a4bf2` in `git log --oneline claude/task-001-baseline-audit`):
 `baseline_v637_audit.md`, `baseline_v811_audit.md`, `baseline_comparison.md`,
 `TASK-001_BASELINE_AUDIT.md`, overwriting
 `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
-file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md`.
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round14.md`.
 Not touching `TASKS.md` or any `01_BASELINE/` path.
 
 **Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (scope of the EA-directory diffs corrected in twelfth-pass review — they verify each entire tracked EA directory, not only the `.mq5` file within it):** the claim "no file
@@ -300,8 +320,10 @@ is not out of scope for this task's final state.
   `IsBearishInsideFalseBreak` reading the forming bar — a confirmed rule
   violation, not a risk to weigh). Among evidence-dependent operational
   risks: V6.37's `CloseAllOurPositions` symbol-filter omission (gated
-  behind all four daily thresholds defaulting to zero; when active, force-
-  closes positions across symbols sharing a magic number) and V8.11's
+  behind all four daily thresholds defaulting to zero; when active, attempts
+  to close positions across symbols sharing a magic number — **"force-closes"
+  softened, fourteenth-pass review**: the underlying `PositionClose` call's
+  result is not checked) and V8.11's
   restart defect (loses *dynamic* risk management — break-even, trailing,
   giveback, time exit, and direction-flip exit (**added, missing from this
   list per third-pass review**) — for an open basket, though the current
@@ -314,7 +336,12 @@ is not out of scope for this task's final state.
 - **Audit depth vs. agent variance**: the two deep-audit passes were done
   by independent agent runs reading the full files end-to-end; line numbers
   were independently re-verified in each pass rather than trusted from the
-  prior structural survey. **Updated per independent review — no
+  prior structural survey. **Attribution note, fourteenth-pass review:**
+  this specific claim (independent agent runs, full end-to-end reads) is an
+  author attestation about how the work was performed — it is not something
+  Git history or the repository itself can independently verify, and should
+  be read as such rather than as an established, externally-confirmed fact.
+  **Updated per independent review — no
   longer a forward-looking risk:** the independent Codex read has since
   happened repeatedly (**pass count no longer restated here as of
   seventh-pass review, for the same reason as the Out-of-scope note above —
@@ -378,7 +405,7 @@ integrity:
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** thirteen review passes so far, all returning changes requested
+      **Status:** fourteen review passes so far, all returning changes requested
       (**"each narrower than the last" removed as a blanket claim in
       eleventh-pass review; the replacement "passes 1–9 narrowed
       progressively" and "round 10 was the first full package sweep" claims
@@ -580,7 +607,26 @@ integrity:
         peak-DD expiry, cross-instance exposure scope, requested-fill risk
         wording, journal magic-isolation, a restart positions/orders
         overclaim, and a routing-completeness overclaim) — see the
-        round-13 response for the complete mapping) → **applied in the
+        round-13 response for the complete mapping) → addressed by two
+        commits, **not one (corrected, fourteenth-pass review)**: `3eb6ac5`
+        (the six-path response above) plus a same-round follow-up
+        `81a4bf2` (two paths, closing the C10/A3 gaps that response
+        explicitly flagged as incomplete).
+      - Pass 14 (a further large open-ended sweep, ~36 findings across
+        package/Git history (A1–A4), V6.37 source/consistency (B1–B12),
+        V8.11 source/consistency (C1–C14), and comparison-document drift
+        (D1–D5) — most notably a new pending-order-fill misassociation bug
+        in V6.37 (deal-to-pending-order matching by direction only, no
+        ticket/provenance check), a `InpUseTradingJournal`/
+        `InpUseJournalLearning` operational-coupling gap, a Rotation-setup
+        pilot-ratio compounding (8.33×/33.33×, not 6.25×/25×), two new
+        V8.11 findings (chart-mark retention/first-CHoCH-label artifacts,
+        a daily-limit numerator/denominator anchor mismatch across
+        restarts), and a large number of "attempted vs. guaranteed"
+        wording corrections (time exits, position closes, break-even/
+        giveback triggers) plus "retires"/"static"/"tick-dynamic"
+        precision fixes across both audits and the comparison — see the
+        round-14 response for the complete mapping) → **applied in the
         current symbolic correction commit; pending review**.
 
       **Overclaim corrected in tenth-pass review:** the BLOCKER (V6.37's
@@ -937,7 +983,8 @@ each subsequent pass) →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md`
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round14.md`
 (**chain corrected in tenth-pass review to actually include round 9 —
 Codex's tenth review found this chain still ending at round 8 despite
 `acb8e45` already having added the round-9 response file, which directly
@@ -953,10 +1000,16 @@ self-expiring wording for round 11, which the twelfth review caught; round
 **tense corrected to past in thirteenth-pass review, since that commit
 (`ce9f712`) now exists** — this same self-expiring-wording gap recurred a
 third time (round 10 fixed by round 11, round 11 fixed by round 12, round
-12 now fixed by round 13), confirming this is a structural pattern in how
-this annotation gets written each round, not an isolated slip; round 13's
-filename is stated now, before its own commit exists, for the same
-reason**).
+12 fixed by round 13); round 13's filename **was** likewise predeclared
+before its commit existed — **tense corrected to past in fourteenth-pass
+review, since that response was actually delivered across two commits,
+`3eb6ac5` and a same-round follow-up `81a4bf2` (see Files affected and
+Commit above)** — this recurring gap (now caught a fourth consecutive time:
+by 11, 12, 13, and 14) confirms it is a structural pattern in how this
+annotation gets written each round, not an isolated slip, and this
+annotation should be read as durably unreliable in its present-tense form
+regardless of which round is current; round 14's filename is stated now,
+before its own commit exists, for the same reason**).
 
 ## Final decision
 
