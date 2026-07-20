@@ -51,9 +51,12 @@ Both baselines are read-only source of truth for this task — nothing in
   each EA, every claim cited to a real line number, every finding labeled
   FACT / COMMENT-CLAIMED / CONTRADICTION / HYPOTHESIS.
 - `baseline_comparison.md` — synthesized feature/risk matrix across both
-  EAs, plus resolution of the orphaned `SmartCore_v3_Tuned.set.txt`
-  provenance question (belongs to neither baseline — see that file's
-  "Orphaned set file — resolved" section).
+  EAs. **Corrected per independent review (C1):** the orphaned
+  `SmartCore_v3_Tuned.set.txt` question is not resolved — the comparison
+  document establishes only that the file is not a usable native preset
+  for either baseline; its actual origin remains unresolved (see that
+  file's "Orphaned set file — not usable for either baseline; provenance
+  unresolved" section).
 
 ## Specification
 
@@ -65,7 +68,11 @@ governing specs.
 
 ## Files affected
 
-New files only, all on branch `claude/task-001-baseline-audit`:
+**Distinguished per independent review (C2)** — initial deliverables vs.
+later correction-pass modifications, all on branch
+`claude/task-001-baseline-audit`:
+
+**New in the initial commit (`c61903f`):**
 - `TASKS.md`
 - `TASK-001_BASELINE_AUDIT.md` (this file)
 - `01_BASELINE/inventory.md`
@@ -76,7 +83,20 @@ New files only, all on branch `claude/task-001-baseline-audit`:
 - `profit_giveback_diagnosis_plan.md`
 - `09_HANDOVERS/claude_to_codex/TASK-001_handover.md`
 
-No file under `01_BASELINE/` was modified (verified — see Test plan).
+**Modified in the first correction commit (`3f69469`)** in response to
+Codex's first review — `baseline_v637_audit.md`, `baseline_v811_audit.md`,
+`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md` — plus
+new files `09_HANDOVERS/codex_to_claude/TASK-001_review.md` and
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`.
+
+**Modified in the second correction pass** (commit recorded once made —
+see Commit section below), responding to Codex's second review — the same
+four documents (`baseline_v637_audit.md`, `baseline_v811_audit.md`,
+`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`) plus `TASKS.md`,
+plus a new response file for this round.
+
+No file under `01_BASELINE/` was modified by any of the above commits
+(verified — see Test plan).
 
 ## Out of scope
 
@@ -84,10 +104,14 @@ No file under `01_BASELINE/` was modified (verified — see Test plan).
 - No new architecture files under `03_SOURCE_CODE/`.
 - No specification documents beyond the giveback *plan* (not a diagnosis —
   no trade data exists yet to diagnose from).
-- No actual Codex review execution — `09_HANDOVERS/claude_to_codex/TASK-001_handover.md`
-  only requests it; the review itself happens in a separate Codex
-  session/branch per `AGENTS.md`.
 - No compilation or backtesting — nothing here is code.
+
+**Note (C3, stale text removed per independent review):** an earlier draft
+of this section stated "no actual Codex review execution" as an out-of-scope
+item. That is no longer accurate — Codex has since completed two full
+review passes (see Reviewer and Commit sections below); review execution
+itself happened in a separate Codex session/branch per `AGENTS.md`, but it
+did occur, and is not out of scope for this task's final state.
 
 ## Risks
 
@@ -96,22 +120,30 @@ No file under `01_BASELINE/` was modified (verified — see Test plan).
   repo yet, so every visual interpretation and every "risk of X" checklist
   item that needed empirical confirmation is explicitly marked HYPOTHESIS,
   not FACT, per `profit_giveback_diagnosis_plan.md`.
-- **Two highest-severity code findings, unresolved by design of this
-  task**: V6.37's `CloseAllOurPositions` symbol-filter omission (would
-  force-close unrelated profitable positions across symbols on a shared
-  magic number) and V8.11's restart-strips-all-risk-controls defect (a
-  restarted EA with an open basket silently loses break-even/trailing/
-  giveback/time-exit protection while the dashboard reports "flat"). Both
-  are documented, neither is fixed here — fixing baseline code would
-  violate "preserve both original EAs as immutable baselines"
-  (`PROJECT_RULES.md` #1). These are inputs to the *new* engine's design,
-  not patches to the old ones.
+- **Highest-severity code findings, unresolved by design of this task,
+  updated per independent review (C4):** the category-topping finding is
+  V6.37's completed-candle BLOCKER (`IsBullishInsideFalseBreak`/
+  `IsBearishInsideFalseBreak` reading the forming bar — a confirmed rule
+  violation, not a risk to weigh). Among evidence-dependent operational
+  risks: V6.37's `CloseAllOurPositions` symbol-filter omission (gated
+  behind all four daily thresholds defaulting to zero; when active, force-
+  closes positions across symbols sharing a magic number) and V8.11's
+  restart defect (loses *dynamic* risk management — break-even, trailing,
+  giveback, time exit — for an open basket, though the broker-held SL/TP
+  and the daily-lock's `CloseBasket` path both survive; the dashboard still
+  misreports "Basket: flat"). None of these are fixed here — fixing
+  baseline code would violate "preserve both original EAs as immutable
+  baselines" (`PROJECT_RULES.md` #1). These are inputs to the *new*
+  engine's design, not patches to the old ones.
 - **Audit depth vs. agent variance**: the two deep-audit passes were done
   by independent agent runs reading the full files end-to-end; line numbers
   were independently re-verified in each pass rather than trusted from the
-  prior structural survey, but a second independent read (Codex) is still
-  required per the release-gate process before these findings inform any
-  new code.
+  prior structural survey. **Updated per independent review (C3) — no
+  longer a forward-looking risk:** the independent Codex read has since
+  happened (twice), each pass catching real precision issues the prior pass
+  missed. This remains listed as a risk category because a third pass
+  cannot be ruled out as still finding something, not because no review has
+  occurred yet.
 
 ## Test plan
 
@@ -143,16 +175,20 @@ integrity:
       documented as unresolved with reasoning) in `baseline_comparison.md`.
 - [x] Profit-giveback document is a plan, not a diagnosis (no trade data
       exists to diagnose from).
-- [x] Independent Codex review completed
-      (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, disposition:
-      **changes requested**) and findings resolved — corrections integrated
-      into all three affected documents (`baseline_v637_audit.md`,
-      `baseline_v811_audit.md`, `baseline_comparison.md`) in the follow-up
-      commit. Includes one BLOCKER (V6.37's completed-candle violation in
-      `IsBullishInsideFalseBreak`/`IsBearishInsideFalseBreak`) and several
-      new cross-cutting findings (netting/hedging compatibility,
+- [ ] Independent Codex review completed and findings resolved — **in
+      progress, two passes so far, updated per independent review (C6)**:
+      pass 1 (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, first
+      version) returned changes requested, addressed in commit `3f69469`;
+      pass 2 (same file, updated in place) returned changes requested again
+      — narrower, mostly internal-consistency issues between corrected
+      detailed sections and stale summaries, plus a handful of precision
+      fixes — now being addressed in the second correction pass. Both
+      passes independently confirmed the BLOCKER (V6.37's completed-candle
+      violation in `IsBullishInsideFalseBreak`/`IsBearishInsideFalseBreak`)
+      and the new cross-cutting findings (netting/hedging compatibility,
       trade-result handling, broker filling/stop/tick-size validation,
-      restart idempotency) neither original audit had covered.
+      restart idempotency). Not checked off until a review pass returns
+      approval.
 
 ## Rejection criteria
 
@@ -216,28 +252,45 @@ integrity checking (see Test plan above), not software testing.
 
 ## Commit
 
-- Initial deliverables commit: `c61903f` on `claude/task-001-baseline-audit`
-  (9 files — see "Files affected").
-- Codex independent review: `09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
-  disposition **changes requested**.
-- Corrections-in-response-to-review commit: recorded once committed (see
-  Final decision below) — updates `baseline_v637_audit.md`,
-  `baseline_v811_audit.md`, `baseline_comparison.md`, and this file to
-  integrate every required change from the review. No file under
-  `01_BASELINE/` is touched by the correction commit either.
+**Filled in per independent review (C5) — full commit history on this
+branch:**
+
+1. `c61903f` — initial deliverables commit (9 files — see "Files
+   affected"). Reviewed by Codex; disposition **changes requested**
+   (`09_HANDOVERS/codex_to_claude/TASK-001_review.md`, first version).
+2. `3f69469` — first correction-pass commit, responding to that review.
+   Touched `baseline_v637_audit.md`, `baseline_v811_audit.md`,
+   `baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`; added
+   `09_HANDOVERS/codex_to_claude/TASK-001_review.md` and
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`. Re-reviewed
+   by Codex; disposition **changes requested again** (narrower — most
+   source-level findings verified, but several summary/comparison sections
+   were stale relative to the corrected detailed prose, plus a few
+   precision fixes and one omitted netting finding).
+3. Second correction-pass commit — recorded here once made — responding to
+   that second review. Touches the same four documents plus `TASKS.md`,
+   plus a new second-round response file.
+
+No file under `01_BASELINE/` is touched by any commit in this history
+(verified before and after each commit).
 
 ## Reviewer
 
-Codex — independent review completed via
+Codex — two independent review passes completed via
 `09_HANDOVERS/claude_to_codex/TASK-001_handover.md` →
-`09_HANDOVERS/codex_to_claude/TASK-001_review.md`. Disposition: **changes
-requested**. All required changes from that review have been applied in
-the corrections commit referenced above.
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` (updated in place for the
+second pass) → `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`.
+Both passes returned **changes requested**. All required changes from both
+passes have been applied as of the second correction-pass commit above.
 
 ## Final decision
 
-**Pending re-review.** All required changes from Codex's first review pass
-have been applied. Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release
-gates), this branch still needs Codex to confirm the corrections resolve
-the disposition before `main` merge is considered, and merge must not be
-performed by the same agent that produced the audit.
+**Pending third review pass.** **Corrected per independent review (C6) —
+does not overclaim completeness:** all changes requested by Codex's *second*
+review have been applied, but per that review's own finding, a document
+package that looks complete does not always survive its own consistency
+check — so this is stated as "applied," not "resolved," until Codex
+confirms. Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release gates),
+this branch needs Codex to confirm the corrections resolve the disposition
+before `main` merge is considered, and merge must not be performed by the
+same agent that produced the audit.

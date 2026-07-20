@@ -71,10 +71,10 @@ behavior.
 | Support/resistance with touch-decay scoring | Yes — `FindSRZone` | Yes (simpler) — `FindClusterBoundary`, touch-count only |
 | BOS/CHoCH structural break detection | Yes — `AnalyzeStructure`, one consistent definition | Yes for `StructureTrend`/M30 direction, but **a second, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see Contradictory definitions |
 | Order blocks | Yes — M30, with SR confluence requirement | Yes — two-stage M15→M5 refinement, single shared accessor `ActiveOB()` |
-| FVG detection with "fresh/untouched, first-return-only" rule | Yes — enforced, verified | Yes — enforced, verified |
+| FVG detection with "fresh/untouched, first-return-only" rule | Yes — enforced, verified | **Overstated, corrected in second-pass review** — partially enforced: touch scan omits the trigger bar and there is no persistent consumed-flag, so a cached gap can in principle be reconsidered on a later bar (see `baseline_v811_audit.md`'s "M5 FVG" section) |
 | Trendlines | Yes — three independent implementations (see Duplicated concepts) | Deliberately absent by design (header comment: SMC treats diagonal lines as "edgeless") |
 | Premium/discount/equilibrium/OTE | Yes — hard gate with 4 documented escape hatches | Yes (as PD bands feeding `LocationOK`), simpler, no OTE-specific pocket |
-| Range cycle / rotation | Yes — both, with a regime-routing contradiction (see below) | Not present as a named strategy (clustered SR bounce covers similar ground) |
+| Range cycle / rotation | Yes — both, with a regime-routing policy question for Rotation (see below; **wording corrected in second-pass review** — verified reachable behavior, not a confirmed contradiction) | Not present as a named strategy (clustered SR bounce covers similar ground) |
 | Basket/multi-leg entries | No — single-position pilot/add-on model instead | Yes — 1–4 legs, risk-budget-split sizing (core math correct, fallback path breaks it — see Contradictions) |
 | Laddered take-profits | Partial — staged TP1→TP3→runner extension, not fixed R-ladder | Yes — fixed `ladder[0..3]` at 1.0/1.5/2.0/2.5R, defaults use only first 2 rungs |
 | Giveback guard | Yes — `GuardOpenProfits`, arm/tolerance percent model | Yes — `ManageBasket` giveback block, arm/floor R model |
@@ -97,10 +97,13 @@ behavior.
 - Neither baseline's actual live/demo trading behavior has been observed —
   both audits are static reads only; every "FACT" label describes code as
   written, not confirmed runtime behavior.
-- Whether V637's five-gate signal funnel or V8.11's basket-sizing model
-  produce a healthy trade cadence or starve/overexpose the account under
-  real market conditions is unverified in either case — both audits flag
-  this explicitly as requiring backtest evidence.
+- Whether V637's multi-stage gate/score-modifier signal pipeline (**wording
+  corrected in second-pass review** — not a literal five-gate serial-AND;
+  see `baseline_v637_audit.md`'s "Large number of filters" section) or
+  V8.11's basket-sizing model produce a healthy trade cadence or starve/
+  overexpose the account under real market conditions is unverified in
+  either case — both audits flag this explicitly as requiring backtest
+  evidence.
 
 ## Duplicated concepts
 
@@ -133,18 +136,31 @@ behavior.
   entirely disconnected from `StructureTrend`/`FindClusterBoundary`, which
   is what actually drives trades. The chart a user watches does not show
   the structure the EA is actually trading from.
-- **V6.37's ROTATION setups are self-confirmed but regime-vetoed anyway.**
-  Flagged to bypass SR/value-area gates, then silently blocked by
-  `ApplyRegimeRouting` during Volatile Expansion because the setup's string
-  name matches none of that gate's allow-lists.
+- **V6.37's ROTATION setups are self-confirmed but blocked during Volatile
+  Expansion regime by `ApplyRegimeRouting` anyway** (setup's string name
+  matches none of that gate's allow-lists). **Characterization corrected in
+  second-pass review:** this is a verified, reachable policy question, not a
+  confirmed contradiction — "self-confirmed" was documented to mean
+  bypassing value-area/SR confirmation gates specifically, not regime
+  policy, and the router does log a dashboard reason (not silent to an
+  operator watching it, only to the journal). Needs a specification
+  decision (should Rotation trade during Expansion?) and backtest evidence,
+  not a fix applied by assumption.
 - **V6.37's ATR-based stop floor and percent-of-price stop cap are
   different units**, never cross-validated, and can conflict on certain
   symbols/sessions, silently rejecting trades.
 - **V8.11's momentum-breakout setup is explicitly exempted from the
   location gate to trade volatility expansion, then blocked entirely by a
-  separate blanket expansion gate** that fires on exactly the condition the
-  setup exists to catch — the sharpest internal inconsistency found in
-  either file.
+  separate blanket expansion gate.** **Corrected in second-pass review:**
+  the M5-scale momentum-breakout condition and the M15-ATR-expansion flag
+  that trips the blanket gate are related but not definitionally identical
+  — the setup remains reachable for M5 breakouts below the M15 expansion
+  threshold. This is a verified policy/comment conflict in the control flow
+  (confirmed: the outer gate unconditionally wins whenever it's true), but
+  static review does not establish it as "the sharpest internal
+  inconsistency" across either file — that's an empirical question about
+  how often the two conditions actually coincide, requiring backtest
+  evidence.
 
 ## Risk-management differences
 
@@ -156,7 +172,7 @@ behavior.
 | Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — correct when the split succeeds |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
 | Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | Broken — gating variable resets to current balance on restart, silently clearing the lock's basis |
-| Cross-symbol / account-level exposure governance | Daily limits appear symbol-scoped in most functions **except** `CloseAllOurPositions`'s position-closing loop (magic-number-only — see below) | None — `RiskBudgetCash` sizes off total account equity per instance with no cross-instance awareness |
+| Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | None — `RiskBudgetCash` sizes off total account equity per instance with no cross-instance awareness |
 
 ## Exit-management differences
 
@@ -234,9 +250,12 @@ disposition: changes requested, now integrated into both audit documents).
    check." (V8.11 was independently confirmed clean of any equivalent
    forming-bar dependency in its trade-decision paths.)
 1. **V6.37 — `CloseAllOurPositions`'s position-closing loop filters only by
-   magic number, not symbol** (unlike every other position-scanning
-   function in the file, and unlike its own sibling pending-order loop
-   three lines below). **Qualified per independent review:** all four daily
+   magic number, not symbol** (unlike the per-symbol *position-management*
+   scans elsewhere in the file — **wording corrected in second-pass
+   review**: `GetTodayClosedProfit`/`GetOpenProfitForMagic` are themselves
+   magic-only, not exceptions to a universal rule — and unlike its own
+   sibling pending-order loop three lines below). **Qualified per
+   independent review:** all four daily
    thresholds default to zero (inactive out of the box), and the underlying
    P/L computation was already magic-wide rather than truly per-symbol —
    the sharper inconsistency is that the two loops in the same function
@@ -296,9 +315,12 @@ disposition: changes requested, now integrated into both audit documents).
   accessor (`ActiveOB()`) consumed identically by both drawing and trading
   code is a clean pattern worth reusing directly for the new engine's
   `OrderBlockEngine.mqh`.
-- V8.11's "first-return-only, untouched" FVG rule and its shared
-  pin-bar/engulfing helper functions (one definition, four call sites) are
-  clean, verified, and directly portable patterns.
+- V8.11's shared pin-bar/engulfing helper functions (one definition, four
+  call sites) are a clean, verified, directly portable pattern. Its FVG
+  "first-return-only, untouched" rule is a reasonable starting point but
+  **not, as written, a clean lifecycle state machine to port directly**
+  (**corrected in second-pass review** — see the FVG detection row above):
+  a true single-fire consumed-flag would need to be added before reuse.
 - Both giveback-guard designs (percent-of-peak vs. absolute-R-floor) are
   candidates for a head-to-head isolated experiment rather than either being
   assumed superior.
