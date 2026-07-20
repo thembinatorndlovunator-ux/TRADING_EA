@@ -117,8 +117,13 @@ edit to record its second review) and adding new file
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`.
 
 **Modified in follow-up commit `7319306`** — `TASK-001_BASELINE_AUDIT.md`
-only (filled in the `4a6946b` hash and fixed a path typo, both of which
-could only be known after `4a6946b` existed).
+only (filled in the `4a6946b` hash and completed/clarified its
+correction-pass entry with the exact response-file path — **corrected in
+seventh-pass review**: an earlier draft of this description, going back to
+this commit's own original message, called the second change a "path
+typo" fix; the actual diff shows no such typo being corrected, only the
+vague placeholder path description being replaced with the exact one —
+both details could only be known after `4a6946b` existed).
 
 **Modified in the third correction commit (`538bc39`)**, responding to
 Codex's third review — the same four documents plus `TASKS.md`, plus new
@@ -139,22 +144,34 @@ for the exact hash. **Two** prior rounds (**count corrected in fifth-pass
 review, was previously miscounted as three**) each tried to record their
 own commit hash and had to follow up with a second, dedicated
 metadata/hash-recording commit (`7319306` for `4a6946b`'s hash — **wording
-corrected in sixth-pass review**: `7319306` also fixed an unrelated path
-typo in the same commit, so "hash-recording-only" overstated its sole
-purpose; `79f8e5a` for `538bc39`'s hash, which was hash-recording-only)
-because the hash cannot be known before the commit exists; this entry
-breaks that loop by referencing the commit symbolically instead.
+corrected in sixth-pass review, then corrected again in seventh-pass
+review after the sixth-pass correction itself introduced a false "path
+typo" description**: `7319306`'s actual diff shows it also completed/
+clarified that entry's response-file path, not a typo fix, so
+"hash-recording-only" still overstates its sole purpose, just not for the
+reason previously claimed; `79f8e5a` for `538bc39`'s hash, which genuinely
+was hash-recording-only) because the hash cannot be known before the
+commit exists; this entry breaks that loop by referencing the commit
+symbolically instead.
 
-**Modified in the fifth correction pass** (this pass — referenced
-symbolically per the structural fix above, not by embedded hash),
-responding to Codex's fifth review — the same five documents as the fourth
-pass (`baseline_v637_audit.md`, `baseline_v811_audit.md`,
+**Modified in the fifth correction commit `683bc77`** (**hash filled in
+now that it exists, seventh-pass review**), responding to Codex's fifth
+review — the same five documents as the fourth pass
+(`baseline_v637_audit.md`, `baseline_v811_audit.md`,
 `baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`) plus
 `01_BASELINE/inventory.md` again (a second, different correction to that
 same preserved-directory-path exception), plus new file
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md` (also
 overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place
 again).
+
+**Modified in the sixth correction commit `8a88389`** — exactly seven
+paths (**added in seventh-pass review, this entry was previously
+missing**): `baseline_v637_audit.md`, `baseline_v811_audit.md`,
+`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`,
+overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and
+added new file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md`.
+No `01_BASELINE/` path was touched by this commit.
 
 **Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (the EA-directory diffs below verify only the two `.mq5` files, not the set file or screenshots — an earlier draft cited them for all three together):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
@@ -187,10 +204,12 @@ hash/blob-ID equality, screenshot hashes) — see Test plan.
 
 **Note (C3, stale text removed per independent review):** an earlier draft
 of this section stated "no actual Codex review execution" as an out-of-scope
-item. That is no longer accurate — Codex has since completed three full
-review passes (see Reviewer and Commit sections below); review execution
-itself happened in a separate Codex session/branch per `AGENTS.md`, but it
-did occur, and is not out of scope for this task's final state.
+item. That is no longer accurate — Codex has since reviewed this package
+multiple times (**pass count no longer restated here as of seventh-pass
+review, to stop this exact note going stale every round — see Acceptance
+criteria above for the current count**); review execution itself happened
+in a separate Codex session/branch per `AGENTS.md`, but it did occur, and
+is not out of scope for this task's final state.
 
 ## Risks
 
@@ -221,10 +240,13 @@ did occur, and is not out of scope for this task's final state.
   were independently re-verified in each pass rather than trusted from the
   prior structural survey. **Updated per independent review — no
   longer a forward-looking risk:** the independent Codex read has since
-  happened three times, each pass catching real precision issues the prior
-  pass missed (including, in the third pass, two false claims made in the
-  correction responses themselves). This remains listed as a risk category
-  because a further pass cannot be ruled out as still finding something,
+  happened repeatedly (**pass count no longer restated here as of
+  seventh-pass review, for the same reason as the Out-of-scope note above —
+  see Acceptance criteria for the current count**), each pass catching real
+  precision issues the prior pass missed, including false claims introduced
+  by the correction responses themselves on more than one occasion. This
+  remains listed as a risk category because a further pass cannot be ruled
+  out as still finding something,
   not because no review has occurred yet.
 
 ## Test plan
@@ -275,8 +297,8 @@ integrity:
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** six review passes so far, all returning changes requested,
-      each narrower than the last:
+      **Status:** seven review passes so far, all returning changes
+      requested, each narrower than the last:
       - Pass 1 → addressed in commit `3f69469`.
       - Pass 2 (internal-consistency gaps between corrected detail and
         stale summaries, plus precision fixes) → addressed in `4a6946b`.
@@ -298,11 +320,20 @@ integrity:
         Strategy Tester qualifier on four `g_peak_dd` persistence mentions,
         a taxonomy mismatch in a comparison-doc heading, minor prose/
         citation cleanup, and — again — a false status-alignment claim,
-        which is what prompted this round's structural fix rather than
-        another attempted prose fix) → **currently being addressed in this
-        sixth correction pass.**
+        which prompted the structural fix applied that round) → addressed
+        in `8a88389`.
+      - Pass 7 (a false RSI-threshold citation this audit itself introduced
+        while fixing a prior finding, unproven process-history/"unreviewed"
+        inferences, two stale cross-references to a renamed section, the
+        canonical status text itself being stale — pass 6 already applied
+        but still described as "in progress" — a reintroduced false
+        "three hash follow-ups" claim, an unsupported "path typo"
+        description of `7319306` introduced in the round-six response, and
+        incomplete Files-affected/Commit/Reviewer-chain entries for the
+        sixth correction pass) → **currently being addressed in this
+        seventh correction pass.**
 
-      All six passes independently confirmed the BLOCKER (V6.37's
+      All seven passes independently confirmed the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
       `IsBearishInsideFalseBreak`) and the cross-cutting findings (netting/
       hedging compatibility, trade-result handling, broker filling/stop/
@@ -412,7 +443,10 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md`.
 4. `7319306` (`HEAD` at the time of this third-pass correction) — follow-up
    commit, `TASK-001_BASELINE_AUDIT.md` only, filling in the `4a6946b` hash
-   and fixing a path typo. Reviewed by Codex a third time; disposition
+   and completing/clarifying that entry's response-file path (**"path
+   typo" description corrected to this in seventh-pass review — the
+   original diff shows no typo fix**). Reviewed by Codex a third time;
+   disposition
    **changes requested a third time** (narrower still — most items
    verified, a handful of remaining internal-consistency gaps, two false
    claims in the round-two response file, and several precision fixes).
@@ -460,10 +494,27 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
    mismatch, minor prose/citation cleanup, and — again — a false
    status-alignment claim, which prompted the structural fix in this
    section rather than another prose attempt).
-9. Sixth correction-pass commit — responding to this sixth review, touching
-   the same documents plus `TASKS.md` (now a stable, pass-count-independent
-   entry) and a new round-six response file. Referenced symbolically per
-   the structural note above, not by embedded hash.
+9. `8a88389` — sixth correction-pass commit (**hash filled in and path
+   list completed, seventh-pass review**). Touched exactly seven paths:
+   `baseline_v637_audit.md`, `baseline_v811_audit.md`,
+   `baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md` (now
+   a stable, pass-count-independent entry), overwrote
+   `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md`.
+   Reviewed by Codex a seventh time; disposition **changes requested a
+   seventh time** (narrower still — most items verified or resolved
+   (Strategy Tester qualification, status-pointer architecture), remaining
+   issues a false `65.0` RSI-threshold citation this audit introduced
+   while fixing a prior finding, unproven process-history/"unreviewed"
+   inferences, two stale cross-references to a renamed section, the
+   canonical status text itself being stale, a reintroduced false
+   "three hash follow-ups" claim, an unsupported "path typo" description of
+   `7319306`, and incomplete Files-affected/Commit/Reviewer-chain entries
+   for this very commit).
+10. Seventh correction-pass commit — responding to this seventh review,
+    touching the same documents plus a new round-seven response file.
+    Referenced symbolically per the structural note above, not by embedded
+    hash.
 
 **Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
@@ -494,7 +545,8 @@ each subsequent pass) →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md`.
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round6.md`.
 
 ## Final decision
 

@@ -69,7 +69,7 @@ behavior.
 |---|---|---|
 | Fractal/swing detection | Yes — `IsSwingHigh/Low`, depth-configurable | Yes — `FindLastTwoSwings`, `InpSwingDepth` |
 | Support/resistance with touch-decay scoring | Yes — `FindSRZone` | Yes (simpler) — `FindClusterBoundary`, touch-count only |
-| BOS/CHoCH structural break detection | Yes — `AnalyzeStructure`, one consistent definition | Yes for `StructureTrend`/M30 direction, but **a second, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see Contradictory definitions |
+| BOS/CHoCH structural break detection | Yes — `AnalyzeStructure`, one consistent definition | Yes for `StructureTrend`/M30 direction, but **a second, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see "Contradictions and unresolved policy questions" |
 | Order blocks | Yes — M30, with SR confluence requirement | Yes — two-stage M15→M5 refinement, single shared accessor `ActiveOB()` |
 | FVG detection with "fresh/untouched, first-return-only" rule | Yes — enforced, verified | **Overstated, corrected in second-pass review** — partially enforced: touch scan omits the trigger bar and there is no persistent consumed-flag, so a cached gap can in principle be reconsidered on a later bar (see `baseline_v811_audit.md`'s "M5 FVG" section) |
 | Trendlines | Yes — three independent implementations (see Duplicated concepts) | Deliberately absent by design (header comment: SMC treats diagonal lines as "edgeless") |
@@ -240,7 +240,7 @@ correct classification individually.
   same globals the trade logic consumes for OB/FVG/PD/range — a genuine
   strength for order blocks, FVGs, and range boundaries. The BOS/CHoCH/EQL/
   EQH marks are the one exception (drawing-only, disconnected from trading
-  logic — see Contradictory definitions).
+  logic — see "Contradictions and unresolved policy questions").
 
 ## Journal strengths
 
