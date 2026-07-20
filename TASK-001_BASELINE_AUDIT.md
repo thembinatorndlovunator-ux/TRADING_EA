@@ -182,17 +182,26 @@ file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round7.md`.
 Did **not** touch `baseline_v811_audit.md`, `TASKS.md`, or any
 `01_BASELINE/` path.
 
-**Modified in the eighth correction pass** (commit hash not yet known —
-referenced symbolically per the structural fix above — but its exact path
-set *is* already known and stated here now, per eighth-pass review, to
-stop the one-pass lag that kept recreating itself: knowing what files a
-commit touches does not require the commit to already exist, only knowing
-the hash does): `baseline_v637_audit.md`, `baseline_comparison.md`,
+**Modified in the eighth correction commit `834fa35`** (**hash filled in
+now that it exists, ninth-pass review**; its path set was already stated
+correctly here before it existed — the eighth-pass structural fix held):
+`baseline_v637_audit.md`, `baseline_comparison.md`,
+`TASK-001_BASELINE_AUDIT.md`, overwrote
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md`. Did
+**not** touch `baseline_v811_audit.md`, `TASKS.md`, or any `01_BASELINE/`
+path.
+
+**Modified in the ninth correction pass** (**hash omitted because it was
+unknowable at authoring time — see current branch tip via
+`git log --oneline claude/task-001-baseline-audit` — timeless wording
+adopted in ninth-pass review, replacing "not yet known," which itself
+needed updating once the commit existed**): `baseline_v637_audit.md`,
 `TASK-001_BASELINE_AUDIT.md`, overwriting
 `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
-file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md`.
-Not touching `baseline_v811_audit.md`, `TASKS.md`, `01_BASELINE/inventory.md`,
-or any other `01_BASELINE/` path.
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md`.
+Not touching `baseline_v811_audit.md`, `baseline_comparison.md`,
+`TASKS.md`, or any `01_BASELINE/` path.
 
 **Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (the EA-directory diffs below verify only the two `.mq5` files, not the set file or screenshots — an earlier draft cited them for all three together):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
@@ -318,7 +327,7 @@ integrity:
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** eight review passes so far, all returning changes
+      **Status:** nine review passes so far, all returning changes
       requested, each narrower than the last:
       - Pass 1 → addressed in commit `3f69469`.
       - Pass 2 (internal-consistency gaps between corrected detail and
@@ -359,9 +368,23 @@ integrity:
         authorship claim the source doesn't support, the canonical status
         again describing an already-applied pass as "in progress," and
         Files-affected/Commit/Reviewer-chain entries one pass behind again)
-        → **currently being addressed in this eighth correction pass.**
+        → addressed in `834fa35`.
+      - Pass 9 (a V6.37 journal-history claim outside the round-eight edit
+        locations — `InpJournalFileName` described as "hard-set" when it is
+        a configurable input, an unconditional "clean slate" claim treated
+        as FACT when it is COMMENT-CLAIMED and conditional, an unsupported
+        "different column semantics" risk for same-version instances, an
+        unqualified `FILE_COMMON`-sharing claim not conditioned on matching
+        configured filenames, an overstated "zero occurrences" grep claim
+        in the round-eight response, and — for the third round running —
+        the canonical status describing an already-applied pass as "in
+        progress") → **applied in the current symbolic correction commit;
+        pending review** (**wording adopted in ninth-pass review per
+        Codex's own suggestion — accurate both before and after this
+        commit exists, unlike "currently being addressed," which this
+        canonical status has now gotten wrong three rounds running**).
 
-      All eight passes independently confirmed the BLOCKER (V6.37's
+      All nine passes independently confirmed the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
       `IsBearishInsideFalseBreak`) and the cross-cutting findings (netting/
       hedging compatibility, trade-result handling, broker filling/stop/
@@ -555,14 +578,28 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
     implying an unsupported authorship claim, the canonical status one
     pass behind again, and the package-history entries recreating the
     same one-pass lag they were just fixed for).
-11. Eighth correction-pass commit — responding to this eighth review.
-    **Structural fix, eighth-pass review:** its exact path set is already
-    stated above in "Files affected" (predicted before this commit exists,
-    since the file list is known even though the hash is not) —
-    `baseline_v637_audit.md`, `baseline_comparison.md`,
-    `TASK-001_BASELINE_AUDIT.md`, the overwritten Codex review, and a new
-    round-eight response file. Referenced symbolically per the structural
-    note above, not by embedded hash.
+11. Eighth correction-pass commit, `834fa35` (**hash filled in now that it
+    exists, ninth-pass review**) — responding to the eighth review. Its
+    exact path set is not restated here; this entry **references** the
+    canonical five-path list already stated above in "Files affected"
+    (predicted before the commit existed, since the file list was knowable
+    even though the hash was not) — Codex's ninth review noted the prior
+    wording here read as an independent restatement rather than a pointer,
+    which is the same cross-section-drift risk the sixth-pass structural
+    fix exists to avoid. Reviewed by Codex a ninth time; disposition
+    **changes requested a ninth time** (narrower still — most items
+    verified or resolved (the complete 30/50/70 RSI inventory, the
+    refactor/supersession/authorship wording, the one-pass-lag structural
+    fix itself), remaining issues a V6.37 journal-history conclusion the
+    configurable filename doesn't support, the canonical status again
+    describing already-applied pass-8 work as in progress, and two minor
+    package-history/verification-wording cleanups).
+12. Ninth correction-pass commit (hash not embedded here — unknowable at
+    authoring time; see current branch tip via
+    `git log --oneline claude/task-001-baseline-audit`) — responding to
+    this ninth review. This entry likewise references, rather than
+    restates, the ninth-pass path list already stated above in "Files
+    affected."
 
 **Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the

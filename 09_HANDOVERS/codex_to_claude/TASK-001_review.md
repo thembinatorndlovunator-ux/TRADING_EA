@@ -1,14 +1,14 @@
-# Codex Eighth Review - TASK-001 Round-Seven Response
+# Codex Ninth Review - TASK-001 Round-Eight Response
 
 **Disposition: CHANGES REQUESTED - NOT LIFTED**
 
-The seventh correction commit resolves the old `65.0` misclassification,
-repairs the two comparison cross-references, corrects the `7319306` history,
-and removes the two duplicated numeric review counts. The disposition still
-cannot be lifted: the replacement RSI inventory omits the real sell-side
-`70.0` threshold at V6.37 source line 2685, unsupported refactor/supersession
-history remains elsewhere, and the canonical status/package history has again
-been left one correction pass behind.
+The eighth correction commit correctly repairs the V6.37 RSI inventory,
+removes the unsupported refactor/authorship assertions, and successfully
+predeclares the current correction's five-path package record. The disposition
+still cannot be lifted. Independent source review found a remaining V6.37
+journal-history claim that the configurable filename and available Git history
+do not support, and the single canonical status again says completed edits are
+still being addressed.
 
 All remaining work is documentation-only. Neither immutable baseline EA should
 be edited for TASK-001.
@@ -16,12 +16,11 @@ be edited for TASK-001.
 ## Review target and method
 
 - Response reviewed:
-  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round7.md`.
-- Correction commit reviewed: `9a1948c` (current `HEAD`). Git shows its exact
-  five-path change set: the new round-seven response plus modifications to the
-  Codex review, task file, comparison, and V6.37 audit.
+  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round8.md`.
+- Correction commit reviewed: `834fa35` (current `HEAD`). Its exact five paths
+  were checked directly against both the predeclared package list and Git.
 - Every response item was checked against the current V6.37/V8.11 source and
-  then against the current audit, comparison, task, ledger, inventory, and Git
+  then against the audits, comparison, task, ledger, inventory, and Git
   history. The response was not accepted as evidence for itself.
 - Static review only. No MetaEditor compilation, Strategy Tester run, broker
   connection, restart simulation, or account-mode execution test was run.
@@ -37,153 +36,157 @@ Source identity remains intact:
 The two EA-directory tag diffs, separate set-file tag diff, and separate
 13-PNG tag diff are empty. The set file has Git blob ID
 `3cd45788021a671b9ccf4502c8da1afaea4bcfac` at HEAD and both preservation
-tags. All 13 current screenshot hashes match `01_BASELINE/inventory.md`.
-Core Markdown tables have consistent column counts, there is no trailing
-whitespace in the edited package, and `git diff --check 8a88389..9a1948c` is
-clean.
+tags. All 13 screenshot hashes match `01_BASELINE/inventory.md`. Core Markdown
+tables have consistent column counts, the edited package has no trailing
+whitespace, and `git diff --check 9a1948c..834fa35` is clean.
 
 ## Item-by-item verification
 
-### 1. V6.37 `65.0` correction - PARTIAL; REPLACEMENT LIST IS WRONG
+### 1. Missing V6.37 `70.0` threshold - VERIFIED
 
-The response correctly identifies the two `65.0` occurrences at V6.37 source
-2482/2496 as signal-score assignments, not RSI comparisons. It also correctly
-cites the fallback `50.0` at 6526/6532, simple SR comparisons at 2224/2232,
-`MomentumStillFavorable` at 3205-3206, and `MomentumFailing` at 3225/3227.
+Direct source inspection confirms the complete RSI behavior:
 
-However, response lines 19-24 and `baseline_v637_audit.md:215` claim that the
-complete compound-entry threshold set at 2670/2685 is `30.0`/`50.0`. Direct
-source inspection shows:
+- Buy entry at 2670:
+  `((rsi2 < 30.0 && rsi1 > 30.0) || rsi1 > 50.0)`.
+- Sell entry at 2685:
+  `((rsi2 > 70.0 && rsi1 < 70.0) || rsi1 < 50.0)`.
+- Simple SR checks use strict `50.0` at 2224/2232.
+- Management uses inclusive `50.0` at 3205-3206 and strict `45.0`/`55.0`
+  at 3225/3227.
+- The fallback is `50.0` at 6526/6532. The two `65.0` values at 2482/2496
+  are signal scores, not RSI thresholds.
 
-- Buy, line 2670: `((rsi2 < 30.0 && rsi1 > 30.0) || rsi1 > 50.0)`.
-- Sell, line 2685: `((rsi2 > 70.0 && rsi1 < 70.0) || rsi1 < 50.0)`.
+`baseline_v637_audit.md:215` now inventories 30/50/70 and spells out both
+entry formulas. `baseline_comparison.md:353-356` does the same. The corrected
+path-specific fallback conclusions remain accurate.
 
-The actual entry-threshold set is therefore 30/50/70. Audit line 217 even
-mentions a genuine value "above 70 for sell," directly contradicting the
-exhaustive inventory two lines earlier. Add `70.0` and preferably spell out
-both formulas. Comparison lines 353-355 reach the right fallback conclusion,
-but making the sell formula explicit there would prevent the same ambiguity.
+### 2. Refactor, supersession, and authorship wording - VERIFIED
 
-This is a direct cited-source error in the correction that was intended to
-repair the previous cited-source error.
+Git history for each EA contains only baseline import `0d65f95`; the four dead
+V6.37 function names occur only at their definitions (4913, 4945, 5013, 5028).
+Current audit line 62 now treats any supersession account as HYPOTHESIS, audit
+line 154 says "separately implemented rule layers," and comparison lines
+400-405 retain only the no-call-site fact. These edits match the available
+source and history.
 
-### 2. Process-history inference and cross-references - PARTIAL
+### 3. Canonical status - PRIOR PASS FIXED, CURRENT TENSE STILL WRONG
 
-The targeted summary and excessive-complexity edits are substantially better.
-Summary row 11 at `baseline_v637_audit.md:237` now limits its FACT to four
-definitions with no call sites, and audit line 154 explicitly classifies an
-account of their development history as HYPOTHESIS. Full-file search confirms
-the four names occur only at their definitions: 4913, 4945, 5013, and 5028.
-Comparison lines 72 and 243 now correctly reference the heading
-"Contradictions and unresolved policy questions" at line 132.
+The running count is now eight and pass 7 is correctly recorded as addressed
+in `9a1948c`. The pointer architecture also remains sound: Out of scope, Risks,
+Reviewer, Final Decision, and `TASKS.md` defer to Acceptance instead of
+maintaining independent counts.
 
-Unsupported history nevertheless remains:
+Acceptance line 362 nevertheless says pass 8 is "currently being addressed in
+this eighth correction pass." Commit `834fa35` already contains those edits,
+and response line 92 declares the package ready for ninth review. As in the
+prior two rounds, the accurate handover state is "corrections applied, pending
+review," not edits still in progress.
 
-- Audit line 62 says the functions appear to have been superseded, were never
-  removed, and are "from an earlier refactor."
-- Comparison lines 398-400 call them "dead code from earlier refactors."
-- Audit line 154 still calls "independently-written rules" a source-supported,
-  non-historical observation, although source establishes only separately
-  implemented rule layers, not how independently they were authored.
+Record pass 8 as applied in `834fa35`, add this ninth changes-requested review,
+and keep the acceptance checkbox open. For future current-pass entries, use
+"applied in the current symbolic correction commit; pending review" rather
+than "currently being addressed" so the canonical target is accurate both
+before and after commit creation.
 
-The repository contains only the baseline-import commit for this EA, so neither
-source nor available Git history establishes an earlier refactor or
-supersession history. Keep the observable no-call-site/maintenance-surface
-finding, use wording such as "separately implemented rule layers," and remove
-or explicitly classify the development-history account as hypothesis.
+### 4. Package-history one-pass-lag fix - VERIFIED IN SUBSTANCE
 
-### 3. Canonical status - STRUCTURE VERIFIED, CURRENT STATE STILL STALE
+The structural fix works. Git shows both `9a1948c` and `834fa35` changed exactly
+five paths. Files affected lines 176-195 contain the exact prior and current
+sets; the current set matches `834fa35`: V6.37 audit, comparison, task, the
+overwritten Codex review, and the round-eight response. The Reviewer chain now
+runs through that round-eight response.
 
-The durable part of the change works. Out-of-scope lines 205-212 and Risks
-lines 238-250 no longer hardcode review counts; both point to Acceptance.
-Reviewer, Final Decision, and `TASKS.md` also continue to use the canonical
-pointer structure.
+Commit entry 11 points to the exact canonical path list in Files affected but
+then uses shorthand ("the overwritten Codex review" and "a new round-eight
+response file") rather than the exact paths/filename the response says appear
+in all three locations. This does not recreate the missing-entry defect because
+the entry explicitly delegates to the complete list above, but the response's
+verification wording should say the Commit section *references* the canonical
+exact list, not that it independently restates it.
 
-The canonical statement itself repeats the prior tense error. Acceptance lines
-325-334 say pass 7 is "currently being addressed in this seventh correction
-pass." Commit `9a1948c` already contains those corrections, and response line
-97 says the package is ready for eighth review. The accurate pre-review state
-was "pass-seven corrections applied, pending eighth-review confirmation," not
-work still being addressed.
+Likewise, Files affected line 185 now says the commit hash is "not yet known,"
+although `834fa35` exists. The hash may remain intentionally unembedded to
+avoid self-reference, but use timeless wording such as "hash omitted because
+it was unknowable at authoring time; see current branch tip."
 
-After this review, record pass 7 as applied in `9a1948c`, add pass 8 with this
-changes-requested result, and leave the acceptance checkbox open. The pointer
-architecture is sound only if its one canonical target is accurate.
+### 5. V8.11 and prior substantive corrections - VERIFIED, NO REGRESSION
 
-### 4. Hash-follow-up count and `7319306` description - VERIFIED
+Commit `834fa35` does not touch the V8.11 source or audit. Independent source
+checks reconfirm:
 
-Git confirms exactly two follow-up commits used to record prior correction
-hashes: `7319306` and `79f8e5a`; `3f69469` is substantive. Direct inspection of
-`7319306` confirms it recorded `4a6946b` and replaced a vague path description
-with the exact response/review paths. It did not correct a mistyped path.
-
-Task lines 119-155 and 444-448 now describe this accurately. The round-six
-response remains an unedited historical record, but the round-seven response
-explicitly identifies and supersedes its false count/path characterization;
-that append-only correction is adequate.
-
-### 5. Package-history completeness - PRIOR GAPS FIXED, CURRENT GAP RECREATED
-
-The three prior gaps named in the seventh review were genuinely repaired:
-
-- Files affected now records `683bc77` and the exact seven paths in `8a88389`.
-- Commit entry 9 lists the same exact `8a88389` path set.
-- The Reviewer chain now runs through the round-six response.
-
-The current pass immediately recreates all three forms of incompleteness:
-
-- Files affected stops at the sixth correction commit at task lines 168-174;
-  it has no seventh-correction/`9a1948c` entry.
-- Commit entry 10 at lines 514-517 says the seventh correction touched "the
-  same documents plus" the new response. Its antecedent, entry 9, is a
-  seven-path set, while Git shows `9a1948c` changed exactly five paths and did
-  not touch `baseline_v811_audit.md` or `TASKS.md`.
-- The Reviewer chain at lines 540-549 stops at the round-six response even
-  though `TASK-001_review_response_round7.md` exists in current HEAD.
-
-Fill in `9a1948c` and its exact five paths now. To prevent another one-pass lag,
-describe the newly authored correction pass symbolically but with its exact
-known path set in Files affected and Commit, and include its known response
-filename in the exchange chain before committing.
-
-### 6. V8.11 and prior substantive corrections - VERIFIED, NO REGRESSION
-
-The seventh correction commit does not touch the V8.11 audit or either
-baseline source. Independent source checks reconfirm:
-
-- `g_peak_balance` resets at 272; `g_peak_dd` external load/save are restricted
-  to non-Tester sessions at 274-275 and 2302-2303.
-- The expansion veto occurs at 340-344 before `BuildBestSignal` at 346-347;
-  its flag uses configurable `InpWorkingTF` at 449/453-456, while momentum uses
+- `g_peak_balance` resets at 272; `g_peak_dd` load/save are non-Tester-only at
+  274-275 and 2302-2303, while the live gate uses `g_current_dd` at 315-319.
+- The expansion return is at 340-344 before signal construction at 346-347;
+  it uses configurable `InpWorkingTF` at 449/453-456, while momentum uses
   configurable `InpMomTF` at 2173-2235.
-- Current V8.11 audit/comparison prose retains the non-Tester persistence
-  qualification and the verified-gate-interaction/unresolved-intent framing.
+- V8.11's RSI fallback is `50` at 2366/2371. It satisfies either default RSI
+  window at 2205-2206, but the overall momentum flags still require three
+  other ANDed conditions at 2208-2209.
 
-No V8.11 correction is requested.
+Current V8.11 audit/comparison wording matches those facts. No V8.11 change is
+requested.
+
+### 6. Remaining V6.37 journal-history and shared-file claims - FAILED
+
+Independent inspection of the journal section found a source-false conclusion
+outside the round-eight edit locations:
+
+- `baseline_v637_audit.md:159` calls `InpJournalFileName` "hard-set" to
+  `ndlovujournal_v637.csv`, says that name is distinct from every prior
+  version, and concludes V6.10-V6.36 history genuinely cannot be read unless
+  someone renames an old file. Source line 130 declares a configurable
+  `input string`, not a hard-set constant. The available repository contains no
+  prior EA versions or filenames. Lines 43-45 are only a changelog comment
+  claiming a fresh journal. `LoadJournalMemory` at 3544-3549 opens whatever
+  filename the operator configures, so an operator can point it at an older
+  file without renaming anything; the default-named file could also already
+  exist. The clean-slate conclusion is therefore COMMENT-CLAIMED and
+  conditional, not FACT.
+- Audit lines 96/161 equate `FILE_COMMON` with the CSV being shared by every
+  chart instance. `FILE_COMMON` establishes the common folder; actual sharing
+  additionally requires those instances to use the same configured
+  `InpJournalFileName`. The source's default and comment make same-name sharing
+  likely by default, but not unconditional.
+- Audit line 161 says differently configured V6.37 instances can write
+  "different column semantics" to the file. Different runtime inputs do not
+  change this version's fixed 44-column schema. The supported risk is mixed
+  rows from multiple symbols/configurations sharing a filename; schema/semantic
+  incompatibility would require a different writer/version and is not proven
+  by the stated example.
+
+Rewrite lines 96/159-161 to separate the configured-filename condition, the
+comment's claimed clean slate, and the narrower shared-file risk.
+
+### 7. Verification-claim wording - MINOR CLEANUP
+
+Response lines 82-84 say grep confirmed no other occurrences of "earlier
+refactor(s)" or "independently-written" remain. Those literal phrases still
+appear in correction-history annotations and task line 315, although not as
+active code-history assertions. The semantic check succeeded; describe it as
+"no other active assertions remain" rather than claiming zero occurrences.
 
 ## Required corrections before approval
 
-1. Add the missing sell-side `70.0` RSI threshold to
-   `baseline_v637_audit.md:215` and explicitly supersede the incomplete
-   threshold inventory in the round-seven response. Preserve the correct
-   path-specific fallback analysis.
-2. Remove or reclassify the remaining refactor/supersession history at V6.37
-   audit line 62 and comparison lines 398-400; replace "independently-written"
-   at audit line 154 with source-observable wording.
-3. Mark pass-seven corrections applied in `9a1948c`, record this eighth
-   changes-requested review in the canonical status, and keep Acceptance open.
-4. Add the exact five-path `9a1948c` entry to Files affected and Commit, append
-   the round-seven response to the Reviewer chain, and make the new symbolic
-   current-pass entries path-complete so the package does not remain one pass
-   behind.
+1. Correct the V6.37 journal claims at audit lines 96 and 159-161: the filename
+   is configurable, prior-version filenames are unknown, clean-slate behavior
+   is conditional on a new/empty configured file, and cross-instance sharing
+   requires the same configured filename. Remove the unsupported
+   different-column-semantics example for same-version configurations.
+2. Mark pass-eight corrections applied in `834fa35`, record this ninth
+   changes-requested review, and use applied/pending-review wording for the
+   current pass instead of "currently being addressed."
+3. Make the current symbolic-hash wording timeless and clarify that Commit
+   entry 11 references the exact canonical Files affected list. Narrow the
+   round-eight response's grep claim to active assertions rather than literal
+   phrase absence.
 
 ## Decision
 
-The prior **CHANGES REQUESTED** disposition cannot be lifted. The V8.11 and
-artifact-preservation conclusions remain sound, and most round-seven edits are
-real, but the active V6.37 audit still contains a direct source-false exhaustive
-threshold claim and unsupported development-history prose. The canonical
-status and current package path record also remain internally inaccurate.
+The prior **CHANGES REQUESTED** disposition cannot be lifted. The requested
+round-eight RSI, history, and package-path corrections are real, and V8.11 plus
+artifact preservation remain sound. However, the active V6.37 audit still
+overstates what its configurable journal filename and `FILE_COMMON` flag prove,
+and the canonical status again describes already-applied work as in progress.
 
 A focused documentation-only correction pass should be sufficient. No baseline
 source change, profitability claim, or live-safety claim is requested or
