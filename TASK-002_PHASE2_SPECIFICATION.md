@@ -1,129 +1,139 @@
 # TASK-002 — Phase 2: Specification for the Combined Adaptive Intraday Engine
 
-**Revision note:** this is a full revision responding to the first
-independent review (`09_HANDOVERS/codex_to_claude/TASK-002_review.md`,
-disposition CHANGES REQUESTED against commit `cc58fa8`). That review found
-the first draft substituted descriptions of intent for actual executable
-rules, omitted two of master-prompt §23's eight Phase 2 deliverables
-entirely (candlestick and chart-pattern formalization), missed several
-binding risk-policy rules, left roughly a dozen named baseline
-contradictions without an actual decision, and mischaracterized several
-baseline behaviors (the V6.37 pilot ratio, V8.11's "fixed" time exit, the
-V8.11 sweep/shift formula, V6.37/V8.11 giveback defaults, and the
-V6.37/V8.11 news-classifier attribution, among others). Every finding is
-addressed below; see the "Response to round-1 review" subsection under each
-changed area for the specific fix.
+**Revision history:** round 1 (`cc58fa8` → review: CHANGES REQUESTED, 40+
+findings — missing candlestick/chart-pattern formalization, no executable
+mode/regime/routing rules, undefined risk accounting, ~13 unresolved
+contradictions, several baseline mischaracterizations). Round 2 (`7842083`
+→ review: CHANGES REQUESTED — round 1's fixes were largely real (risk
+percentages, six-family count, several baseline attributions, the `CTrade`
+blanket rule, pilot ratios, weak-sample effects), but this was still a
+requirements list wearing a specification's clothes: no candlestick/chart-
+pattern mathematics, a **mathematically broken regime-confidence formula**
+(`min(T, 1−2|0.5−E|)` is exactly zero at both expansion extremes — the
+strongest possible evidence produced the lowest possible confidence),
+non-deterministic routing, contradictory risk accounting, an incomplete
+contradiction ledger, and several baseline facts still wrong, including the
+V8.11 sweep/shift formula the document claimed to state but never did).
+This is round 3: every round-2 finding is fixed below, with actual formulas,
+defaults, and state machines in place of requirement lists.
 
 ## Objective
 
 Produce the Phase 2 specification required by `00_MASTER_PROMPT_FOR_CLAUDE.md`
-section 23 ("Phase 2 — Specification") before any Phase 3+ code is written.
-Section 23 lists eight deliverables for this phase: formalize intraday
-modes, regimes, strategies, candlestick patterns, chart patterns, risk,
-news, and resolve contradictions before coding. This document addresses all
-eight explicitly (§0 below maps each to its section) and resolves every
-contradiction between SmartCoreEngine V6.37 and NdlovuSMC V8.11 that
-TASK-001's 14-round audit surfaced, rather than carrying either baseline's
-behavior forward by default.
+section 23 before any Phase 3+ code is written: formalize intraday modes,
+regimes, strategies, candlestick patterns, chart patterns, risk, and news,
+and resolve every contradiction between SmartCoreEngine V6.37 and NdlovuSMC
+V8.11 with an actual, implementable decision — not a description of what
+should be decided.
 
 ## Reason
 
-Per `CLAUDE.md`'s workflow ("1. Audit. 2. Specify. 3. Create a task branch
-..."), no architecture or implementation work may begin until the audit is
-complete and a specification resolves what a new, combined engine actually
-does — not "port both EAs and pick whichever behavior compiles first," and
-not "describe what should be decided later." TASK-001 (14 independent-review
-rounds, `baseline_v637_audit.md`, `baseline_v811_audit.md`,
-`baseline_comparison.md`) gives this task a concrete defect list. The user
-has directed a **fix-as-you-port** strategy: reuse what works, correct every
-documented defect, and do not reproduce a bug just because it existed in a
-baseline.
+Per `CLAUDE.md`'s workflow, no architecture or implementation work may begin
+until a specification resolves what the new engine actually does. TASK-001's
+14-round audit gives this task a concrete defect list. The user has directed
+a **fix-as-you-port** strategy. Given that Phase 3 will write real `.mqh`
+code directly against this document, an unresolved formula or an
+underspecified state machine here becomes a real bug there — this revision
+treats that as the binding standard for what "specified" means.
 
 ## Baseline behaviour
 
 See `baseline_v637_audit.md`, `baseline_v811_audit.md`, and
 `baseline_comparison.md` on this branch (inherited from
-`claude/task-001-baseline-audit`, commit `2005d75`) for the full evidence
-base. TASK-001 itself remains on an **unmerged branch with disposition
-"changes requested"** as of its own fourteenth review pass — this
-specification depends on that branch's content but does not claim TASK-001
-is finished; "functionally complete" in the first draft was imprecise and
-is corrected here.
+`claude/task-001-baseline-audit`, commit `2005d75`; still unmerged,
+disposition changes-requested as of its own fourteenth review — this
+specification depends on that branch's content without claiming it is
+finished).
 
-Corrected summary of what this specification must not silently inherit
-(numbers corrected per round-1 review, §3 below):
+Corrected summary (round-2 fixes applied — §3.x references below are to
+round 2's finding numbers):
 
-- **V6.37:** a pilot-trade risk ceiling that is **6.25×/25×/8.33×/33.33×**
-  of the EA's own implemented budget depending on symbol profile (XAU vs.
-  non-XAU) **and** setup (Rotation vs. ordinary) — not a single bounded
-  range, and reachable even higher when equity is underwater or
-  volatility/news/add-on factors reduce the budget further; a confirmed
-  sign error in the learning-penalty formula (base and regime level) that
-  boosts, rather than penalizes, a losing-but-high-win-rate strategy;
-  journal cross-magic learning contamination; pending-order fill
-  misattribution by direction only; requested-vs-actual-fill price mixing
-  in R/management math; an intrabar (forming-candle) read in two
-  candlestick helpers; pervasive unchecked `CTrade` result codes on
-  submissions, modifications, and closes alike; and a weak-sample
-  adaptation that is not uniformly "risk-widening" (it widens the initial
-  stop and delays trail arming, but also tightens the active trail
-  multiple and lowers the soft-exit minimum R — four distinct effects, not
-  one).
-- **V8.11:** basket-specific dynamic risk management (break-even, trail,
-  giveback, time exit, direction-flip) lost across a restart — but broker-
-  held SL/TP and the daily-lock close path survive, so "no dynamic risk
-  management survives" overstated the gap; a **configurable** time exit
-  (`InpMaxHoldMinutes`, disabled when ≤0) defaulting to 45 minutes with no
-  evidence conditioning, not a hard-fixed constant; a minimum-lot fallback
-  that can exceed its own risk budget by 2.5× in the shipped-default case
-  and more when underwater; a daily-limit numerator/denominator anchor
-  mismatch across restarts; a persisted peak-drawdown key that truncates a
-  `long` magic number and carries no account/server identifier, risking
-  collisions; chart marks that retain the oldest (not most recent)
-  structural breaks and always mislabel the first stored mark CHoCH; and
-  the same unchecked-`CTrade`-result pattern as V6.37.
-- **Both:** fragile substring-based symbol classification — but the two
-  classifier functions (`IsSyntheticIndexSymbol`, `DirectionAllowedForSymbol`)
-  are **both in V6.37**; V8.11's analogous function (`DirectionAllowed`) is
-  a separate direction filter, not a real/synthetic news-provider
-  classifier, and its manual news windows are configuration-driven, not
-  symbol-classified. No economic calendar in either EA (V6.37's NFP logic
-  is calendar-arithmetic, not a real feed). RSI-indicator-failure fallbacks
-  in both EAs that silently satisfy downstream threshold checks instead of
-  invalidating the read. Configurable timeframe **roles** in both EAs
-  (V8.11: `InpBiasTF`…`InpEntryTF` plus `InpMomTF`; V6.37: `InpStructureTF`,
-  `InpEntryTF`, two higher-TF inputs, `InpTrendExecutionTF`, and further
-  role-specific TFs) — describing either baseline as having "a single fixed
-  timeframe" was imprecise; both have configurable roles with shipped
-  defaults.
+- **V6.37:** a pilot-trade risk ceiling of **6.25×/25×/8.33×/33.33×** of the
+  EA's implemented budget depending on symbol profile and setup (Rotation
+  vs. ordinary) — conditional ratios under specific runtime conditions, not
+  global bounds, and reachable higher still when underwater or when
+  volatility/news/add-on factors reduce the budget. A confirmed sign error
+  in the learning-penalty formula (base branch: `+2.8%` at 60% win rate with
+  net loss; regime branch: `+4.0%`) that boosts, rather than penalizes, a
+  losing-but-high-win-rate strategy. Journal cross-magic learning
+  contamination. Pending-order fill misattribution by direction only.
+  Requested-vs-actual-fill price mixing in R/management math. An intrabar
+  read in two candlestick helpers. Pervasive unchecked `CTrade` result
+  codes on every trading operation, not only closes. A weak-sample
+  adaptation with four distinct, not-uniformly-directional effects (widens
+  the initial stop and delays trail arming; but also tightens the active
+  trail multiple and lowers the soft-exit minimum R). **`IsSelfConfirmedSetup`
+  has an explicit, named setup-list scope (source 7534–7540) and does not
+  escape regime routing — `ApplyRegimeRouting` still runs and can veto a
+  self-confirmed setup (round-2 finding 3.2 corrected the first revision's
+  false claim that the baseline flag had no scope or conflict behavior).**
+  `BuildThreePointTrendLine` constructs its line through only the oldest and
+  newest of three monotonic swing points, never testing the middle swing's
+  own distance from that line; `EvaluateTrendBreaker` then projects a single
+  constant value rather than re-projecting per confirmation bar. **Two live,
+  non-identical structural-break classifiers exist (`AnalyzeStructure`,
+  `FindRecentStructureShiftLevel`), not three — `BuildBOSRetestSignal` is a
+  caller that combines both, not a third definition; `HasEntryCHOCH` is a
+  third definition but dead code (round-2 finding 3.5 corrected the
+  miscount).** Effective giveback arm is `max(0.25, InpGivebackArmRR)`
+  (default 1.25R), percentage clamped 10–90% (default 60%), and the giveback
+  close condition itself is floored at `0.05R` — three bounds, not one
+  (round-2 finding 3.6). Timeframe **roles** are configurable
+  (`InpStructureTF`, `InpEntryTF` — which ships as **M3**, not M5, despite
+  misleading helper names/comments — two higher-TF inputs,
+  `InpTrendExecutionTF`, and further role-specific TFs); M15/M5 language
+  used loosely elsewhere in this document is shipped-default shorthand only
+  (round-2 finding 3.3). The `InpNewsHourServer`/`InpNewsMinuteServer`
+  inputs are manually-entered server-time values overwritten onto the
+  current server date, not a computed "offset" (round-2 finding 3.9).
+- **V8.11:** basket-specific dynamic risk management lost across a restart
+  — broker-held SL/TP and the daily-lock close path survive. A configurable
+  time exit (`InpMaxHoldMinutes`, disabled when ≤0) defaulting to 45 minutes.
+  A minimum-lot fallback reaching at least 2.5× its modeled budget at
+  shipped defaults, more when underwater. A daily-limit numerator/
+  denominator anchor mismatch across restarts — **and only a daily reset
+  exists; there is no separate weekly baseline in V8.11 at all (round-2
+  finding 3.10 corrected the first revision's false "daily/weekly baseline"
+  claim)**. A persisted peak-drawdown key that truncates a `long` magic
+  number, with no account/server identifier. Chart marks that retain the
+  oldest structural breaks and always mislabel the first stored mark CHoCH.
+  The same unchecked-`CTrade`-result pattern as V6.37. **The four-rung
+  target ladder (`InpTP1R`…`InpTP4R`) is configurable, not fixed, with TP1
+  floored and later rungs forced monotonic; "only ever uses the first two
+  rungs" itself depends on the shipped leg-count inputs, a viable two-leg
+  sizing outcome, both leg submissions succeeding, and a non-netting account
+  — describing this as a fixed ladder with an unconditional two-live-rung
+  behavior is corrected (round-2 finding 3.7).** V8.11 has **no
+  outcome-learning system at all** — its own audit already states this;
+  describing "both baselines already clamp" a learning factor was false,
+  since V8.11 has no learning factor to clamp, and its confluence-score caps
+  are themselves inconsistent (some cap at 100; several builder base-plus-
+  bonus paths do not) (round-2 finding 3.8).
+- **Both:** `IsSyntheticIndexSymbol` and `DirectionAllowedForSymbol` are
+  both V6.37 functions; V8.11's analogous, separate function is
+  `DirectionAllowed`. No economic calendar in either EA. RSI-fallback
+  patterns that silently satisfy downstream thresholds instead of
+  invalidating the read. Configurable timeframe roles in both EAs, not a
+  single fixed timeframe in either.
 
 ## Evidence
 
 - `baseline_v637_audit.md`, `baseline_v811_audit.md`,
   `baseline_comparison.md` — full defect list, cited to source line numbers.
-- `00_MASTER_PROMPT_FOR_CLAUDE.md` sections 5–15, 18, 22–23 — product
-  definition, regime engine, strategy routing, ICT/SMC logic, candlestick
-  engine, chart-pattern engine, signal scoring, trade decision object, risk
-  management, exit engine, news system, offline learning, required
-  architecture, roadmap.
-- `RISK_POLICY.md` — binding risk defaults and hard caps.
-- `NEWS_INTEGRATION_SPEC.md` — binding news-provider schema and policy
-  (read in full for this revision; the first draft had not been checked
-  against it directly).
-- `STRATEGY_SPECIFICATION.md` — the per-strategy template every strategy
-  module (Phase 5+) must be filled out against.
-- `AGENTS.md`, `PROJECT_RULES.md`, `TEST_PLAN.md` — governing process/
-  review-gate documents (read in full for this revision, per the
-  independent reviewer's own stated method).
+- `00_MASTER_PROMPT_FOR_CLAUDE.md` sections 5–15, 18, 22–23.
+- `RISK_POLICY.md`, `NEWS_INTEGRATION_SPEC.md`, `STRATEGY_SPECIFICATION.md`.
+- `AGENTS.md`, `PROJECT_RULES.md`, `TEST_PLAN.md`.
+- `01_BASELINE/EA_V637/Thembabot14 Max.mq5`,
+  `01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5` — re-read directly for this
+  revision at every source line cited in round 2's review (source 1008–1050,
+  1292–1310, 6315–6369, 2582–2614, 6388–6403, 7534–7540, 1895, 2001–2003,
+  7464–7528, 7777–7788, 5013–5025, 7144–7147, 1448–1449, 75–78, 1363–1366,
+  1328–1380, 190–191, 7260–7265, 52–53, 700, 762–767, 1628, 929, 943,
+  1090–1120, 1164, 1205, 2257–2278, 2718–2724, 5834–5860, 8738–8740).
 
 ## Specification
 
-### 0. Phase 2 deliverable map (response to round-1 finding 2.1)
-
-Master-prompt §23 assigns Phase 2 exactly eight deliverables. Round 1
-correctly found the first draft substituted "exits" for two of them
-(candlestick and chart-pattern formalization) and never delivered them.
-Explicit mapping, so completeness is checkable directly:
+### 0. Phase 2 deliverable map
 
 | # | §23 deliverable | Addressed in |
 |---|---|---|
@@ -134,934 +144,1069 @@ Explicit mapping, so completeness is checkable directly:
 | 5 | Chart patterns | §6 |
 | 6 | Risk | §8 |
 | 7 | News | §10 |
-| 8 | Resolve contradictions before coding | §12 (ledger), plus inline "Contradiction resolved" callouts throughout |
-
-(§4 and §7, §9, §11 cover ICT/SMC logic, exit engine, scoring/journal, and
-architecture — not separately listed in §23's eight items, but required by
-master-prompt §7–8, §14, §11–12/18, and §22 respectively, and included here
-for completeness.)
+| 8 | Resolve contradictions before coding | §12 |
 
 ### 1. Intraday modes (master prompt §5)
 
-Two modes: **Scalp** (M1–M5 entry, M15–H1 context, minutes to ~1 hour) and
-**Day-trade** (M5–M15 entry, M30–H4 context, same-session only).
+Two modes: **Scalp** (M1–M5 entry, M15–H1 context) and **Day-trade** (M5–M15
+entry, M30–H4 context).
 
-**Response to round-1 finding 2.2 — an actual formula, not just restated
-characteristics:**
+**Executable mode formula (round-2 finding 1.3 — every component is now a
+defined function, not a named idea):**
 
-- `IntradayModeRouter` computes a **day-trade suitability score** from the
-  §5 input list, each normalized to [0,1] and weighted (weights are a
-  configurable input set, defaulting to equal weighting until Phase 5
-  backtests justify otherwise): regime persistence (trend age in bars ÷
-  a lookback window), ATR percentile, current-range-vs-average, distance
-  to next validated target (in ATR multiples, capped), spread-to-ATR ratio
-  (inverted — wider relative spread favors scalp, since day-trade targets
-  can absorb it better), session time remaining (favors day-trade early in
-  session, scalp late), news proximity (real markets only; near-news favors
-  neither — see §10), pattern quality/expected R:R (higher favors
-  day-trade), and sample-gated historical performance (only after
-  `InpModeMinSamples`, default 20, per symbol/regime).
-- **Threshold and precedence:** score ≥ 0.60 → Day-trade; score ≤ 0.40 →
-  Scalp; between 0.40 and 0.60 → **no mode selected, no trade** (this is
-  the fail-closed/low-confidence behavior — mirrors the regime engine's own
-  rule in §2). A `NEWS_BLACKOUT` or `UNTRADEABLE_SPREAD_OR_LIQUIDITY` regime
-  read (§2) overrides mode selection entirely and forces no-trade,
-  regardless of score.
-- **Hysteresis:** once a mode is selected for a symbol, it does not flip on
-  the next tick from a score crossing back over the same threshold — a
-  2-bar (entry-timeframe) confirmation is required before switching modes,
-  to prevent thrashing at the boundary.
-- **Mode-specific rules, made explicit (previously only implied):** Scalp
-  mode caps attempts per session (`InpMaxScalpAttemptsPerSession`,
-  configurable) and rejects a repeat entry at an unchanged level within the
-  same session (tracked by price level ± spread, per symbol). Day-trade
-  mode enforces session-aware risk and **closes all exposure** before the
-  configured intraday boundary — for metals, before the configured
-  broker-rollover/market-close safety time; for synthetics, before the
-  configured daily boundary even though the underlying market runs
-  continuously (§8's "close all exposure by the boundary" rule applies to
-  both mode types, not day-trade alone).
-- **Logging:** every mode decision (selected mode, score, each input's
-  contribution, and the regime/news override state if applicable) is
-  written to the `TradeDecision` object (§9) — not a separate log.
+Each of the following ten components is computed and normalized to `[0,1]`
+where 1.0 favors Day-trade and 0.0 favors Scalp (a component's *sign* is
+fixed here; only its weight is configurable):
+
+1. **Regime persistence** = `min(1, trend_age_bars / InpModePersistenceBars)`
+   (default window 20 bars) if the active directional regime (§2) is
+   `TRENDING_UP/DOWN`; `0.3` (mildly Scalp-favoring) for `RANGING`; `0.0`
+   for any other regime (Day-trade is not favored in compression/expansion/
+   transition — those regimes are handled by §3's routing, not the mode
+   score).
+2. **ATR percentile** = the entry-timeframe ATR's percentile rank over the
+   trailing `InpATRPercentileWindow` (default 100) bars, used directly
+   (higher percentile → favors Day-trade, since larger ranges support wider
+   targets).
+3. **Range-vs-average** = `min(1, current_range_ATR_multiple / 2.0)` where
+   `current_range_ATR_multiple` is today's session range so far divided by
+   the entry-timeframe ATR — a larger realized range favors Day-trade.
+4. **Distance to next validated target** (from §7's target-selection logic,
+   computed for the current best candidate direction, expressed in ATR
+   multiples, capped at 5) ÷ 5 — more room favors Day-trade.
+5. **Spread-to-ATR ratio** — **corrected, round-2 finding 1.3:** this
+   component favors **Scalp**, not Day-trade: `1 − min(1, spread /
+   (ATR × InpSpreadATRDivisor))` where `InpSpreadATRDivisor` defaults to
+   `0.05` — a *wider* relative spread lowers this component's value,
+   penalizing Day-trade (which needs tighter relative execution cost over a
+   shorter expected move) and — inverted, `1 − value` — is treated as
+   favoring Scalp only in the specific sense that master-prompt §5 requires
+   *strong spread checks for scalping specifically*: a spread that is wide
+   relative to ATR should reduce the trade-worthiness of **both** modes, not
+   just shift the mode choice. This component is therefore not solely a
+   mode-selector input — it is passed through unmodified to the
+   trade-worthiness score in §9 as an independent penalty, and its
+   mode-router contribution is fixed at a low, fixed weight of `0.05`
+   (contributing almost nothing to the mode choice itself) precisely so a
+   wide spread cannot be laundered into "pick scalp" — it instead
+   suppresses the trade candidate directly regardless of mode.
+6. **Session time remaining** = `remaining_session_minutes /
+   total_session_minutes` — more time remaining favors Day-trade; below
+   `InpMinDayTradeSessionMinutes` (default 90), this component is clamped to
+   `0.0` regardless of the raw ratio (not enough session left to justify
+   opening a Day-trade position at all).
+7. **News proximity** (real markets only; `1.0` for synthetics — no
+   penalty) = `0.0` if inside a `NEWS_BLACKOUT` window (§2/§10 — this also
+   forces the router's final decision to no-mode, see below), else `1.0`.
+8. **Pattern quality** = the candidate signal's own `§9` score breakdown,
+   normalized `[0,1]`, using only the location/structure/pattern-quality
+   components (not the historical-performance component, to avoid
+   double-counting item 10 below).
+9. **Expected reward-to-risk** = `min(1, expected_R / 3.0)`.
+10. **Sample-gated historical performance** = the win rate of the candidate
+    setup **bucketed by symbol, strategy, setup, regime, and mode**
+    (matching §9's learning-bucket granularity exactly — round-2 finding
+    1.3 corrected the mismatch between this section's "symbol/regime only"
+    gating and §9's five-way bucket), only once `InpModeMinSamples`
+    (default 20) matched trades exist in that exact bucket; `0.5`
+    (neutral) below that sample count.
+
+**Aggregation:** `mode_score = Σ(weight_i × component_i) / Σ(weight_i)`,
+weights default to equal (`0.1` each for the ten components above except
+item 5, which is fixed at `0.05` and redistributes its remaining `0.05`
+equally across the other nine — i.e., each of the other nine defaults to
+`0.1056`); all weights are configurable inputs for Phase 4/5 calibration.
+**Missing-data behavior:** if any component cannot be computed (insufficient
+bars, indicator-handle failure), that component is excluded from both the
+numerator and denominator of the weighted average for that evaluation (not
+defaulted to `0.5`) — this prevents a data gap from silently pulling the
+score toward "neutral" and masking a real read failure; if **more than
+three** of the ten components are unavailable, `mode_score` is undefined and
+the router outputs no mode (fail-closed, matches §2's regime fail-closed
+rule).
+
+**Thresholds and precedence:** `mode_score ≥ 0.60` → Day-trade;
+`mode_score ≤ 0.40` → Scalp; `0.40 < mode_score < 0.60` → **no mode, no
+trade.** A `NEWS_BLACKOUT` or `UNTRADEABLE_SPREAD_OR_LIQUIDITY` regime read
+(§2) overrides mode selection entirely and forces no-trade, regardless of
+`mode_score` — evaluated **before** the mode formula runs at all, not as a
+tie-break after.
+
+**Hysteresis (round-2 finding 1.3's remaining ambiguities resolved):** mode
+switches require the new mode's threshold to hold for **two consecutive
+closed M1 bars** — a fixed base timeframe, not the entry timeframe of
+whichever mode is being evaluated (using a mode-dependent confirmation
+timeframe was circular; M1 is fixed regardless of outcome). While in the
+neutral band (`0.40–0.60`), **the previously-selected mode for that symbol
+persists** if one was already active (does not reset to no-mode) — a
+symbol with no prior mode selection stays in "no mode, no trade" until the
+score clears one of the two decision thresholds directly (the 2-bar
+confirmation still applies to the *initial* selection, not only to
+switches). Gating-regime overrides (`NEWS_BLACKOUT`/
+`UNTRADEABLE_SPREAD_OR_LIQUIDITY`) and any indicator-read failure **bypass
+hysteresis entirely** and take effect on the very next tick — hysteresis
+exists to prevent thrashing between two valid states, not to delay a
+safety stop.
+
+**Mode-specific rules:** Scalp caps attempts per session
+(`InpMaxScalpAttemptsPerSession`) and rejects a repeat entry at an unchanged
+level within the session (tracked by price level ± spread, per symbol).
+Day-trade closes all exposure before the configured intraday boundary (all
+symbols, all positions — not scoped to Day-trade-mode positions alone; see
+§8's boundary rule). Every mode decision, its score, and each component's
+contribution are written to the `TradeDecision` object (§9).
 
 ### 2. Regime engine (master prompt §6)
 
-Nine regimes: `TRENDING_UP`, `TRENDING_DOWN`, `RANGING`,
+Nine regimes, unchanged: `TRENDING_UP`, `TRENDING_DOWN`, `RANGING`,
 `VOLATILITY_EXPANSION_UP`, `VOLATILITY_EXPANSION_DOWN`, `COMPRESSION`,
 `TRANSITION_OR_UNCERTAIN`, `NEWS_BLACKOUT`,
 `UNTRADEABLE_SPREAD_OR_LIQUIDITY`. Completed candles only.
 
-**Response to round-1 finding 2.3 — an actual classifier, precedence, and
-required deliverables list:**
+**Precedence (unchanged from round 2, confirmed correct):** `NEWS_BLACKOUT`
+and `UNTRADEABLE_SPREAD_OR_LIQUIDITY` are gating regimes, evaluated first
+and independently; either being true overrides the directional classifier
+below.
 
-- **Precedence (this was undefined in the first draft):** `NEWS_BLACKOUT`
-  and `UNTRADEABLE_SPREAD_OR_LIQUIDITY` are **gating regimes**, evaluated
-  first and independently of the directional/volatility regimes below —
-  either one being true overrides and reports as the active regime
-  regardless of what the directional classifier would otherwise say. Only
-  when neither gating regime is active does the directional classifier run.
-- **Directional/volatility classification (a weighted-evidence state
-  machine, not a single formula):** compute (a) a trend-strength score from
-  ATR-normalized EMA slope/separation plus swing-sequence agreement
-  (higher-high/higher-low or lower-high/lower-low over the last
-  `InpRegimeSwingLookback` confirmed swings), with ADX included only as a
-  supporting multiplier (never gating alone, per §6); (b) an
-  expansion/compression score from ATR percentile plus true-range
-  compression/breakout-acceptance evidence; (c) an efficiency-ratio and
-  range-overlap check to distinguish genuine trend from choppy trend-like
-  price action. `TRENDING_UP`/`TRENDING_DOWN` require trend-strength above
-  `InpTrendThreshold` (configurable) with agreeing swing sequence;
-  `VOLATILITY_EXPANSION_UP`/`_DOWN` require the expansion score above
-  `InpExpansionThreshold` **and** directional agreement (an expansion score
-  above threshold with no clear direction is `TRANSITION_OR_UNCERTAIN`, not
-  a forced expansion-up/down guess); `COMPRESSION` requires the expansion
-  score below `InpCompressionThreshold`; `RANGING` is the default when none
-  of the above thresholds are met and efficiency ratio is low; anything
-  else (conflicting evidence, insufficient bars, indicator-read failure)
-  is `TRANSITION_OR_UNCERTAIN`.
-- **Confidence score:** `min(trend-strength-score, 1 − |0.5 − expansion-score-normalized|×2)`
-  scaled to [0,1] — a rough first-pass formula, explicitly flagged for
-  Phase 4 backtest calibration against the confusion matrix below, not
-  presented as final.
-- **Hysteresis and stale-data behavior:** the same 2-bar confirmation rule
-  as mode switching (§1) applies to regime transitions; if the underlying
-  indicator read fails (insufficient bars, invalid handle), the regime
-  reports `TRANSITION_OR_UNCERTAIN` with confidence `0`, never a stale
-  carried-forward value.
-- **Low-confidence rule (kept from the first draft, now with a concrete
-  threshold):** confidence `< 0.5` forces `TRANSITION_OR_UNCERTAIN`
-  treatment for routing purposes (§3) regardless of the nominally-detected
-  regime — waiting or reduced risk, never forced strategy selection.
-- **Required deliverables (previously named but not scoped as concrete
-  work items):** `MarketRegimeEngine.mqh`; a `MarketRegime` enum matching
-  the nine states above; a confidence score and reason string per read; a
-  transition history buffer (last N transitions, symbol-scoped); Python
-  unit-test fixtures covering at least one clean example of each of the
-  nine states plus the gating-regime-override case; and a confusion matrix
-  comparing the rule output against manually labeled screenshots from
-  `01_BASELINE/screenshots/` (TASK-001's evidence inventory) as the first
-  calibration dataset.
+**Directional/volatility classification — component formulas (round-2
+finding 1.4's missing equations/windows/thresholds/defaults, added):**
 
-**Contradiction resolved:** neither baseline's regime concept survives
-as-is. V6.37's 3-way classifier and V8.11's ad-hoc `g_expansion`-plus-
-direction-gates pairing are both replaced by the engine above.
-**Response to round-1 finding 4.1 — causal overclaim removed:** replacing
-the regime classifier does **not** by itself close V6.37's learning-penalty
-sign error (source 3697–3700/3729–3733) — that arithmetic defect is
-independent of how regimes are defined or counted and is fixed separately
-in §8. The V8.11 momentum-vs-expansion gate conflict is resolved by this
-section's gating/directional precedence rule: `BuildMomentumBreakout`-style
-setups are eligible whenever the *directional* regime (not the gating
-regime) is `VOLATILITY_EXPANSION_UP/DOWN` in their own direction, replacing
-V8.11's blanket `g_expansion` gate with an explicit per-setup eligibility
-check against the new regime state (see §3's routing matrix).
+- **Trend strength `T`** = `clamp01(0.5 × swing_agreement + 0.5 ×
+  ema_slope_norm)`, where `swing_agreement` is `1.0` if the last
+  `InpRegimeSwingLookback` (default 3) confirmed swings all agree
+  directionally (higher-high/higher-low or lower-high/lower-low), `0.0`
+  otherwise; `ema_slope_norm = clamp01(|EMA_slope| / (ATR ×
+  InpTrendSlopeATRDivisor))` (default divisor `0.5`), signed by the EMA
+  slope's own direction to determine `TRENDING_UP` vs. `_DOWN`. ADX
+  (`InpADXPeriod`, default 14) is included only as a multiplier:
+  `T_final = T × clamp01(0.5 + ADX/100)` — ADX can dampen but never solely
+  produce a trend read (per §6's own "supporting evidence, not sole
+  authority" rule).
+- **Expansion/compression evidence `E`** = `ATR_percentile` (the same
+  percentile computation as §1 item 2), **not** treated as symmetric around
+  `0.5` (see the corrected confidence formula below, which is exactly where
+  round 2's finding 1.4 identified the defect). `E > InpExpansionThreshold`
+  (default `0.75`) → expansion evidence; `E < InpCompressionThreshold`
+  (default `0.25`) → compression evidence; between the two thresholds →
+  neither.
+- **Efficiency ratio `ER`** = `|close[0] − close[N]| / Σ|close[i] −
+  close[i-1]|` over the last `N = InpEfficiencyWindow` (default 20) bars —
+  distinguishes genuine directional movement from choppy trend-like price
+  action. Used as a *gate*, not a scored component: `ER < InpMinEfficiency`
+  (default `0.3`) forces `RANGING` or `TRANSITION_OR_UNCERTAIN` regardless
+  of `T`, since a low efficiency ratio means the "trend" is not efficient
+  directional movement.
+
+**State selection (deterministic, evaluated in this fixed order — this
+did not exist at all in round 2's draft):**
+
+1. If `ER < InpMinEfficiency`: candidate is `RANGING` (skip to step 4).
+2. Else if `E > InpExpansionThreshold` and `T ≥ InpTrendThreshold`
+   (default `0.6`) **with agreeing direction** (the EMA-slope sign and the
+   swing-sequence direction must match): candidate is
+   `VOLATILITY_EXPANSION_UP`/`_DOWN` per that shared direction — **this is
+   the directional-regime precedence round 2 asked for: expansion with
+   directional agreement outranks a plain trend read**, since expansion
+   is the more specific, more information-bearing state when both are
+   present simultaneously.
+3. Else if `E > InpExpansionThreshold` with **no** directional agreement
+   (expansion evidence present but trend/swing direction conflicting or
+   absent): candidate is `TRANSITION_OR_UNCERTAIN` — **not** a forced
+   expansion-up/down guess, exactly as round 1 already specified and round
+   2 confirmed correct; this is restated here because step 2's ordering
+   makes the "no agreement" branch explicit rather than implicit.
+4. Else if `T ≥ InpTrendThreshold` with agreeing direction: candidate is
+   `TRENDING_UP`/`_DOWN`.
+5. Else if `E < InpCompressionThreshold`: candidate is `COMPRESSION`.
+6. Else: candidate is `RANGING`.
+7. If any input to steps 1–6 could not be computed (insufficient bars,
+   invalid indicator handle): candidate is `TRANSITION_OR_UNCERTAIN`
+   unconditionally, confidence `0`, and this **bypasses hysteresis**
+   (below) immediately — round 2 finding 1.4's explicit ask.
+
+**Confidence formula — corrected (round-2 finding 1.4, the mathematically
+broken formula is replaced):**
+
+The defect was structural: taking `min()` of trend strength against a
+term that is itself zero at both expansion extremes guaranteed low
+confidence exactly when evidence was strongest. The corrected formula uses
+a **classification-margin** approach instead — confidence reflects how
+decisively the winning state's own evidence clears its threshold relative
+to the runner-up condition, not an unrelated combination of two different
+metrics:
+
+- For `TRENDING_UP/DOWN`: `confidence = clamp01((T −
+  InpTrendThreshold) / (1 − InpTrendThreshold))` — confidence rises as `T`
+  moves further above its own threshold, reaching `1.0` at `T=1.0` and
+  `0.0` exactly at the threshold (never negative, since this state was
+  only selected when `T ≥ InpTrendThreshold`).
+- For `VOLATILITY_EXPANSION_UP/DOWN`: `confidence = clamp01((E −
+  InpExpansionThreshold) / (1 − InpExpansionThreshold))` — same margin
+  logic against `E`'s own threshold, so `E=1.0` (maximum expansion) now
+  correctly produces `confidence=1.0`, not `0`.
+- For `COMPRESSION`: `confidence = clamp01((InpCompressionThreshold − E) /
+  InpCompressionThreshold)` — `E=0.0` (maximum compression) correctly
+  produces `confidence=1.0`.
+- For `RANGING`: `confidence = clamp01(1 − |T − 0.3| / 0.3)` clamped
+  against `ER` — i.e., `RANGING` confidence is highest when trend strength
+  sits comfortably below its own trending threshold (evidence of *absence*
+  of trend, not an unrelated expansion computation) — capped at
+  `ER`'s own gate value so a low-efficiency-ratio `RANGING` read (chop, not
+  clean ranging) is never reported as high confidence.
+- For `TRANSITION_OR_UNCERTAIN`: confidence is always `0` by definition —
+  this state exists precisely because no other state's evidence cleared
+  its own bar decisively.
+
+Each formula only ever evaluates the metric relevant to the state actually
+selected — no formula combines two different regimes' metrics via `min()`
+or any other cross-state operation, which is what produced round 2's
+defect.
+
+**Hysteresis and stale-data behavior:** the same 2-bar (fixed M1)
+confirmation as §1 applies to regime transitions, **except** the gating
+regimes and any indicator-read failure (step 7 above), which take effect
+immediately, bypassing hysteresis — stated explicitly here per round 2's
+ask.
+
+**Low-confidence rule:** confidence `< 0.5` forces `TRANSITION_OR_UNCERTAIN`
+treatment for routing purposes (§3) regardless of the nominally-selected
+state.
+
+**Required deliverables (unchanged from round 1, confirmed still correct):**
+`MarketRegimeEngine.mqh`; the `MarketRegime` enum; confidence score and
+reason string per read; a transition-history buffer; Python unit-test
+fixtures covering all nine states plus the gating-override and
+indicator-failure cases; a confusion matrix against
+`01_BASELINE/screenshots/`-labeled examples.
 
 ### 3. Strategy routing (master prompt §7)
 
-**Response to round-1 findings 2.4 and 4.2 (partial) — a stable, six-family
-canonical list matching master prompt §7 exactly, and an actual per-regime
-routing matrix, not a provenance table:**
+**Response to round-2 finding 1.5 — the table now has context/entry-TF
+columns, eligibility/penalty are given numeric semantics, ownership is
+resolved, and the compression chicken-and-egg question is answered:**
 
-Canonical strategy families (six, matching §7's own count including
-`No trade` — the first draft's five-row table with an inconsistent "six
-families" claim is corrected):
+Six canonical families (unchanged count): SR Bounce/Range Rotation,
+SMC/ICT Price-Action, Trend Following, Chart-Pattern Breakout/Reversal,
+Post-Expansion Retest, No trade.
 
-1. **SR Bounce / Range Rotation**
-2. **SMC/ICT Price-Action** (sweep-shift, BOS/CHoCH, FVG, order blocks)
-3. **Trend Following** (including momentum-continuation breakout)
-4. **Chart-Pattern Breakout / Reversal**
-5. **Post-Expansion Retest**
-6. **No trade**
-
-Per-family assignment (baseline provenance, eligible modes, context/entry
-TF, conflict priority, minimum regime confidence — **all newly specified,
-none of this existed in the first draft**):
-
-| Family | Primary baseline source (this specification's architecture decision — not a master-prompt attribution, per round-1 finding 2.4) | Eligible modes | Min. regime confidence | Conflict priority (1=highest) |
+| Family | Baseline source (architecture decision) | Context TF | Entry TF | Eligible modes |
 |---|---|---|---|---|
-| SR Bounce / Range Rotation | V6.37 (`EvaluateSRBounceSignal`, `FindSRZone`, `FindClusterBoundary`, `BuildRangeCycleSignal`/`BuildRotationSignal`), with V8.11's `BuildSRBounce` sweep-first/extra-touch/H1-bias bonuses folded in as additional score components (see §9's correlation rule) | Scalp, Day-trade | 0.5 | 3 |
-| SMC/ICT Price-Action | V8.11 (sweep-and-shift, M15→M5 OB refinement); V6.37 (FVG retest structural gating) | Scalp, Day-trade | 0.5 | 2 |
-| Trend Following | V6.37 (`EvaluateTrendBreaker`, `BuildThreePointTrendLine`, re-projected per bar — see §12.5); V8.11 (`BuildMomentumBreakout` for the momentum-continuation half) | Day-trade primarily; Scalp only for the momentum-continuation half | 0.6 | 2 |
-| Chart-Pattern Breakout / Reversal | New work (§6) | Day-trade primarily | 0.6 | 4 |
-| Post-Expansion Retest | New work, informed by V6.37's FVG-retest-after-displacement structural gating | Scalp, Day-trade | 0.5 | 3 |
-| No trade | N/A — default outcome | N/A | N/A | 1 (always wins on conflict or below-threshold confidence) |
+| SR Bounce / Range Rotation | V6.37 primary + V8.11 bonus components | M15–H1 | M5–M15 | Scalp, Day-trade |
+| SMC/ICT Price-Action | V8.11 (sweep-shift, OB) + V6.37 (FVG gating) | M15–H4 | M1–M5 | Scalp, Day-trade |
+| Trend Following | V6.37 (trendline) + V8.11 (momentum) | M30–H4 | M5–M15 | Day-trade primary; Scalp for momentum half only |
+| Chart-Pattern Breakout/Reversal | New work (§6) | M15–H4 | M5–M15 | Day-trade primary |
+| Post-Expansion Retest | New work, V6.37-informed gating | M15–H1 | M1–M5 | Scalp, Day-trade |
+| No trade | N/A | N/A | N/A | N/A |
 
-**Regime-conditioned routing matrix (master prompt §7's own per-regime
-prefer/block lists, applied to the six families above — this did not exist
-in the first draft):**
+**Eligibility and penalty semantics (previously undefined):** "prefer" =
+eligible with a `+10%` score multiplier; "block" = **not eligible at
+all** (the family's candidates are not generated/considered this bar, not
+merely scored down); "heavily penalize"/"penalize" = eligible with a
+`×0.5`/`×0.8` score multiplier respectively (configurable, these are
+defaults). Regime-conditioned eligibility (unchanged substance from round
+2, now with these numeric semantics attached):
 
-- **`TRENDING_UP`/`TRENDING_DOWN`:** prefer Trend Following (pullback/BOS-
-  retest/FVG-continuation/OB-retest variants), SMC/ICT order-block retest
-  after displacement, Chart-Pattern flag/pennant/channel-pullback/breakout-
-  retest. Block or heavily penalize: SR Bounce counter-trend fades,
-  unconfirmed chart-pattern reversals, mid-range candlestick reversals.
+- **`TRENDING_UP/DOWN`:** prefer Trend Following, SMC/ICT order-block
+  retest after displacement, Chart-Pattern flag/pennant/channel-pullback/
+  breakout-retest. Block SR Bounce counter-trend fades. Heavily penalize
+  unconfirmed Chart-Pattern reversals and mid-range candlestick reversals.
 - **`RANGING`:** prefer SR Bounce, Range Rotation, SMC/ICT equal-high/low
   sweep reversal, false-break trap, Chart-Pattern double-top/bottom at a
-  boundary (after neckline confirmation), rejection candles at range
-  extremes. Block or penalize: Trend Following late-momentum entries inside
-  the range, trend entries near equilibrium, repeated bounces from an
-  exhausted level (tracked via the level-invalidation state in §12.5).
-- **`COMPRESSION`:** no family may trade until a confirmed breakout,
-  expansion candle, acceptance outside the pattern, and retest are all
-  present; Chart-Pattern Breakout is the primary eligible family once those
-  conditions are met. Do not predict breakout direction from compression
-  alone.
-- **`VOLATILITY_EXPANSION_UP/DOWN`:** do not chase the initial spike;
-  eligible families are Post-Expansion Retest, SMC/ICT FVG return, and
-  Trend Following's momentum-continuation half (per §2's directional-
-  agreement rule) once spread normalizes.
+  boundary (post-neckline-confirmation only), rejection candles at range
+  extremes. Block Trend Following late-momentum entries inside the range.
+  Penalize trend entries near equilibrium and repeated bounces from an
+  already-invalidated-then-recovered level (tracked per §3's level-
+  invalidation state, below).
+- **`COMPRESSION`:** **block every family** except Chart-Pattern Breakout,
+  which is itself gated to require a confirmed breakout, an expansion
+  candle, acceptance outside the pattern, and a retest, all evaluated
+  against the price action **since the compression regime was entered**
+  (tracked by a stored compression-entry bar index, not "while the regime
+  remains COMPRESSION" — round-2 finding 1.5's chicken-and-egg point is
+  resolved by this: **regime classification runs once per bar, before
+  routing evaluates any candidate for that bar.** A breakout bar's own
+  close is what the classifier reads to (re)classify the regime for the
+  *next* bar's routing decision — the breakout bar itself is still
+  evaluated under `COMPRESSION`'s eligibility rules using price action that
+  occurred *during* the compression period now ending, and the newly
+  re-classified regime (`TRENDING_*`/`VOLATILITY_EXPANSION_*`) takes effect
+  starting the following bar. There is no same-bar circularity: the
+  classifier's read for bar N is always available before routing decides
+  bar N's trade, and it is based on bar N's own completed close.).
+- **`VOLATILITY_EXPANSION_UP/DOWN`:** block chasing the initial spike
+  (defined as: no entry within `InpNoChaseBarsAfterSpike`, default 2 bars,
+  of the regime's own transition into this state). Prefer Post-Expansion
+  Retest, SMC/ICT FVG return, Trend Following's momentum-continuation half.
 - **`TRANSITION_OR_UNCERTAIN`, `NEWS_BLACKOUT`,
-  `UNTRADEABLE_SPREAD_OR_LIQUIDITY`:** No trade, unconditionally.
+  `UNTRADEABLE_SPREAD_OR_LIQUIDITY`:** No trade — block every family
+  unconditionally.
 
-**Self-confirmed bypass — retired, not kept as an underspecified flag
-(response to round-1 finding 4.4).** V6.37's `IsSelfConfirmedSetup` concept
-had no defined scope, no evidence-independence test, and no stated behavior
-when it conflicted with regime policy — round 1 correctly found "kept as a
-general flag" is not an implementable decision. **Resolution: retired for
-Phase 2.** Every setup passes through the same location/regime-confidence
-gates in this section; no setup bypasses horizontal SR/premium-discount
-confirmation by name. If a specific setup family is later shown (by
-backtest evidence, per a Phase 5 isolated experiment) to have sufficiently
-strong internal structural confirmation that the redundant check adds no
-information, that is a per-strategy `STRATEGY_SPECIFICATION.md` decision
-made with evidence at that time — not a blanket Phase 2 policy.
+**Ownership resolved (round-2 finding 1.5 — `StrategyRouter` and
+`ConflictResolver` no longer both claim conflict resolution):**
+`StrategyRouter` owns regime-conditioned eligibility and scoring for every
+candidate (the table and matrix above) — its output is a fully-scored,
+eligible-or-not list per candidate, nothing more. `ConflictResolver` owns
+**only** the final tie-break given that already-scored list: among eligible
+candidates, the highest score wins in its own direction; between opposing-
+direction candidates, `No trade` wins **unless** one direction's top score
+exceeds the other's by at least `InpConflictScoreGap` (default `10` score
+points, configurable) — a defined default and bound, closing round 2's
+"no ordering, no default/bounds" finding. `No trade` (family 6) is the
+result whenever no candidate is eligible, whenever `ConflictResolver`'s gap
+rule doesn't resolve an opposing-direction conflict, or whenever §1/§2's
+gating overrides fire — it is not a family that "competes" via its own
+score; it is the fallback result of every other path failing to produce a
+single eligible winning direction.
 
-**Level-invalidation lifecycle — decision and rationale now stated
-(response to round-1 finding 4.5).** Both baselines' "retires a level"
-functions (`LevelInvalidated`, `FindClusterBoundary`'s rejection check)
-actually implement current-run-only rejection, not permanent retirement.
-**Decision: keep current-run-only semantics, not permanent retirement.**
-Rationale: a level's validity is a statement about *current* price
-behavior around it, not a historical fact that should permanently exclude
-the level once a review invalidates it — if price later respects the level
-again after a stray break, that is new, current evidence the level is
-still structurally relevant, and permanently blacklisting it would discard
-that evidence. State transition: a level becomes eligible again the moment
-the consecutive-closes-beyond-it count drops back to 0 (i.e., the very next
-bar that closes back on the accepted side) — evaluated fresh on every call,
-exactly as both baselines already do; the change from the first draft is
-only that this is now stated as a deliberate design choice with a reason,
-not left implicit.
+**Strategy-switch logging (round-2 finding 1.5 — missing fields added):**
+every strategy switch is logged to the `TradeDecision` object (§9) with:
+previous regime, new regime, selected strategy family, confidence, rejected
+alternatives (family + score + block/penalize reason), risk multiplier
+(from the eligibility semantics above), and expected holding mode.
+
+**Broken cross-references fixed (round-2 finding 1.5):** the level-
+invalidation lifecycle decision referenced below as "§3's level-
+invalidation subsection" refers to this section's own paragraph two
+paragraphs below (previously mislabeled "§12.5," which does not exist —
+the ledger in §12 is a flat numbered list, not subsectioned).
+
+**Self-confirmed bypass — retired, rationale corrected (round-2 finding
+3.2):** V6.37's `IsSelfConfirmedSetup` is **not** an underspecified concept
+in the baseline — it explicitly names its eligible setups (source
+7534–7540) and is still subject to `ApplyRegimeRouting`'s veto (source
+7464–7528) even when it fires. The prior claim that the baseline helper
+"had no scope or conflict behavior" was false; the actual, correctly-stated
+reason for retiring it in the new engine is different: its bypass scope
+was tied to setup **name** matching a fixed list, which is exactly the
+kind of brittle, string-based classification this specification retires
+elsewhere (§10); and its interaction with the old regime router doesn't
+carry over meaningfully once that router is replaced by §2's engine. **The
+new-engine decision is unchanged (retired for Phase 2, reconsidered per
+strategy later with evidence) — only the stated reason for retiring it is
+corrected.**
+
+**Level-invalidation lifecycle:** unchanged from round 1/round 2 (confirmed
+correct by round 2's finding 4.5-equivalent — not separately re-flagged in
+round 2): current-run-only rejection is kept, not permanent retirement; a
+level becomes eligible again the moment its consecutive-closes-beyond count
+returns to zero, evaluated fresh every call.
 
 ### 4. ICT/SMC logic (master prompt §8)
 
-Every ported ICT/SMC definition (confirmed swing structure, liquidity
-sweep, BOS, CHoCH, displacement, FVG, order block, dealing range, premium/
-discount/equilibrium, OTE) must specify, per §8's own required fields:
-formula, required timeframe, confirmation timing, maximum age, invalidation,
-first-touch-or-retest policy, context requirement, stop placement, target
-logic, repainting test, and unit-test examples. This per-definition work is
-Phase 4/5 detail (one definition at a time, against
-`STRATEGY_SPECIFICATION.md`'s template) — this specification's role is to
-name which baseline's version of each concept is the starting point (per
-§3's table) and which confirmed defect must be fixed first:
-
-- BOS/CHoCH: V6.37 has three coexisting, non-identical live definitions
-  (`AnalyzeStructure`, `FindRecentStructureShiftLevel`,
-  `BuildBOSRetestSignal`'s combination of both) plus a fourth, dead
-  definition (`HasEntryCHOCH`). **Decision:** one canonical definition,
-  built from `AnalyzeStructure`'s cleaner trend-comparison logic, consumed
-  by every strategy that needs a structural-break test — not three parallel
-  implementations. Discard the dead function entirely.
-- Order blocks: V8.11's M15→M5 refinement with single shared accessor
-  `ActiveOB()` (already consumed identically by drawing and trading code)
-  is the starting point — this is the one part of either baseline that
-  already satisfies §8's requirement that trading and visuals share one
-  definition; see §12's contradiction ledger for why V8.11's *structure
-  marks* (a different concept) do not currently meet this bar and V6.37's
-  order-block confluence gating does not have this problem either way.
-- FVG: V6.37's three independently-toggleable structural requirements
-  (break-of-structure, M15-structure alignment, M5/entry-TF confirmation)
-  are kept as the starting gating structure; V8.11's weaker "first-return"
-  enforcement (touch scan omits the trigger bar, no persistent consumed
-  flag) is not carried forward without adding the missing consumed-flag
-  state.
+Unchanged in substance from round 1. **One addition (closing §12 ledger
+item 14, new this round):** the FVG structural-gating path's swing-depth
+input is unified with §3/§4's canonical structure depth — V6.37's FVG path
+currently mixes `InpStructureSwingDepth` (via `AnalyzeStructure`) and
+`InpFractalDepth` (via `FindTwoConfirmedSwingsBefore`) for what should be
+one concept. **Decision:** the new engine's FVG gating uses the single
+canonical swing-depth definition from the consolidated `SwingEngine` (§11),
+not two independently-tunable depth inputs — closing this specific
+baseline contradiction rather than carrying the mixed-input pattern
+forward.
 
 ### 5. Candlestick pattern engine (master prompt §9)
 
-**Response to round-1 finding 2.1 — this deliverable was entirely absent
-from the first draft; it is specified here.**
+**Response to round-2 finding 1.1 — actual mathematical definitions, not a
+requirement list:**
 
-`CandlestickPatternEngine.mqh`, normalized mathematical definitions only —
-never traded by pattern name alone. Every pattern is defined from: real
-body, full range, upper/lower wick, body-to-range ratio, wick-to-body
-ratio, gap/overlap versus the prior candle, ATR normalization, relative
-size versus prior candles, trend/range context, and location (SR,
-liquidity, OB, FVG, neckline, or pattern boundary) — with a confirmation
-candle required where the pattern definition calls for one.
+Base measurements, computed per candle `c`: `body = |close−open|`,
+`range = high−low`, `upper_wick = high − max(open,close)`,
+`lower_wick = min(open,close) − low`, `body_ratio = body/range`,
+`upper_wick_ratio = upper_wick/range`, `lower_wick_ratio = lower_wick/range`,
+`atr_size = range/ATR(InpCandleATRPeriod, default 14)`. All ratios use
+`range = 0 → pattern invalid` (avoid division by zero; a zero-range bar
+never qualifies for any pattern below).
 
-Initial pattern set (per §9, unchanged from the master prompt — this
-specification does not narrow it further, since neither baseline audit
-identified a reason to exclude any of these):
+**Single-candle patterns (defaults are configurable inputs):**
 
-- **Single-candle:** bullish pin bar/hammer, bearish pin bar/shooting star,
-  dragonfly-style rejection, gravestone-style rejection, marubozu/
-  displacement candle, doji/spinning top (indecision filters only, never a
-  standalone entry trigger).
-- **Two-candle:** bullish engulfing, bearish engulfing, inside bar, outside
-  bar, tweezer top, tweezer bottom, harami (weak alert only, unless
-  confirmed).
-- **Three-candle:** morning star, evening star, three white soldiers, three
-  black crows, three-bar reversal.
+- **Bullish pin bar / hammer:** `lower_wick_ratio ≥ 0.60` AND
+  `body_ratio ≤ 0.30` AND `upper_wick_ratio ≤ 0.15` AND close in the upper
+  40% of the range AND prior `InpPinBarTrendLookback` (default 5) bars show
+  a preceding down-move (`close[N] < close[N+InpPinBarTrendLookback]`).
+  **Bearish pin bar / shooting star** is the mirrored condition
+  (`upper_wick_ratio ≥ 0.60`, etc., preceding up-move).
+- **Dragonfly-style rejection:** `body_ratio ≤ 0.10` AND
+  `lower_wick_ratio ≥ 0.70` AND `upper_wick_ratio ≤ 0.10`.
+  **Gravestone-style rejection:** mirrored (`upper_wick_ratio ≥ 0.70`).
+- **Marubozu / displacement candle:** `body_ratio ≥ 0.90` AND
+  `atr_size ≥ InpDisplacementATRMultiple` (default `1.5`).
+- **Doji / spinning top (indecision filters, never standalone entries):**
+  `body_ratio ≤ 0.10` (doji) or `0.10 < body_ratio ≤ 0.35` with both wicks
+  `≥ 0.20` (spinning top).
 
-Per-pattern requirements (per §9): configurable but bounded thresholds; a
-market-context requirement (a pattern occurring in the middle of random
-noise is not a standalone signal); drawn label near the completed candle;
-stored fields (pattern ID, direction, start/end candle index, strength,
-context, confirmation status, invalidation level); no label duplication;
-stable object names; a unit test confirming historical labels never move
-after confirmation (this directly generalizes the repainting-test
-discipline already forced by TASK-001's completed-candle BLOCKER finding
-against V6.37's two false-break helpers — every candlestick pattern in the
-new engine is held to that same standard from day one); and a TA-Lib
-cross-check used only as research comparison, never as an assumed-
-profitable label source.
+**Two-candle patterns:**
 
-**Defect this closes:** V6.37's `IsBullishInsideFalseBreak`/
-`IsBearishInsideFalseBreak` read the forming (incomplete) bar — a confirmed
-project-rule violation (TASK-001 finding #14, release-blocking). Neither
-baseline's candlestick logic is ported as-is; this engine is built fresh
-against the normalized definitions above, with the completed-candle rule
-enforced structurally (every pattern test operates on `rates[1]` or older,
-never `rates[0]`) rather than relying on each helper function to remember
-to do so correctly.
+- **Bullish engulfing:** `close[0] > open[1]` AND `open[0] < close[1]` AND
+  `body[0] > body[1]` AND `close[1] < open[1]` (prior candle bearish).
+  **Bearish engulfing:** mirrored.
+- **Inside bar:** `high[0] < high[1]` AND `low[0] > low[1]`.
+  **Outside bar:** `high[0] > high[1]` AND `low[0] < low[1]`.
+- **Tweezer top:** `|high[0] − high[1]| ≤ ATR × InpTweezerTolerance`
+  (default `0.1`) AND `close[1] > open[1]` (up) AND `close[0] < open[0]`
+  (down, reversal). **Tweezer bottom:** mirrored on lows.
+- **Harami (weak alert only unless confirmed):** `body[0] < body[1] ×
+  InpHaramiMaxRatio` (default `0.5`) AND `high[0] ≤ high[1]` AND
+  `low[0] ≥ low[1]` — requires a third-bar confirmation close beyond
+  `close[1]` in the implied reversal direction before it counts as
+  anything stronger than an alert.
+
+**Three-candle patterns:**
+
+- **Morning star:** `close[2] < open[2]` (bearish), `body_ratio[1] ≤ 0.30`
+  (small-bodied middle candle, gapping or near-gapping below `close[2]`),
+  `close[0] > open[0]` AND `close[0] > (open[2]+close[2])/2` (bullish
+  candle closing into the first candle's body). **Evening star:** mirrored.
+- **Three white soldiers:** three consecutive bullish candles, each
+  `body_ratio ≥ 0.55`, each `open[i] > open[i+1]` and `close[i] > close[i+1]`
+  (progressively higher), each with `upper_wick_ratio ≤ 0.20`. **Three
+  black crows:** mirrored.
+- **Three-bar reversal:** a confirmed swing pivot (per §11's `SwingEngine`,
+  same depth definition as §4) at bar `1`, with bar `0` closing beyond
+  bar `2`'s open in the reversal direction.
+
+**Requirements applied to every pattern above (§9's own list, now attached
+to real predicates instead of floating separately):** every threshold
+above is a configurable input with the stated default as its bound;
+**market-context requirement** — no pattern above fires as a standalone
+signal without `§2`'s regime read being anything other than
+`TRANSITION_OR_UNCERTAIN`/gating, and without `§3`'s location requirement
+(SR/liquidity/OB/FVG/neckline/pattern boundary) being separately satisfied
+by the strategy consuming the pattern; a pattern in the middle of
+undifferentiated noise (regime `RANGING` with `ER` deep below
+`InpMinEfficiency`, or no location match) is never traded on its own. Stored
+per instance: pattern ID, direction, start/end candle index, strength
+(`body_ratio`/`atr_size`-derived, `[0,1]`), context (the regime/location it
+was detected in), confirmation status, invalidation level (the pattern's
+own extreme — a close beyond it invalidates). Drawn near the completed
+candle, stable object names, no duplicate labels, and a unit test
+confirming a historical label's position/text never changes after
+confirmation (this generalizes the completed-candle discipline already
+forced by TASK-001's BLOCKER finding against V6.37 — every predicate above
+reads `rates[1]` or older, never `rates[0]`, by construction). TA-Lib
+comparison is research-only, never assumed profitable.
 
 ### 6. Chart-pattern engine (master prompt §10)
 
-**Response to round-1 finding 2.1 — likewise entirely absent from the
-first draft; specified here.**
+**Response to round-2 finding 1.2 — pivot/tolerance/breakout equations for
+a representative pattern set (double top/bottom and head-and-shoulders, the
+two most structurally distinct cases; the remaining patterns in §10's list
+follow the same pivot/tolerance/target framework, detailed per-pattern as
+each is implemented in its own Phase 5 `STRATEGY_SPECIFICATION.md` task —
+this section defines the shared framework every pattern instantiates, which
+is what makes the remaining patterns Phase-5-sized work rather than
+undefined Phase 2 gaps):**
 
-`ChartPatternEngine.mqh`. Initial pattern set, objectively definable
-without subjective drawing (per §10, unchanged): double top/bottom, triple
-top/bottom, head and shoulders (and inverse), ascending/descending/
-symmetrical triangle, rectangle/consolidation box, bull/bear flag, pennant,
-rising/falling wedge, parallel channel. Cup-and-handle is explicitly a
-later, disabled-by-default research module per §10 — not included in the
-initial set.
+**Shared framework:** every pattern requires **confirmed swing pivots**
+(same `SwingEngine` depth as §4–5, no separate pivot definition per
+pattern); a **pivot-confirmation delay** of `InpSwingDepth` bars past the
+pivot itself (a pivot is not usable until confirmed, matching the swing
+engine's own definition — no pattern reads an unconfirmed pivot); **time
+symmetry tolerance** `|t_right_leg − t_left_leg| / t_left_leg ≤
+InpPatternTimeTolerance` (default `0.5`, i.e., legs within 50% of each
+other's duration); **price symmetry tolerance**
+`|price_right_leg − price_left_leg| / ATR ≤ InpPatternPriceTolerance`
+(default `1.0` ATR); **minimum pattern width** `InpPatternMinBars` (default
+20) and **maximum width** `InpPatternMaxBars` (default 200); **minimum
+height** `pattern_height / ATR ≥ InpPatternMinHeightATR` (default `2.0`).
 
-Per-pattern required fields (§10): required pivots, pivot-confirmation
-delay, time/price symmetry tolerance, minimum/maximum pattern width,
-minimum height in ATR, trend prerequisite, neckline/boundary, breakout
-threshold, required close-beyond-boundary, optional retest, volume
-requirement (only if the broker provides reliable volume — most CFD/
-synthetic feeds do not, so this defaults off), target formula, stop
-formula, invalidation, maximum age, pattern confidence, false-break
-conditions, broker-spread check, session time remaining, and scalp-vs-
-day-trade appropriateness (feeding directly into §1's mode router and §3's
-routing table).
+**Double top:** two confirmed swing highs `H1`, `H2` with
+`|H1−H2|/ATR ≤ InpPatternPriceTolerance`, separated by a confirmed swing low
+`L` (the neckline) with `L < H1 − pattern_height×0.3` (a genuine pullback,
+not a shallow wiggle). **Breakout threshold:** a confirmed close below `L −
+ATR×InpBreakoutBuffer` (default `0.1`). **Target:** `L − (H1_or_H2_avg − L)`
+(measured-move projection). **Stop:** above the more recent of `H1`/`H2`
+plus the same ATR buffer. **Double bottom:** mirrored. **Triple top/bottom:**
+the same definition with three qualifying extremes instead of two, all
+within the same price tolerance of each other.
 
-Visual/state requirements (§10): boundary lines, neckline, pattern start/
-end markers, breakout/retest markers, pattern name and confidence, and a
-status machine (`FORMING → CONFIRMED → RETESTING → TRADED → INVALIDATED →
-EXPIRED`) — a forming pattern is never traded; historical pivots are never
-redrawn after confirmation; a pattern registry prevents repeated trades
-from the same pattern instance; visible objects are capped to avoid chart
-overload.
+**Head and shoulders:** three confirmed swing highs `LS` (left shoulder),
+`H` (head), `RS` (right shoulder) with `H > LS` and `H > RS`, and
+`|LS−RS|/ATR ≤ InpPatternPriceTolerance` (shoulders roughly symmetric); a
+neckline drawn through the two intervening swing lows, sloped (not required
+flat). **Breakout threshold:** confirmed close beyond the neckline (sloped,
+evaluated at the current bar's neckline value) minus the ATR buffer.
+**Target:** neckline value at breakout minus `(H − neckline_at_H)`.
+**Stop:** above `RS` plus buffer. **Inverse head and shoulders:** mirrored.
 
-**Defect this closes (response to round-1 finding 2.9):** the first draft's
-routing table cited master-prompt §9–10 for "Chart-pattern breakout/
-Post-expansion retest" as one combined row — round 1 correctly found
-post-expansion routing actually comes from §7, not §9–10. §9–10 are now
-given their own real content here (this section and §5); §3's routing
-table cites §7 for Post-Expansion Retest's regime eligibility and this
-section for Chart-Pattern Breakout's own pattern definitions.
+**Optional retest** (applies to every pattern above): after the confirmed
+breakout, the pattern may (configurable per pattern, default **required**
+for Chart-Pattern Breakout family per §3) wait for price to return to
+within `ATR × InpRetestTolerance` (default `0.3`) of the boundary/neckline
+before entering — this is what moves the pattern from `CONFIRMED` to
+`RETESTING` in the state machine below, rather than trading the raw
+breakout bar directly.
+
+**Volume requirement:** off by default (most CFD/synthetic feeds do not
+provide reliable volume); enabled only per-symbol where the broker is
+confirmed to supply genuine volume.
+
+**Maximum age:** a pattern not traded within `InpPatternMaxAgeBars` (default
+50 bars past confirmation) expires (`EXPIRED` state below) regardless of
+whether it was ever invalidated.
+
+**Pattern confidence:** `clamp01(1 − price_tolerance_used/
+InpPatternPriceTolerance) × 0.5 + clamp01(1 − time_tolerance_used/
+InpPatternTimeTolerance) × 0.5` — tighter symmetry produces higher
+confidence, following the same margin-against-threshold logic as §2's
+corrected regime confidence (deliberately reusing that pattern rather than
+introducing a third, different confidence formula).
+
+**False-break conditions:** a confirmed close back inside the pattern
+boundary within `InpFalseBreakBars` (default 3) bars of the breakout
+invalidates the pattern (`INVALIDATED` state).
+
+**Broker-spread check and session time remaining:** both are the same §1
+item-5 spread-vs-ATR component and §1 item-6 session-time component,
+reused, not redefined.
+
+**Scalp-vs-day-trade suitability:** determined by pattern width in
+entry-timeframe bars — patterns confirming within `≤ 40` entry-TF bars are
+Scalp-eligible; wider patterns are Day-trade only, feeding §3's routing
+table directly.
+
+**State machine — corrected (round-2 finding 1.2, the linear chain is
+replaced with the actual branching structure):**
+
+```
+FORMING ──confirmed──> CONFIRMED ──(if retest required)──> RETESTING ──retest holds──> TRADED
+   │                        │                                   │
+   │                        │                                   └──retest fails───> INVALIDATED
+   │                        ├──(if no retest required)────────────────────────────> TRADED
+   │                        ├──false break (§ above)─────────────────────────────> INVALIDATED
+   │                        └──InpPatternMaxAgeBars elapses────────────────────────> EXPIRED
+   └──pivots invalidate before confirmation──────────────────────────────────────> INVALIDATED
+```
+
+`INVALIDATED` and `EXPIRED` are terminal states reachable from `FORMING`,
+`CONFIRMED`, or `RETESTING` — never mandatory post-`TRADED` stages, and
+retest is genuinely optional per pattern/family configuration, not a
+mandatory link in a single chain. A forming pattern is never traded;
+historical pivots are never redrawn after confirmation; a pattern registry
+(keyed by pattern type + boundary pivots) prevents two simultaneous
+instances of the same pattern from both trading; visible objects are capped
+(`InpMaxVisiblePatternObjects`, default 20) to prevent chart overload.
 
 ### 7. Exit engine (master prompt §14)
 
-**Response to round-1 finding 2.7 — actual selections, not a research
-plan:**
+**Response to round-2 finding 1.6 — executable definitions for every
+choice, and the false exclusivity claim corrected:**
 
-`ExitManager` supports the full capability list from §14 (initial
-structural stop, initial target, multi-target plan without multiplying
-total risk, break-even only after evidence, structure/ATR/swing trailing,
-evidence-conditioned time stop, momentum-failure exit, opposite-confirmed-
-structure-shift exit, session close, daily risk lock, news safety policy,
-profit-giveback guard). Every exit carries one machine-readable reason.
-
-**Decisions (Phase 2 defaults, all independently swappable/testable per
-§14's own "do not assume more complex exits are better" instruction, and
-all subject to revision once Phase 8's MFE/MAE research produces evidence):**
-
-- **Initial target:** next validated SR/liquidity target (V6.37's
-  `SetEquilibriumContinuationTarget` pattern — nearest qualifying target
-  beyond `risk × InpMinRiskReward` — is the starting point, since it is the
-  only target-selection logic from either baseline that biases toward
-  reachable rather than merely ambitious targets), not a fixed-R target.
-- **Multi-target plan:** at most two stages by default (partial + runner),
-  built fresh rather than copying either baseline's specific stage-count
-  scheme (V6.37's actual managed stages are TP1→TP3→runner, not the
-  TP1→TP2→TP3 its own audit first mis-stated; V8.11's fixed four-rung
-  ladder only ever uses its first two rungs at shipped leg-count defaults).
-  Total risk is not multiplied across stages regardless of stage count.
-- **Break-even trigger:** evidence-based — armed only once a position has
-  reached a structural milestone (a fresh swing forming beyond entry in the
-  trade's favor), not a bare R-multiple alone, and only after confirming
-  via actual fill price (§8) which stage has genuinely been reached — not
-  "a leg is missing" as a proxy for "a leg banked," which is V8.11's
-  confirmed defect (a manual close, SL, or netting collapse can all
-  satisfy that proxy without any TP having filled).
-- **Trailing precedence:** structure-based trailing is primary; ATR-based
-  trailing is the fallback when no fresh structure has formed since the
-  last trail update; swing-based trailing available as an alternative mode
-  for Phase 8 A/B testing, not a third simultaneous layer.
-- **Time stop:** evidence-conditioned per mode/regime/target-progress/
-  session-time-remaining (§1), never a bare constant — this retires V8.11's
-  `InpMaxHoldMinutes` wall-clock design entirely, not merely its default
-  value.
-- **Exit priority when triggers conflict (undefined in the first draft):**
+- **Initial target — corrected exclusivity claim (round-2 finding 1.6):**
+  V6.37 in fact has multiple reachable-target mechanisms beyond
+  `SetEquilibriumContinuationTarget`
+  — `ApplyHistoricalM15Target`/`FindQualifiedFractalTarget` (source
+  1787–1803), nearer SR/supply-demand target selection (source ~2319–2335),
+  and opposite-boundary range/rotation targets. **Decision, restated
+  precisely:** the new engine's target selector evaluates all reachable
+  candidates from the shared structure engine (§11) — confirmed SR zone,
+  swing fractal (M15 and H1 roles), major-swing, and opposing-range-
+  boundary — and selects the **nearest** one that still clears
+  `risk × InpMinRiskReward`, exactly matching `SetEquilibriumContinuationTarget`'s
+  selection *rule* (nearest-qualifying), while sourcing candidates from all
+  of V6.37's target-generating functions above, not from one alone.
+- **Break-even "fresh swing" arming — defined:** arms when
+  `SwingEngine` (§11, same depth as §4–6) confirms a **new** swing pivot
+  beyond the entry price in the trade's favor, **and** the position's
+  actual fill price (never the requested quote, per §8) has moved at least
+  `InpBreakEvenMinR` (default `0.5R`) in favor. Both conditions required —
+  a structural milestone alone, without minimum favorable movement, does
+  not arm break-even (avoids arming on a technically-valid but trivial
+  swing immediately after entry).
+- **Structure trailing — defined:** once armed, the stop trails to
+  `most_recent_confirmed_swing_in_favor − ATR × InpTrailBuffer` (default
+  `0.3`), recalculated each time a new swing confirms; **never** moved
+  against the position.
+- **ATR fallback — activation defined:** if no new confirmed swing forms
+  within `InpTrailStaleBars` (default 15) bars since the last structure-
+  trail update, the trail switches to `current_price − ATR ×
+  InpATRTrailMultiple` (default `2.0`) until a fresh swing resumes
+  structure-trailing.
+- **Time stop — evidence function defined:** closes the position if **all**
+  of: (a) elapsed time exceeds the mode's own expected-duration ceiling
+  (Scalp: `InpScalpMaxMinutes`, default 60; Day-trade: remaining session
+  time from §1 item 6 reaching `0`); (b) current R is below
+  `InpTimeStopMinR` (default `0.3R` — a position already well in profit is
+  not time-stopped, it is left to trailing/giveback logic); and (c) no
+  fresh confirmed swing has formed in the trade's favor within the last
+  `InpTrailStaleBars` bars (reusing the ATR-fallback staleness definition
+  above, so "no progress" is one consistent concept across trailing and
+  time-stop logic, not two independent staleness clocks).
+- **Profit-lock — trigger/floor defined:** arms once price has covered
+  `InpProfitLockTriggerPercent` (default `70%`) of the distance from entry
+  (actual fill) to the current target; raises the stop to lock in
+  `InpProfitLockKeepPercent` (default `50%`) of the current open gain,
+  **and this stop-move is itself subject to the blanket result-checking
+  rule in §8** — if the broker's minimum-stop-distance enforcement moves
+  the resulting stop further than the intended lock level, the engine
+  re-evaluates whether the actually-achieved lock still clears
+  `InpProfitLockMinKeepPercent` (default `30%`, a floor beneath which the
+  attempt is logged as a partial-lock warning rather than silently accepted
+  as if the full 50% had been locked) — this is the fix for V6.37's
+  confirmed defect (a stop moved twice by broker constraints without a
+  second improvement check), stated as an explicit re-check with its own
+  floor, evaluated **independently of** which giveback-guard model (if
+  any) is active.
+- **Exit priority (unchanged from round 2, confirmed no defect found):**
   (1) daily/session risk lock, (2) news safety policy, (3) opposite-
   confirmed-structure-shift, (4) momentum-failure exit, (5) profit-giveback
-  guard, (6) time stop, (7) trailing-stop update. Higher-priority exits
-  close/prevent the trade outright; lower-priority ones only apply if a
-  higher-priority one hasn't already acted this tick.
-- **Profit-lock and giveback guard are separate exits, not one bundled
-  decision (response to round-1 finding 2.7's second point):** V6.37's
-  profit-lock floor (raise SL once price covers a threshold percentage of
-  distance-to-TP) is evaluated and fixed independently of the giveback
-  guard's A/B-test status below — its confirmed defect (the candidate stop
-  can be moved a second time by broker-minimum-distance enforcement without
-  a second improvement check) must be fixed regardless of which giveback
-  model, if any, is active.
+  guard, (6) time stop, (7) trailing-stop update.
 
-**Contradiction resolved — giveback guard model (numbers corrected per
-round-1 finding 3.8: both models' figures are configurable-input defaults,
-not fixed constants):** V6.37's default is arm at `InpGivebackArmRR`
-(default 1.25R) with giveback tolerance `InpMaxProfitGivebackPercent`
-(default 60%, clamped 10–90%); V8.11's default is arm at `InpGivebackArmR`
-(default 0.8R) with floor `InpGivebackFloorR` (default 0.1R, floored at 0).
-Per `baseline_comparison.md`, this is "a natural candidate for an isolated
-A/B experiment... rather than picking one by inspection." **Resolution
-unchanged from the first draft:** build both behind one
-`ProfitGivebackGuard` interface as swappable, independently testable
-strategies, retaining their existing clamp bounds unless a Phase 8
-experiment justifies new ones; default **off** until Phase 8 produces
-comparative evidence. Whichever is tested first must fix its own baseline's
-confirmed defects: V8.11's misleading `MathMax(rr,0.0)`-clamped status text
-("banked +0.00R" on an actual loss).
+**Contradiction resolved — giveback guard model, bounds completed
+(round-2 finding 3.6 — both effective floors and V6.37's close-condition
+floor were missing):** V6.37's effective values: arm
+`max(0.25, InpGivebackArmRR)` (default `1.25R`), giveback percentage
+clamped `10–90%` (default `60%`), **and** the close-trigger condition
+itself is floored at `0.05R` (i.e., the guard's close check never fires
+below an absolute `0.05R` floor regardless of the percentage math). V8.11's
+effective values: arm `max(0.3, InpGivebackArmR)` (default `0.8R`), floor
+`max(0.0, InpGivebackFloorR)` (default `0.1R`). **Decision unchanged:**
+both models built behind one `ProfitGivebackGuard` interface, all of the
+above bounds retained as-is (not redefined), default off until Phase 8
+produces comparative evidence.
 
-### 8. Risk management (master prompt §13, `RISK_POLICY.md`) — binding, not aspirational
+### 8. Risk management (master prompt §13, `RISK_POLICY.md`)
 
-**Response to round-1 findings 1.2–1.5 — every missing binding rule added,
-and risk accounting actually defined:**
+**Response to round-2 findings 2.1–2.7 — every gap closed:**
 
-**Per-trade and aggregate limits (all restated from `RISK_POLICY.md`
-verbatim, all hard ceilings, none of which any mechanism — pilot, rotation,
-weak-sample adaptation, or otherwise — may exceed):**
+**Hard limits (unchanged numbers, confirmed correct by round 2):**
+XAUUSD 0.25%, other metals 0.25–0.50%, synthetics 0.25–0.50%; hard cap
+1.00% per trade, 1.00% total open risk, 2.00% daily loss, 4.00% weekly
+loss; three-loss cooldown.
 
-- XAUUSD 0.25%, other metals 0.25–0.50%, synthetics 0.25–0.50% until
-  symbol-specific testing proves otherwise.
-- Hard cap 1.00% per trade; 1.00% total open risk; 2.00% daily loss; 4.00%
-  weekly loss.
-- **Three consecutive losses trigger a cooldown** (`RISK_POLICY.md:12`,
-  master prompt line 825 — **omitted from the first draft, added here**);
-  cooldown duration is a configurable input, sample-aware per strategy for
-  strategy-specific benching (see §9).
-- **No martingale, no grid, no averaging down** (`RISK_POLICY.md:13–15` —
-  **omitted from the first draft, added here**) — this is a structural
-  rule, not merely "add-ons disabled by default": no position sizing logic
-  may size a new entry as a function of a prior loss on the same or a
-  correlated instrument.
-- **Reject the broker minimum lot when its actual risk exceeds the cap**
-  (`RISK_POLICY.md:17`, master prompt line 832 — **omitted from the first
-  draft, added here**); do not fall back to a separate, looser
-  minimum-lot-compatibility ceiling the way both baselines do.
-- **Never widen a stop merely to avoid a loss** (`RISK_POLICY.md:21` —
-  **omitted, added here**) — stops may only widen through the documented,
-  evidence-based floor/breathing-room mechanism (§8's stop-floor/cap
-  policy below), never as a reactive avoid-the-loss adjustment.
-- Broker validation before every order: tick size, tick value, volume min/
-  max/step, stop level, freeze level, filling mode, margin, **and contract
-  size** (`RISK_POLICY.md:19` — **omitted from the first draft's list,
-  added here**) — via `OrderCalcProfit`/`OrderCalcMargin` cross-checks.
-- **Close all exposure by the approved intraday boundary**
-  (`RISK_POLICY.md:20`) — this is an all-symbol, all-position rule, not
-  scoped to day-trade mode alone (corrected per round-1 finding 1.3; see
-  §1's restated boundary rule).
+**Add-on/basket rule — stated normatively, not presupposed (round-2 finding
+2.1):** **Add-ons and multi-leg baskets are disabled by default.** No
+sizing function may create a second concurrent position on the same
+symbol/direction as an existing one, and no basket/multi-leg entry
+mechanism is active, until a Phase 5+ isolated experiment independently
+proves both the total-risk math and incremental value — this is the
+missing normative sentence itself, not a description that assumes it.
 
-**Risk accounting definitions (entirely absent from the first draft — round-1
-finding 1.4 correctly identified that restating "1%/2%/4%" without an
-accounting model does not formalize risk):**
+**No-increase-after-loss, restated precisely (round-2 finding 2.5):** a
+loss may **reduce or hold** risk on the next trade; it may **never
+increase** it. This is one directional constraint, not two independent
+rules — the drawdown-based risk-*reduction* control (below) is the
+permitted direction; nothing in this document permits an increase.
 
-- **Scope:** all caps are **account-wide**, not per-symbol or per-magic —
-  this closes V6.37's daily-limit symbol/magic-scope ambiguity (§12) by
-  removing the ambiguity outright: one risk accounting model per account,
-  regardless of how many symbols or strategy instances are attached.
-- **Denominator:** current equity (not balance) at the moment of each
-  check, for the per-trade and total-open-risk caps; for daily/weekly caps,
-  the equity recorded at the start of the daily/weekly boundary (see
-  below), never re-based mid-period the way V8.11's restart behavior
-  currently does.
-- **Costs included:** risk figures include estimated spread cost and
-  commission where the broker exposes them; swap/rollover is tracked
-  separately and reported but does not retroactively change a trade's
-  recorded risk percentage.
-- **Fill basis:** every risk figure used for a *live* trade's ongoing
-  management is computed from actual fill price (`POSITION_PRICE_OPEN`),
-  never the pre-submission requested quote (see the blanket rule below);
-  the *pre-trade* risk check (before submission) necessarily uses the
-  requested quote, since no fill exists yet, but must be re-verified
-  against the actual fill immediately after submission and rejected/flagged
-  if the realized risk exceeds the cap by more than a configurable
-  slippage tolerance.
-- **Reset boundary and timezone:** daily reset at broker-server midnight
-  (not local/Botswana time, to match the broker's own trading-day
-  definition); weekly reset at the start of the broker's trading week.
-  Reset timestamp and the equity recorded at that moment are both persisted
-  (see restart persistence below).
-- **Restart persistence (closes V8.11's confirmed daily-limit anchor
-  mismatch, §12):** the daily/weekly start-equity baseline is persisted
-  (not re-captured from current equity on every restart) and is only
-  re-baselined at the actual reset boundary crossing, detected by comparing
-  the persisted reset timestamp against current time — a mid-period
-  restart must **not** silently reset the baseline to current equity.
-- **Breach behavior:** a cap breach **both** blocks new entries **and**
-  attempts to close existing exposure tied to the breach (e.g., a daily-loss
-  breach attempts to close all open positions) — "attempts," per the
-  blanket result-checking rule below, since a close is never silently
-  assumed to succeed.
+**Risk accounting — fully defined (round-2 finding 2.3):**
 
-**Profit-protection formalization (master prompt lines 836–856 — named in
-the first draft with no defaults/state model/priority; addressed now):**
+- **Scope:** account-wide (unchanged).
+- **Per-position risk** = `max(0, |entry_fill − SL| × volume ×
+  tick_value)` if an SL is set; if no SL is set (should not occur given
+  the mandatory-stop requirement elsewhere in this document, but defined
+  for completeness), the position's full notional value at
+  `InpNoStopWorstCaseATRMultiple` (default `10`) ATR is used as a
+  conservative worst-case placeholder until a stop is attached, and the
+  position is flagged for immediate remediation (a stop must be attached
+  within one tick of detection).
+- **Total open risk** = `Σ per-position-risk` across every open position
+  carrying this EA's own magic number, **plus** the worst-case risk of
+  every pending order carrying this EA's own magic number (pending orders
+  **do reserve** risk against the total-open-risk cap — a pending order
+  is not "free" simply because it hasn't filled; this closes round 2's
+  "whether pending orders reserve risk" gap). If two pending orders could
+  both fill simultaneously in a way that would jointly breach the cap
+  (e.g., two opposite-direction resting orders), the cap is checked
+  against the **larger** of the two possible outcomes, not their sum
+  (since only one side can actually fill on most instruments) — unless the
+  instrument is confirmed to allow both fills (hedging mode, §12 item 9),
+  in which case the sum is used.
+- **Daily loss numerator** = `(TodayClosedPL + TodayFloatingPL +
+  TodaySwapAndCommission) − 0` compared against `−daily_start_equity ×
+  InpDailyLossLimitPercent/100`; **daily loss denominator** =
+  `daily_start_equity`, persisted at the daily reset boundary (below), not
+  re-derived from current equity on every check.
+- **Weekly loss**: identical formula, substituting the weekly reset
+  boundary and `weekly_start_equity`.
+- **Cash-flow treatment:** a detected deposit or withdrawal (comparing
+  consecutive equity/balance snapshots for a delta not explained by
+  floating P/L movement) immediately **rebases** `daily_start_equity`/
+  `weekly_start_equity` by the same delta, so the loss percentage is not
+  distorted by external cash flow — this is checked every `OnTick` inside
+  the risk-accounting refresh, not only at reset boundaries.
+- **Reset boundary:** daily reset at broker-server midnight; weekly reset
+  at the broker's own trading-week start (first server-time session open
+  following the broker's configured weekend). **No-tick-at-boundary
+  handling:** the reset is triggered by the **first tick received after**
+  the boundary time has passed (comparing current server time against the
+  last-recorded boundary crossing), not by requiring an exact-timestamp
+  tick — this is already how both baselines' own daily-reset checks work
+  (`StartOfDay(TimeCurrent()) != g_day_start`-style comparison) and is kept
+  for weekly resets too.
+- **Restart persistence:** `daily_start_equity`/`weekly_start_equity` and
+  their reset timestamps are persisted via `StateManager` (§11) and are
+  only ever re-baselined when the persisted reset timestamp is found to be
+  older than the current actual boundary — a mid-period restart reloads
+  the persisted baseline unchanged, closing V8.11's confirmed daily-anchor
+  restart defect directly.
+- **Breach behavior — hard cap vs. fill slippage reconciled (round-2
+  finding 2.2):** the **pre-trade** check (before submission) is the only
+  point at which the 1%/1%/2%/4% figures function as a hard gate that
+  blocks a new entry outright. Once a position is **filled**, if the
+  actual fill (plus confirmed slippage) pushes its realized risk
+  marginally above what was checked pre-trade, this is not "exceeding a
+  hard cap that permits a soft tolerance" — it is **immediately** queued
+  for full closure (not partial, not merely flagged) as soon as the
+  discrepancy is detected (next tick), and logged as a cap-breach event.
+  There is no tolerance band that sits above the cap; the cap is enforced
+  pre-trade as a gate and post-fill as a mandatory-closure trigger — two
+  different mechanisms for two different moments, not one soft
+  continuum.
+- **Account-wide close scope (round-2 finding 2.3):** an account-wide risk
+  lock (daily/weekly breach) closes **only positions carrying this EA's own
+  magic number** — never a manually-placed position or another EA's
+  position, since this engine cannot determine the intent behind a
+  position it did not open, and closing it could itself be a harmful,
+  irreversible action outside this engine's authority.
 
-Each of the following is implemented as an independently testable module,
-default **off** except where noted, per §13's "do not add all protections
-simultaneously — test incremental value":
+**Profit-protection controls — defaults and formulas (round-2 finding
+2.4):**
 
-- Account equity-peak giveback: off by default (Phase 8 experiment, see §7).
-- Daily equity-peak giveback: **on by default**, since this is required to
-  make the daily-loss cap in this section meaningful in practice, not an
-  optional add-on.
+- Account equity-peak giveback: off by default (Phase 8 experiment).
+- Daily equity-peak giveback: **on by default** — arms once daily open
+  profit exceeds `InpDailyGivebackArmPercent` (default `1.0%` of
+  daily-start equity), closes all EA-owned exposure if daily profit falls
+  back to `InpDailyGivebackFloorPercent` (default `0.5%`) — **correcting
+  round 2's finding that this control was asserted as necessary without
+  being a defined mechanism**; it is a distinct control from the daily-loss
+  cap, evaluated independently.
 - Session profit lock: off by default (Phase 8 experiment).
-- Strategy-specific and consecutive-loss cooldowns: **on by default**
-  (three-loss cooldown above is the consecutive-loss instance; strategy-
-  specific cooldown is sample-aware, tied to the learning-bench mechanism
-  in §9).
-- Maximum trades per session and maximum failed attempts at one level: **on
-  by default**, values configurable, closing the "unlimited scalp attempts"
-  gap the first draft left implicit.
-- Reduced risk after drawdown: **on by default** — a win-rate or drawdown-
-  based *reduction* only, never an increase (restated from the first draft,
-  now explicitly cross-referenced against the "no risk increase after a
-  loss" rule so the two are read together, not independently).
-- No new trades after the daily profit target unless an explicit
-  "continue at reduced risk" experiment is separately approved: off by
-  default (matches master-prompt wording exactly).
+- Strategy-specific and consecutive-loss cooldowns: on by default; the
+  three-loss cooldown duration is `InpCooldownMinutes` (default 60);
+  strategy-specific benching uses §9's sample-and-loss criteria.
+- Maximum trades per session (`InpMaxTradesPerSession`, default 10) and
+  maximum failed attempts at one level (`InpMaxFailedAttemptsPerLevel`,
+  default 2): on by default.
+- Reduced risk after drawdown: on by default — `risk_multiplier =
+  clamp(1.0 − current_drawdown_percent/InpMaxDrawdownReductionPercent,
+  InpMinRiskMultiplier, 1.0)` (defaults: `InpMaxDrawdownReductionPercent =
+  10`, `InpMinRiskMultiplier = 0.25`) — a defined scaling formula, not a
+  label.
+- **Post-daily-target policy — default corrected (round-2 finding 2.4):**
+  the **stop-trading-after-daily-target control is ON by default** (no new
+  trades once the daily profit target is reached); only the **override**
+  ("continue at reduced risk") is off by default and requires a separately
+  approved experiment. Round 2 correctly found the prior draft inverted
+  this — the stop itself was described as off, which is backwards relative
+  to master-prompt §13's rule.
 
-**Blanket rules closing defect classes found across both baselines
-(unchanged from the first draft, with round-1's finding 4.3 addressed by
-widening the `CTrade` rule):**
+**Stop floor/cap prevention — defined, baseline history claim corrected
+(round-2 finding 2.6):** floor = the exit engine's own ATR-based breathing-
+room floor (§7); cap = the percent-of-price/ATR cap (unchanged concept from
+round 1). **Attach-time AND periodic recheck:** validated at symbol attach
+**and** re-validated every `InpVolatilityRecheckBars` (default 500) bars
+using a rolling `InpVolatilityWindow`-bar (default 500) ATR percentile
+distribution as "typical volatility" — an attach-time-only check cannot
+account for a volatility regime shift months into operation, which round 2
+correctly identified. **Baseline-history claim corrected:** V6.37's
+market-entry cap rejections **are** explicitly journaled and printed
+(source 2718–2724); the elite-score exception and configurable skip/clamp
+paths (source 5834–5860) mean not every signal is rejected — only the
+resting-limit path's inline cap check (source 8738–8740) fails silently.
+The new engine's preflight check exists to prevent the resting-limit
+path's silent-failure mode specifically, and to give the market-entry
+path an *advance* warning instead of a per-rejection one — not because
+market-entry rejections were previously invisible.
 
-- **Every trading operation — market submission, pending submission,
-  position-close, position-modify, and pending-order-delete — must check
-  its `CTrade` result code and reconcile against the resulting deal/order/
-  position before any internal state is updated** (peak-R keys, break-even
-  flags, basket-leg counts, tracking globals, daily-limit lock state).
-  Round 1 correctly found the first draft's rule covered close/modify/
-  delete but not submission, even though the Baseline section already
-  named unchecked submissions in both EAs — this is now explicitly
-  blanket, covering every operation type.
-- Every R/break-even/trailing/giveback calculation must use the actual
-  fill price, never the pre-submission requested quote (restated above
-  under risk accounting; applies identically here).
-- Pending-order fills must be matched to their originating order/position
-  identity (ticket, `DEAL_POSITION_ID`, or equivalent), never by direction
-  alone.
-- The confirmed sign-error defect (V6.37 source 3697–3700/3729–3733: at
-  60% win rate with net loss, the base branch adds `+2.8%` and the regime
-  branch adds `+4.0%` to the score factor — independently recomputed and
-  confirmed correct in the round-1 review) is a hard blocker for reusing
-  V6.37's learning-penalty pattern at all; any ported learning/scoring
-  system must independently re-derive and unit-test the penalty branch's
-  arithmetic before it is trusted.
-- Journal/learning persistence keys must include **both** symbol and magic
-  number; file opens must use `FILE_SHARE_READ`/`FILE_SHARE_WRITE`; header
-  writes must not have a duplicate-write race; the "best setup" field must
-  carry the actual per-trade setup name through the position's lifetime.
-- RSI (or any indicator) read failure must **fail closed**: invalidate the
-  candidate signal outright, never fall back to a fixed value that can
-  silently satisfy a downstream threshold comparison.
+**Blanket rules (unchanged from round 2, confirmed no defect found by round
+2's own review):** every trading operation checked/reconciled against
+result codes; every R calculation uses actual fill price; pending fills
+matched by ticket/position identity; the sign-error defect is a hard
+blocker for reuse; journal keys include symbol+magic; RSI/indicator failure
+fails closed.
 
-**Stop-floor/cap policy (response to round-1 finding 4.2's stop-floor/cap
-item):** the new engine validates, at `OnInit`/symbol-attach time, that the
-configured ATR-based breathing-room floor and the percent-of-price/ATR cap
-do not structurally conflict for the attached symbol's typical volatility
-— this preflight check did not exist in either baseline (V6.37's version of
-this conflict could only be discovered by every signal being silently
-rejected at runtime). If a conflict is detected at attach time, the EA logs
-a visible warning and refuses to trade that symbol until the configuration
-is corrected, rather than silently starving it of signals.
+**Persistence and restart — storage/schema defined (round-2 finding 2.7):**
+`StateManager` (§11) persists via MT5 global variables for small scalar
+state (peak-drawdown, daily/weekly baselines) and a local file-based
+key-value store (JSON or CSV, atomic write via write-to-temp-then-rename)
+for structured state (basket/position tracking, learning statistics) too
+large or complex for global variables. Every write includes a schema
+version field; a version mismatch on load triggers a full state reset
+(never a silent partial read of mismatched-schema data) and is logged.
+**Two distinct key namespaces, not one (round-2 finding 2.7's collision
+concern):** (a) **per-instance state** (basket tracking, position risk
+keys) is keyed by `symbol + magic + account_login + trade_server` — the
+missing `symbol` component round 2 identified is added, so multiple
+symbol instances sharing an account/magic no longer collide; (b)
+**account-wide state** (daily/weekly risk baselines) is keyed by
+`account_login + trade_server` **only** — deliberately *not* partitioned
+by magic or symbol, since the risk-accounting scope decision above is
+account-wide by design. **Reconciliation order on restart:** account-wide
+state loads first, then per-instance state, then `OrderManager` reconciles
+every loaded per-instance record against live broker state (§12 item 12)
+before any new trading decision is evaluated.
 
 ### 9. Signal scoring, trade decision object, journal, offline learning (master prompt §11–12, §18)
 
-**Response to round-1 finding 3.10 — baseline attribution corrected, and
-the correlation claim scoped as a risk to test, not an established
-finding:** the sweep-first/extra-touch/H1-bias bonus bundle is V8.11's
-(`BuildSRBounce`, source 1088–1120); V6.37 separately supplies
-`ApplyOrderBlockConfluence`'s bonus-stacking behavior and its own touch-
-decay scoring. These are two distinct sources, not one combined stack, and
-whether their components double-count the same evidence is exactly what
-the required score-correlation audit (below) must establish — it is not
-asserted here as already confirmed.
+Unchanged from round 2 in substance (confirmed correct: baseline
+attribution split, correlation framed as a test, full `TradeDecision`
+field list, §18's learning requirements). **Response to round-2 finding
+4.3 — the contradictory live probe is replaced:**
 
-Score components per §11 (regime compatibility, HTF alignment, pattern
-quality, location quality, liquidity event, displacement, retest quality,
-candlestick confirmation, target room, spread/session/news quality,
-sample-gated historical performance, and named penalties for stale zones,
-repeated touches, conflicting direction, late entry, excessive stop
-distance, poor data quality) — each independently justified, checked
-against every other active bonus for whether they describe the same market
-fact (§11's own examples: BOS and displacement may be related; a pin bar
-and wick rejection may be the same evidence; EMA trend and price-above-EMA
-may be correlated) before any bonus is added. A score-correlation audit
-(Python) is required **before** any strategy's scoring goes live.
-
-`TradeDecision` object per §12's full field list (signal ID, timestamp,
-symbol, broker, market family, intraday mode, regime, regime confidence,
-direction, strategy family, setup — the actual setup name carried through
-the position's lifetime, not a derived summary — candlestick pattern, chart
-pattern, ICT/SMC features, entry trigger, entry/stop/target prices, risk
-amount and percentage, estimated spread cost, expected R:R, score and its
-full breakdown, news state, session state, reasons passed, reasons
-rejected, data sufficiency, pattern object IDs, EA version, Git commit, and
-set-file identifier). One source of truth feeding execution, dashboard,
-journal, screenshots, Python analysis, and backtest reports.
-
-**Offline learning (master prompt §18 — response to round-1 finding
-2.6, which correctly found the first draft covered only the sign-error and
-symbol/magic-isolation defects and omitted §18's own requirements
-entirely):**
-
-- Minimum sample size **by symbol, strategy, setup, regime, and mode** (not
-  pooled across the whole strategy bucket the way V6.37 currently pools
-  SRBounce/TrendFollowing/FVGRetest).
-- Confidence intervals on any win-rate-derived adjustment, not a bare point
-  estimate.
-- Recency weighting only if separately tested and shown to help — off by
-  default.
-- Maximum bounded influence (a hard clamp on how much any single
-  adjustment can move a score — both baselines already clamp this; the new
-  engine keeps a clamp but the bound itself is a Phase 5 calibration input,
-  not copied from either baseline's specific percentage).
-- **Automatic reset by EA logic version, and no use of old-version outcomes
-  as evidence for new logic** — neither baseline has this. This is new
-  work, and it also closes a related gap: since the `TradeDecision` object
-  (above) now carries `EA version`/`Git commit` on every record, a version
-  change can be detected and the learning statistics reset automatically,
-  rather than relying on an operator to rename the journal file (V6.37's
-  actual, comment-only "clean slate" mechanism, confirmed non-code-enforced
-  by TASK-001).
-- Bench a strategy only after **both** sample and loss criteria are met,
-  with a human-readable reason recorded.
-- **Additional confirmed V6.37 defects that must be fixed, not merely
-  avoided by redesign (added per round-1 finding 2.6's specific list):**
-  disabling journal writing (`InpUseTradingJournal=false`) freezes live
-  memory updates even when `InpUseJournalLearning` remains enabled — the
-  new engine's learning-update path must not be coupled to the journal-
-  write path at all, so disabling one does not silently disable the other;
-  regime is currently attributed to a trade at **close** time, not entry
-  time, in V6.37's benching logic — the new engine attributes every
-  learning update to the regime the trade was **entered** in; the NFP
-  exploit-window and OB-limit pending paths in V6.37 currently bypass
-  benching entirely by not routing through the ordinary scoring pipeline —
-  the new engine's benching applies to every entry path, with no
-  bypass-by-construction; and the ordinary same-regime path currently has
-  no defined re-evaluation/recovery mechanism once benched — the new
-  engine defines one explicitly: a benched strategy/regime bucket is
-  re-evaluated after `InpRegimeLearningMinTrades` **new** same-regime,
-  same-entry-attribution trades accumulate via a **separate, always-open**
-  sampling channel that does not itself trade at full size but records
-  outcomes for re-evaluation purposes (a bounded, small-size "probe" entry,
-  itself subject to every risk cap above) — not left as a structural dead
-  end the way V6.37's mechanism currently is.
+Round 2 correctly found that an "always-open small live-entry channel" for
+a benched bucket directly contradicts the same paragraph's own "benching
+applies to every entry path, with no bypass" rule, and continues deploying
+real capital past the stated stop condition with no defined size,
+frequency, loss cap, or approval gate. **Corrected re-evaluation
+mechanism: shadow tracking, not a live probe.** A benched strategy/regime
+bucket is re-evaluated using **shadow (paper) outcomes only** — the engine
+continues to *score* candidates that would have qualified for the benched
+bucket, records what their outcome *would have been* had they been taken
+(using the same fill-price/slippage model as live trades, for
+apples-to-apples comparison), and re-enables the bucket only once
+`InpRegimeLearningMinTrades` **new** same-regime, same-entry-attribution
+**shadow** trades accumulate with a win rate clearing the original bench
+threshold. No live capital is risked to gather this re-evaluation
+evidence — this both removes the contradiction round 2 found and removes
+the entirely undefined size/frequency/loss-cap/approval-gate questions
+that a real live probe would have required, since no live position is ever
+opened for re-evaluation purposes.
 
 ### 10. News system (master prompt §15, `NEWS_INTEGRATION_SPEC.md`)
 
-**Response to round-1 finding 2.5 — the missing policy items added, the
-field-naming error fixed, and finding 3.6's misattribution corrected:**
-
-Provider architecture: `MT5CalendarProvider` (primary, live),
-`FileCalendarProvider` (historical/backtest-deterministic), optional
-`FairEconomyProvider` (secondary, Python-adapted, never the sole live
-dependency), `NullNewsProvider` for synthetic indices. Normalized event
-schema exactly per `NEWS_INTEGRATION_SPEC.md`: `event_id`, `event_name`,
-`currency`, `importance`, `scheduled_utc`, `scheduled_server_time`,
-**`scheduled_botswana_time`** (corrected from "local time" in the first
-draft — this is the spec's own named field), `previous`, `forecast`,
-`actual`, `revision`, `source`, `retrieved_at`, `status`.
-
-**Policy (entirely missing from the first draft beyond naming the
-providers):**
-
-- Block new metal entries around high-impact relevant events (before the
-  event; no stop widening; no direction prediction from forecast-vs-
-  previous). Resume only after the blackout **and** spread/volatility
-  normalization — both conditions, not either.
-- Medium-impact events: handled separately, tested independently before
-  any default policy is set.
-- Post-news displacement trading: **disabled by default**, tested
-  separately (this directly bounds §7's Post-Expansion Retest family when
-  the expansion is news-driven).
-- Currency relevance: XAUUSD/XAGUSD react to USD events at minimum; other
-  currencies included only if the specific broker instrument or research
-  justifies it.
-- Provider failure: uses a configured fail-safe policy (default: treat as
-  blackout, log the failure) — never silently proceeds as if no news event
-  exists.
-- Cache validation and deduplication are required for any secondary
-  provider before its data is trusted.
-- Backtests must use the stored historical CSV/SQLite event set and produce
-  identical event decisions on repeated runs — no live `WebRequest`
-  dependency inside Strategy Tester.
-- Synthetic indices: `NullNewsProvider` disables macroeconomic filtering
-  entirely — no NFP, CPI, interest-rate, or geopolitical direction logic is
-  ever applied to a synthetic symbol, by construction (provider selection),
-  not by runtime string matching.
-
-**Contradiction resolved — symbol/news classifier (attribution corrected
-per round-1 finding 3.6):** V6.37's `IsNFPDayNow` (pure first-Friday
-calendar arithmetic, no real calendar, no DST handling, operator-maintained
-server-time offset) is retired outright in favor of `MT5CalendarProvider`.
-**Both** fragile substring classifiers — `IsSyntheticIndexSymbol` (7-term
-list) and `DirectionAllowedForSymbol` (2-term subset, overlapping only on
-"boom"/"crash") — are **V6.37's own**, not a V6.37-vs-V8.11 split as the
-first draft implied; V8.11's `DirectionAllowed` is a separate, analogous
-direction filter with its own boom/crash-substring logic, and V8.11's
-manual news windows are configuration-driven (operator-entered `HH:MM`
-strings), not symbol-classified at all. Both baselines' substring-based
-approaches are retired in favor of provider/direction-filter selection at
-the symbol-profile level — configured per symbol, not inferred from its
-name at runtime.
+Unchanged in substance from round 2 (provider architecture, policy list,
+`scheduled_botswana_time` field naming, and the classifier-attribution
+correction were all confirmed correct by round 2's own review). **One
+correction (round-2 finding 3.9):** V6.37's news-time inputs
+(`InpNewsHourServer`/`InpNewsMinuteServer`, source 190–191) are manually-
+entered server-time values overwritten onto the current server date
+(source 7260–7265) — described here as exactly that, not as a computed
+"server-time offset," which implies an automatic conversion that does not
+exist in the source.
 
 ### 11. Required architecture and roadmap alignment (master prompt §22–23)
 
-**Response to round-1 finding 2.8 — responsibility and test-boundary
-assignments added for the modules explicitly named as needing them:**
+**Response to round-2 finding 4.4 — explicit test boundaries added, module
+naming corrected, ownership duplication removed:**
 
-- `StateManager`: owns all persisted EA state (basket/position tracking,
-  daily/weekly risk-accounting baselines, regime/mode transition history,
-  learning statistics) behind one persistence interface — this is what
-  makes the restart-persistence requirements in §8 and §9 actually
-  implementable as a single concern, rather than each baseline's pattern of
-  independently-persisted (and independently-buggy) global variables.
-  Test boundary: a `StateManager` unit test simulates a restart mid-session
-  and asserts every dependent module reads back the correct pre-restart
-  state, not a reset default.
-- `StrategyRouter`: owns §3's regime-conditioned routing matrix and
-  conflict-priority resolution. Test boundary: given a fixed regime,
-  confidence, and set of candidate signals, the router's chosen
-  output is fully determined and unit-testable without any live market
-  data.
-- `ConflictResolver`: owns tie-breaking when multiple families' candidates
-  pass routing in the same direction (highest score wins, subject to
-  §9's correlation-audited scoring) and cross-direction conflicts (both a
-  buy and sell candidate pass — resolved by `No trade` unless one
-  candidate's score exceeds the other's by a configurable minimum gap).
-  Test boundary: deterministic given a fixed set of scored candidates.
+- `StateManager`: owns all persisted state per §8's two-namespace key
+  schema above. **Test boundary:** given a persisted state snapshot and a
+  simulated restart, every dependent module reads back the exact
+  pre-restart values for its own namespace, and a schema-version mismatch
+  triggers a full reset with a logged event — both cases unit-testable
+  without live market data.
+- `StrategyRouter`: owns §3's eligibility/scoring only (ownership
+  duplication with `ConflictResolver` removed — see §3's explicit split).
+  **Test boundary:** given a fixed regime/confidence/candidate set, the
+  eligible-and-scored output is fully deterministic.
+- `ConflictResolver`: owns only the final tie-break given `StrategyRouter`'s
+  output (§3). **Test boundary:** given a fixed scored-candidate list, the
+  winning direction/family (or `No trade`) is fully deterministic per the
+  score-gap rule.
 - Risk persistence: owned by `StateManager`, consumed by `RiskManager`,
-  `DrawdownController`, `EquityPeakManager`, and `DailyWeeklyLimits` per
-  §22's module tree — each of those modules reads shared state, none of
-  them independently re-derives the daily/weekly baseline the way V8.11's
-  `ResetDailyState` currently does.
-- Trade reconciliation: owned by `OrderManager`/`PositionManager` per §22 —
-  this is where the blanket result-code-checking rule (§8) and the
-  ticket/position-based pending-fill matching rule (§8) are actually
-  implemented, as one shared reconciliation path every strategy module
-  calls into, not reimplemented per strategy the way both baselines
-  currently do.
+  `DrawdownController`, `EquityPeakManager`, `DailyWeeklyLimits`. **Test
+  boundary:** given a persisted baseline and a sequence of simulated ticks/
+  restarts, the daily/weekly loss percentage computed matches §8's formula
+  exactly at every step.
+- Trade reconciliation: owned by `OrderManager`/`PositionManager`,
+  implementing §12 item 12's durable-intent protocol below. **Test
+  boundary:** given a simulated crash between order submission and
+  persistence, restart-time reconciliation correctly classifies the
+  order as filled/failed/abandoned against live broker state.
 - Shared trading/visual structure source: `SwingEngine`/`MarketStructure`
-  per §22 is the **single** structure definition consumed by both
-  `StrategyRouter` (trading decisions) and `PatternVisuals`/`Dashboard`
-  (chart drawing) — this directly closes V8.11's confirmed
-  `BuildStructureMarks`-vs-`StructureTrend` divergence (chart marks use an
-  independent, buggier scan that retains the oldest breaks and always
-  mislabels the first mark CHoCH) and V6.37's parallel BOS/CHoCH
-  definitions (§4): there is one structure engine, and both the dashboard
-  and the router read from it.
+  (per §22's actual module names) computes swing pivots, range boundaries,
+  and equilibrium **once**, exposed via one accessor consumed by
+  `StrategyRouter` (trading) and **`StructureVisuals`** (drawing —
+  corrected from "`PatternVisuals`," which master-prompt §22 assigns to
+  candlestick/chart-pattern drawing specifically, a separate module; round-2
+  finding 4.4 caught this naming/assignment error). **Test boundary:**
+  given a fixed price series, `StrategyRouter` and `StructureVisuals` both
+  reading the same swing/range/equilibrium output is directly assertable
+  in a unit test (same accessor, same call, compared for equality).
 
-Phase 3 (Common core) is the next task branch, **contingent on**: (a) this
-specification passing independent review, and (b) `claude/task-001-baseline-
-audit` reaching an approved/merged state, with this document's citations
-re-verified against `main` at that point (see Risks below) — both
-conditions stated as one durable prerequisite, correcting round-1 finding
-4.7's observation that the first draft stated these as two separate,
-inconsistent gates.
+Phase 3 (Common core) is the next task branch, contingent on one durable
+prerequisite: `claude/task-001-baseline-audit` reaching an approved/merged
+state with this document's citations re-verified against `main`, **and**
+this specification passing independent review.
 
-### 12. Contradiction resolution ledger (response to round-1 finding 4.2)
+### 12. Contradiction resolution ledger
 
-Round 1 found roughly a dozen named contradictions in `baseline_comparison.md`
-without an explicit new-engine decision. Each is resolved here (several
-already addressed inline above; this ledger exists so the Acceptance
-criteria in this document can check against one complete list rather than
-only the paragraphs titled "Contradiction resolved," closing the
-tautology round 1 identified):
+**Response to round-2 finding 4.1 — item 14 added; response to finding 4.2
+— items 3, 5, 7, 9, 11, 12, 13 corrected to reference actual defined
+mechanisms instead of asserting a resolution:**
 
-1. **V8.11 chart-mark vs. traded structure** → resolved in §11: one
-   canonical structure source (`SwingEngine`/`MarketStructure`) consumed by
-   both trading and visuals.
-2. **V6.37 Rotation vs. Volatile-Expansion regime routing** → resolved in
-   §3's routing matrix: Rotation/Range-Rotation setups are eligible in
-   `RANGING`, not in `VOLATILITY_EXPANSION_UP/DOWN` (which routes to
-   Post-Expansion Retest/momentum-continuation instead) — an explicit
-   allow-list by regime, not the old self-confirmed-bypass-vs-router
-   collision.
-3. **V6.37 stop-floor/cap conflict** → resolved in §8: mandatory attach-time
-   preflight validation, visible rejection on conflict, no silent runtime
-   starvation.
-4. **V8.11 momentum vs. expansion gate** → resolved in §2/§3: directional-
-   regime-conditioned eligibility replaces the blanket `g_expansion` gate.
-5. **V8.11 restart reconstruction** → resolved in §11: `StateManager` owns
-   persisted state with an explicit restart-recovery test boundary.
-6. **V8.11 daily-limit anchor/reset semantics** → resolved in §8's risk-
-   accounting section (persisted baseline, reset only at actual boundary
-   crossing).
-7. **Persistence-key safety (magic truncation, no account/server
-   identifier)** → resolved: all persistence keys use the full `long` magic
-   value (no truncation) plus account login and trade-server identifier, so
-   no cross-account or cross-magic collision is possible.
+1. **V8.11 chart-mark vs. traded structure** → §11: one canonical
+   `SwingEngine`/`MarketStructure` source consumed by both
+   `StrategyRouter` and `StructureVisuals`.
+2. **V6.37 Rotation vs. Volatile-Expansion regime routing** → §3's matrix:
+   Range Rotation eligible in `RANGING`, not in `VOLATILITY_EXPANSION_*`.
+3. **V6.37 stop-floor/cap conflict** → §8's now-fully-defined preflight
+   **and periodic recheck** (attach-time was insufficient alone, per
+   round-2 finding 2.6 — corrected to include the recheck cadence).
+4. **V8.11 momentum vs. expansion gate** → §2/§3: directional-regime-
+   conditioned eligibility with an explicit no-chase bar count.
+5. **V8.11 restart reconstruction** → §8/§11: `StateManager`'s persisted,
+   versioned, two-namespace state plus `OrderManager`'s restart-time
+   reconciliation against live broker state (item 12 below) — **durable
+   serialization and reconciliation semantics are now both actually
+   defined**, not merely a named test boundary.
+6. **V8.11 daily-limit anchor/reset semantics** → §8: persisted baseline,
+   numerator/denominator formulas, cash-flow rebasing, boundary detection.
+7. **Persistence-key safety** → §8's two-namespace schema (symbol+magic+
+   account+server for per-instance state; account+server only, explicitly
+   unpartitioned by magic/symbol, for account-wide state) — **the schema
+   is now safe across mixed scopes because two different schemas exist for
+   the two different kinds of state**, not one schema stretched to cover
+   both.
 8. **V8.11 oldest-first/always-CHoCH chart-mark artifacts** → resolved by
-   item 1 above (single structure source replaces the independent,
-   defective scan entirely).
-9. **Netting vs. hedging account-mode support** → **resolved: hedging-mode
-   only for Phase 3–7.** Neither baseline's netting-account behavior is
-   provably correct (V6.37: add-ons collapse and overwrite risk state under
-   netting; V8.11: basket legs collapse and desync leg-count tracking).
-   Rather than attempt to support both from day one, the new engine
-   requires and validates a hedging-mode account at `OnInit` and refuses to
-   run on a netting account until netting support is a separately specified
-   and tested Phase 5+ addition.
-10. **V6.37 daily-limit symbol/magic scope** → resolved by §8's risk-
-    accounting scope decision: account-wide, not symbol- or magic-scoped,
-    removing the ambiguity rather than picking a side of it.
+   item 1 (single structure source replaces the defective independent
+   scan).
+9. **Netting vs. hedging account-mode support** → **hedging-mode only,
+   full stop.** Round 2 correctly found "netting as a Phase 5+ addition"
+   created an overlapping timeline with "hedging-only through Phases 3–7."
+   **Corrected: netting-account support is out of scope entirely, with no
+   promised future phase** — the engine validates and requires a
+   hedging-mode account at `OnInit` and refuses to run otherwise; adding
+   netting support, if ever wanted, would be a separate, fully-specified
+   task proposed on its own merits, not a pre-committed roadmap item.
+10. **V6.37 daily-limit symbol/magic scope** → §8: account-wide scope,
+    removing the ambiguity.
 11. **Completed-candle enforcement for every pattern/signal path** →
-    resolved structurally in §5: every candlestick/structure test operates
-    on `rates[1]` or older by construction, with a unit test per pattern
-    confirming historical labels never move (§5's own requirement, applied
-    project-wide).
-12. **Market-signal/deal restart reconciliation** → resolved in §11's trade-
-    reconciliation responsibility: `OrderManager`/`PositionManager` re-
-    verify every open position/pending order against live broker state on
-    every restart, not merely re-initialize local tracking variables to
-    zero.
-13. **V8.11 range visual/trading semantics** → resolved by item 1 above:
-    range boundaries and equilibrium are computed once by the shared
-    structure source and consumed identically by trading and drawing code.
+    **restated as one project-wide structural rule here, not scoped to §5
+    alone (round-2 finding 4.2 correctly found §5 only covers candlesticks):
+    every function in `SwingEngine`, `CandlestickPatternEngine`, and
+    `ChartPatternEngine` that reads price data for a confirmed-pattern or
+    confirmed-structure decision operates on `rates[1]` or older,
+    unconditionally — this is a single rule applied across all three
+    engines, restated here as the canonical location for it rather than
+    left implicit in §5's own pattern-specific description.**
+12. **Market-signal/deal restart reconciliation** → **an actual protocol,
+    not only a post-restart position scan (round-2 finding 4.2):** every
+    order submission first writes a durable "intent" record (`StateManager`,
+    per-instance namespace) **before** the `CTrade` call is made, containing
+    the intended symbol/direction/volume/SL/TP and a unique intent ID; the
+    intent record is updated with the resulting ticket/deal ID immediately
+    after the broker responds. On restart, `OrderManager` compares every
+    persisted intent record against live broker state: a matching open
+    position/order confirms the intent succeeded; an intent with no
+    matching broker result and an age below `InpIntentTimeoutSeconds`
+    (default 30) is treated as still in-flight and re-queried; older than
+    that, it is treated as failed/abandoned and logged — this closes the
+    crash-window gap round 2 identified between submission and persistence,
+    since the intent record exists *before* the broker call, not only
+    after.
+13. **V8.11 range visual/trading semantics** → item 1's shared structure
+    source **explicitly includes range boundaries and equilibrium as part
+    of its computed, shared output** (round 2 found this wasn't actually
+    stated) — `SwingEngine`/`MarketStructure` computes swing pivots, range
+    high/low, and equilibrium together, as one function's output, consumed
+    identically by trading and drawing code.
+14. **V6.37 FVG semantics mixing `InpStructureSwingDepth`/`InpFractalDepth`**
+    (new this round, closing round-2 finding 4.1's gap) → §4: the FVG
+    path uses the single canonical `SwingEngine` depth definition, not two
+    independently-tunable inputs.
 
 ## Files affected
 
-Modified: `TASK-002_PHASE2_SPECIFICATION.md` (this file, full revision), on
-branch `claude/task-002-phase2-specification` (branched from
-`claude/task-001-baseline-audit` at `2005d75`). New file (this revision):
-none beyond the modified specification itself — the round-1 review file
-(`09_HANDOVERS/codex_to_claude/TASK-002_review.md`) already exists on disk
-from the independent reviewer and is committed alongside this revision, not
-authored by this task. No file under `01_BASELINE/` is touched. No
-`03_SOURCE_CODE/` files are created — per master-prompt §23, Phase 2 is
-specification only.
+**Round 3 (this revision):** modified `TASK-002_PHASE2_SPECIFICATION.md`;
+modified `09_HANDOVERS/codex_to_claude/TASK-002_review.md` (round 2's
+review, already present on disk from the independent reviewer, committed
+alongside this response as in every prior round). Exact path set for the
+commit containing this revision: two paths, both modified (not "none new"
+— round-2 finding 4.5 corrected the prior draft's inaccurate claim about
+the `cc58fa8..7842083` diff, and this entry now states the actual set for
+the commit this revision belongs to). No file under `01_BASELINE/` is
+touched. No `03_SOURCE_CODE/` files are created.
 
 ## Out of scope
 
-- Any `.mqh`/`.mq5` implementation code — that is Phase 3+.
-- Per-strategy `STRATEGY_SPECIFICATION.md` instances for each of the six
-  strategy families in §3's table, and per-definition ICT/SMC/candlestick/
-  chart-pattern fields beyond what §4–6 already specify at the
-  cross-cutting level — these are Phase 5's "one at a time" deliverables.
-- Resolving the merge status of `claude/task-001-baseline-audit` — still
-  unmerged, disposition changes-requested as of its own fourteenth review.
-- Any claim that the specification above has been compiled, tested, or
-  proven correct — it has not; it is a design document. Where this document
-  states formulas/thresholds (mode score weights, regime thresholds,
-  confidence formula), those are explicitly flagged as first-pass values
-  for Phase 4/5 backtest calibration, not final tuned constants.
+- Any `.mqh`/`.mq5` implementation code — Phase 3+.
+- Per-strategy `STRATEGY_SPECIFICATION.md` instances, and the remaining
+  chart-pattern definitions beyond double-top/bottom and head-and-shoulders
+  (§6 states the shared framework every remaining pattern instantiates;
+  filling in triangle/flag/wedge/channel-specific pivot topologies is
+  Phase 5, one at a time, using that same framework — not an open Phase 2
+  gap, since the framework itself is now fully specified).
+- Resolving TASK-001's merge status.
+- Any claim of compilation, testing, or proven correctness.
 
 ## Risks
 
-- **Dependency on an unmerged branch.** Unchanged from the first draft:
-  mitigate by re-checking every citation against `main` once TASK-001 is
-  actually approved/merged, before Phase 3 begins (see §11's durable
-  prerequisite statement).
-- **First-pass formulas need calibration.** The mode-score weights, regime
-  thresholds, and confidence formula in §1–2 are explicitly first drafts
-  pending Phase 4 backtest calibration against the confusion matrix — they
-  are stated precisely enough to be implementable and testable, not
-  claimed to be final tuned values.
-- **Specification-implementation drift.** Unchanged: Phase 3+ tasks must be
-  checked against this document during their own independent review.
+- **Dependency on an unmerged branch** — unchanged; re-verify citations
+  against `main` once TASK-001 merges.
+- **First-pass formulas need calibration** — the mode/regime weight
+  defaults, thresholds, and confidence formulas are precisely defined and
+  implementable, but their specific numeric defaults are Phase 4/5
+  calibration targets, not final tuned constants; this is now stated
+  consistently (round 2 found the prior draft's Acceptance section
+  overclaimed these as final — corrected below).
+- **Specification-implementation drift** — unchanged.
 
 ## Test plan
 
-Verification for this document (not code — see Compiler/Test results
-below for what "testing" means for a specification):
-
-1. Every item in master-prompt §23's Phase 2 checklist has a corresponding
-   `##`/`###` section, per §0's map table — checked by direct
-   cross-reference, confirmed present.
-2. Every contradiction named in `baseline_comparison.md`'s "Contradictions"
-   sections and every item in round-1 review section 4.2's list appears in
-   §12's ledger with an explicit resolution — checked by direct
-   cross-reference against both source lists, confirmed present.
-3. Every numeric limit in `RISK_POLICY.md` (lines 5–22) appears in §8,
-   restated as binding — checked line-by-line against `RISK_POLICY.md`,
-   confirmed present including the three-loss cooldown, no-martingale/
-   grid/averaging-down, min-lot-rejection, contract-size validation, and
-   never-widen-stop rules previously missing.
-4. Every baseline-behavior claim in this document was checked against
-   either the actual `.mq5` source or the TASK-001 audit documents before
-   being restated — the round-1 review's own source spot-checks (pilot
-   ratios, time-exit gating, sweep/shift ranges) are independently
-   reproduced above and match.
+1. Every §23 Phase 2 deliverable has a section — §0's map, unchanged,
+   confirmed complete by round 2.
+2. Every contradiction in `baseline_comparison.md` and every item in round-1
+   and round-2 reviews' contradiction findings appears in §12's ledger with
+   an actual decision referencing a defined mechanism, not an assertion —
+   checked directly against both reviews' finding lists; item 14 added,
+   items 3/5/7/9/11/12/13 corrected to reference the now-defined
+   mechanisms.
+3. Every numeric limit in `RISK_POLICY.md` is restated in §8 as binding,
+   including the add-on/basket normative sentence round 2 found missing.
+4. The V8.11 sweep/shift/final-stop formula is now actually stated (§7's
+   target-selection section references it; the formula itself — pool scan
+   `4..min(copied-2,4+max(10,InpSweepLookback))`, shift scan
+   `2..min(copied-2,2+max(3,InpShiftLookback))`, final-stop transformation
+   chain — is stated in the Evidence section's source-line list and is
+   the literal basis for §3/§4's SMC/ICT structural-gating description;
+   round 2 correctly found this was claimed-but-absent in round 2's draft).
+5. The regime-confidence formula is re-derived by hand for both extremes
+   of `E` (expansion score): at `E=1.0`, `confidence=(1.0−0.75)/(1−0.75)=1.0`;
+   at `E=0.0` under `COMPRESSION`'s formula,
+   `confidence=(0.25−0.0)/0.25=1.0` — both extremes now correctly produce
+   maximum confidence, closing round 2's finding 1.4 directly.
 
 ## Acceptance criteria
 
-- [x] Every §23 Phase 2 deliverable (modes, regimes, strategies,
-      candlestick patterns, chart patterns, risk, news, contradiction
-      resolution) has its own section — see §0's map.
-- [x] Every hard numeric limit in `RISK_POLICY.md` is restated in §8 as
-      binding, including the previously-missing three-loss cooldown,
-      no-martingale/grid/averaging-down, min-lot-rejection, contract-size
-      validation, and never-widen-stop rules.
-- [x] Add-ons and multi-leg baskets are explicitly off by default,
-      consistent with `RISK_POLICY.md`.
-- [x] Risk accounting is fully defined: scope, denominator, cost inclusion,
-      fill basis, reset boundary/timezone, restart persistence, and breach
-      behavior (§8).
-- [x] The mode router, regime engine, and strategy routing matrix each have
-      a stated formula/threshold/precedence, not only a restated
-      description of inputs (§1–3).
-- [x] Every contradiction in §12's ledger has an explicit "survives" or
-      "retired" decision with a reason, not an open question.
-- [x] The architecture-alignment section assigns responsibility and a test
-      boundary to every module named as needing one in round-1 review
-      (§11).
+- [x] Every §23 Phase 2 deliverable has a section, including candlestick
+      and chart-pattern mathematics (not only requirement lists).
+- [x] Every hard numeric limit in `RISK_POLICY.md` is restated as binding,
+      including the add-on/basket default-off rule as an actual normative
+      sentence.
+- [x] Risk accounting is fully defined: per-position/total-open-risk
+      aggregation, pending-order reservation, numerator/denominator
+      equations, cash-flow treatment, reset-boundary detection, restart
+      persistence, and breach behavior (pre-trade gate vs. post-fill
+      mandatory closure, not a soft tolerance above the cap).
+- [x] The mode router, regime engine (with a corrected, non-self-defeating
+      confidence formula), and strategy routing matrix each have a stated,
+      hand-verifiable formula/threshold/precedence.
+- [x] Every entry in §12's contradiction ledger states an actual decision
+      referencing a defined mechanism elsewhere in this document, not an
+      assertion of resolution.
+- [x] Architecture responsibilities each have an explicit, unit-testable
+      boundary, with no duplicated ownership (`StrategyRouter` vs.
+      `ConflictResolver` split explicitly) and correct module naming
+      (`StructureVisuals`, not `PatternVisuals`, for shared structure
+      drawing).
 - [ ] Independent Codex review completed and findings resolved — **pending
-      this revision's own review round.**
+      this round's own review.**
 
 ## Rejection criteria
 
-This task would be rejected if: it silently ported a baseline behavior
-already confirmed defective in TASK-001 without stating why; it claimed a
-numeric risk limit different from `RISK_POLICY.md`; it introduced or
-implied any actual trading-code change (this task must remain
-documentation-only); it left a contradiction identified in
-`baseline_comparison.md` or in an independent review unaddressed; or it
-described a decision as made without stating an actual, checkable rule
-(a recurrence of round 1's central finding).
+Unchanged from round 2, with one addition: this task would also be
+rejected if any formula stated as "corrected" or "defined" in this revision
+does not actually hold when independently recomputed (e.g., if the regime-
+confidence formula still produces zero at either expansion extreme, or if
+any stated default numeric bound is internally inconsistent with the
+formula it bounds).
 
 ## Implementation notes
 
 This revision was written directly in response to
-`09_HANDOVERS/codex_to_claude/TASK-002_review.md`'s findings, verifying a
-sample of the review's own source citations (V8.11's `InpMaxHoldMinutes`
-gating at source 1455–1456, confirmed configurable and disabled when ≤0)
-before accepting them, plus a full re-read of `00_MASTER_PROMPT_FOR_CLAUDE.md`
-sections 9, 10, and 18 (candlestick engine, chart-pattern engine, offline
-learning) and `NEWS_INTEGRATION_SPEC.md` in full, none of which had been
-read in depth for the first draft.
+`09_HANDOVERS/codex_to_claude/TASK-002_review.md`'s round-2 findings. The
+regime-confidence defect was independently re-derived by hand (§2's Test
+plan item 5) before selecting the corrected margin-based formula, rather
+than patching the broken formula superficially. Every baseline source
+citation round 2 flagged as wrong was re-read directly from
+`01_BASELINE/EA_V637/Thembabot14 Max.mq5` and
+`01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5` at the cited line ranges before
+being restated (see the Evidence section's source-line list).
 
 ## Commands run
 
 `git checkout claude/task-001-baseline-audit && git checkout -b claude/task-002-phase2-specification`
-(first draft); this revision edits the same file on the same branch.
+(round 1); this revision edits the same file, same branch.
 
 ## Compiler result
 
@@ -1069,30 +1214,36 @@ Not applicable — no code in this task.
 
 ## Test results
 
-Not applicable in the compilation/backtest sense. Documentation
-self-verification (Test plan above) was performed directly: all four items
-checked and confirmed present as of this revision.
+Documentation self-verification (Test plan above): all five items checked
+directly against this revision's own content and confirmed present/correct,
+including hand-recomputing the corrected confidence formula at both
+expansion extremes.
 
 ## Commit
 
-First draft: `cc58fa8`. This revision: pending — see `git log` on this
-branch for the actual hash once committed.
+Round 1: `cc58fa8`. Round 2 (round-1 response): `7842083`. This revision:
+pending — see `git log` on this branch for the actual hash once committed;
+the commit containing this revision modifies exactly two paths
+(`TASK-002_PHASE2_SPECIFICATION.md` and
+`09_HANDOVERS/codex_to_claude/TASK-002_review.md`), stated here in advance
+per the file-list-prediction discipline established in TASK-001's own
+review cycle (predict the exact path set before committing, then verify
+against `git status`).
 
 ## Reviewer
 
-Independent review round 1 (Codex): **CHANGES REQUESTED** against
-`cc58fa8`. Findings: missing candlestick/chart-pattern formalization,
-missing risk-accounting model and several binding risk rules, no
-executable mode/regime/routing rules, ~13 unresolved contradictions,
-several baseline mischaracterizations (pilot ratio, V8.11 time exit,
-sweep/shift formula, giveback defaults, news-classifier attribution), and
-internal inconsistencies (TASK-001 status, stale Commit/Reviewer fields,
-tautological Acceptance criteria). All addressed in this revision — see the
-inline "Response to round-1 finding N.N" callouts throughout. Round 2
-review pending.
+Round 1 (Codex, against `cc58fa8`): CHANGES REQUESTED, 40+ findings — see
+round-1 history above. Round 2 (Codex, against `7842083`): CHANGES
+REQUESTED — round 1's fixes were substantially real (confirmed: risk
+percentages, six-family count, pilot ratios, weak-sample effects, `CTrade`
+scope, score attribution, level-invalidation, TASK-001 dependency framing),
+but candlestick/chart-pattern mathematics, the regime-confidence formula,
+deterministic routing, full risk accounting, and several baseline facts
+remained wrong or incomplete — see this document's inline corrections
+throughout for the complete response. Round 3 review pending.
 
 ## Final decision
 
-**Pending round 2 independent review.** Not ready for Phase 3 until that
-review's disposition is approved (or the user directs otherwise, per the
-same "fix this round, then proceed" pattern used to close out TASK-001).
+**Pending round 3 independent review.** Not ready for Phase 3 until that
+review's disposition is approved, per the user's own stated preference to
+get this right given Phase 3 will code directly against this document.
