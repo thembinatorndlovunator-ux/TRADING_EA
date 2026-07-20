@@ -49,13 +49,18 @@ distinction). Their behavior as documented by static reading:
 ## Evidence
 
 - `01_BASELINE/inventory.md` — **hash-attribution corrected in fourth-pass
-  review**: re-verified SHA-256 of both `.mq5` files against their
-  respective `IDENTITY.md` files (both matched). The orphaned set file's
-  hash is recorded in `inventory.md` itself and matches the git blob at
-  the preservation tag — it is **not** verified against an `IDENTITY.md`
-  hash, because `01_BASELINE/setfiles/IDENTITY.md` records no hash at all
-  (it documents the file's orphaned/unresolved status only). 13 screenshots
-  catalogued with size/timestamp/hash.
+  review, SHA-256-vs-blob-ID distinction added in fifth-pass review (the
+  two are different checks and were previously conflated)**: re-verified
+  SHA-256 of both `.mq5` files against their respective `IDENTITY.md` files
+  (both matched). The orphaned set file's hash is recorded in
+  `inventory.md` itself — its SHA-256 is `ea9452d4475d55f1aadd35a6f8f83b76c6046e2118d02aa5a918e673af4bce96`
+  (**not** verified against an `IDENTITY.md` hash, because
+  `01_BASELINE/setfiles/IDENTITY.md` records no hash at all — it documents
+  the file's orphaned/unresolved status only) — and, as a separate check,
+  its current/tagged content is confirmed identical to the preservation
+  commit by matching Git blob object ID
+  `3cd45788021a671b9ccf4502c8da1afaea4bcfac` at the `baseline-v637`/
+  `baseline-v811` tags. 13 screenshots catalogued with size/timestamp/hash.
 - `01_BASELINE/screenshots/visual_notes.md` — objective per-screenshot
   observations, all interpretations explicitly labeled hypotheses (no
   linked trade journal/CSV exists yet to confirm against, per
@@ -130,17 +135,33 @@ not a change to the preserved evidence itself), plus new file
 overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place again).
 **Structural fix, fourth-pass review:** this entry deliberately does not
 embed its own commit hash — see `git log --oneline claude/task-001-baseline-audit`
-for the exact hash. Three prior rounds each tried to record their own commit
-hash and had to follow up with a second, hash-recording-only commit because
-the hash cannot be known before the commit exists; this entry breaks that
-loop by referencing the commit symbolically instead.
+for the exact hash. **Two** prior rounds (**count corrected in fifth-pass
+review, was previously miscounted as three**) each tried to record their
+own commit hash and had to follow up with a second, hash-recording-only
+commit (`7319306` for `4a6946b`'s hash, `79f8e5a` for `538bc39`'s hash)
+because the hash cannot be known before the commit exists; this entry
+breaks that loop by referencing the commit symbolically instead.
 
-**Precision correction, third-pass review:** the claim "no file
+**Modified in the fifth correction pass** (this pass — referenced
+symbolically per the structural fix above, not by embedded hash),
+responding to Codex's fifth review — the same five documents as the fourth
+pass (`baseline_v637_audit.md`, `baseline_v811_audit.md`,
+`baseline_comparison.md`, `TASK-001_BASELINE_AUDIT.md`, `TASKS.md`) plus
+`01_BASELINE/inventory.md` again (a second, different correction to that
+same preserved-directory-path exception), plus new file
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round5.md` (also
+overwrote `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place
+again).
+
+**Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (the EA-directory diffs below verify only the two `.mq5` files, not the set file or screenshots — an earlier draft cited them for all three together):** the claim "no file
 under `01_BASELINE/` was modified" is accurate for the *preserved baseline
-artifacts* specifically (both `.mq5` files, the set file, and all 13
-screenshots — none of these has ever been altered, verified by hash and by
-`git diff <tag> -- 01_BASELINE/EA_V637` / `-- 01_BASELINE/EA_V811` staying
-empty after every commit). It is **not** accurate as a claim that no commit
+artifacts* specifically, verified by three separate checks: both `.mq5`
+files via `git diff <tag> -- 01_BASELINE/EA_V637` / `-- 01_BASELINE/EA_V811`
+staying empty after every commit; the set file via its SHA-256 (recorded in
+`inventory.md`) and Git blob-ID equality at the preservation tags (see
+Evidence section above); and all 13 screenshots via their individually
+recorded SHA-256 hashes in `inventory.md`, unchanged across every commit.
+It is **not** accurate as a claim that no commit
 touched anything under the `01_BASELINE/` path at all: the initial commit
 (`c61903f`) **added** two new files there — `01_BASELINE/inventory.md` and
 `01_BASELINE/screenshots/visual_notes.md` — as new audit documentation
@@ -219,9 +240,17 @@ integrity:
 
 ## Acceptance criteria
 
-- [x] All 9 deliverables listed under "Files affected" exist and are
-      internally consistent (same file list, same status, across
-      `TASKS.md` and this task file).
+- [x] All deliverables listed under "Files affected" exist. **Corrected in
+      fifth-pass review** — the original wording of this criterion claimed
+      "same file list, same status, across `TASKS.md` and this task file,"
+      which is not actually true and was a false claim to have checked:
+      `TASKS.md` is a one-row-per-task summary ledger and does not contain,
+      and was never meant to contain, a matching per-file deliverable list —
+      that level of detail lives only in this task file's "Files affected"
+      section. What genuinely holds, and is the corrected basis for this
+      checkmark, is that `TASKS.md`'s one-line status for TASK-001 and this
+      task file's own status sections (Acceptance criteria below, Reviewer,
+      Final Decision) describe the same state.
 - [x] Both baseline `.mq5` files, screenshots, and set file are unchanged
       (hash match).
 - [x] Every master-prompt section-4 checklist bullet, both EAs, has a
@@ -231,23 +260,31 @@ integrity:
 - [x] Profit-giveback document is a plan, not a diagnosis (no trade data
       exists to diagnose from).
 - [ ] Independent Codex review completed and findings resolved — **status
-      as of this correction pass (updated consistently here, in Reviewer,
-      in Final Decision, and in `TASKS.md` — fourth-pass review found these
-      four places disagreeing on tense/status in the prior round)**: four
-      review passes so far, all returning changes requested, each narrower
-      than the last:
+      as of this correction pass, verified identical in wording and tense
+      here, in Reviewer, in Final Decision, and in `TASKS.md` (fifth-pass
+      review found these four places genuinely disagreeing despite a prior
+      round's claim of alignment — this time cross-checked word-for-word
+      after editing, not assumed)**: five review passes so far, all
+      returning changes requested, each narrower than the last:
       - Pass 1 → addressed in commit `3f69469`.
       - Pass 2 (internal-consistency gaps between corrected detail and
         stale summaries, plus precision fixes) → addressed in `4a6946b`.
       - Pass 3 (further precision gaps, two false claims in the round-two
         response file) → addressed in `538bc39`.
-      - Pass 4 (further precision gaps, including the ROTATION dashboard-
-        visibility condition stated wrong twice, a wrong cross-EA RSI
-        generalization, a persisted-drawdown overclaim, stale momentum-vs-
-        expansion framing, an unfixed `inventory.md` inconsistency, and this
-        section's own status-disagreement) → **currently being addressed in
-        this fourth correction pass.**
-      All four passes independently confirmed the BLOCKER (V6.37's
+      - Pass 4 (further precision gaps: the ROTATION dashboard-visibility
+        condition stated wrong twice, a wrong cross-EA RSI generalization,
+        a persisted-drawdown overclaim, stale momentum-vs-expansion
+        framing, an unfixed `inventory.md` inconsistency) → addressed in
+        `c73947b`.
+      - Pass 5 (further precision gaps: a mislabeled design-note source, an
+        RSI-fallback claim that didn't hold for one of two entry paths, a
+        remaining "true historical maximum" drawdown overclaim, two more
+        stale momentum-vs-expansion locations, a wrong commit-attribution
+        in `inventory.md`, an ambiguous SHA-256-vs-Git-blob-ID claim, a
+        miscounted "three hash follow-ups," and this section's own
+        status-alignment claim, which was itself false) → **currently being
+        addressed in this fifth correction pass.**
+      All five passes independently confirmed the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
       `IsBearishInsideFalseBreak`) and the cross-cutting findings (netting/
       hedging compatibility, trade-result handling, broker filling/stop/
@@ -256,7 +293,13 @@ integrity:
 
 ## Rejection criteria
 
-This task would be rejected if: any `01_BASELINE/` file were modified; any
+This task would be rejected if: any **preserved** `01_BASELINE/` artifact
+(either `.mq5` file, the set file, or any of the 13 screenshots) were
+modified — **narrowed in fifth-pass review**: the literal, unqualified
+criterion "any `01_BASELINE/` file were modified" is not what this task
+actually rejects on, and taken literally would be triggered by this task's
+own intentional addition of `01_BASELINE/inventory.md` and
+`01_BASELINE/screenshots/visual_notes.md` as new audit documentation; any
 audit claim asserted compilation/correctness/profitability without
 evidence; any checklist bullet were skipped or answered generically without
 a source citation; or the giveback document presented hypotheses as
@@ -321,9 +364,13 @@ subsequent passes — commit history on this branch below. Structural note,
 fourth-pass review: this list is deliberately not framed as "the complete
 history through current HEAD," since that framing is itself recursive —
 each new correction commit changes what "current HEAD" means, which is
-exactly the self-reference problem that produced three separate follow-up
-hash-recording commits in earlier rounds. For the actual current tip, run
-`git log --oneline claude/task-001-baseline-audit`.**
+exactly the self-reference problem that produced **two** dedicated
+follow-up hash-recording commits in earlier rounds (`7319306` and
+`79f8e5a` — **count corrected in fifth-pass review, was previously
+miscounted as three**; `3f69469` was a substantive first correction commit
+addressing Codex's actual review content, not a dedicated hash-recording
+follow-up, even though it's also listed below). For the actual current
+tip, run `git log --oneline claude/task-001-baseline-audit`.**
 
 1. `c61903f` — initial deliverables commit (9 files — see "Files
    affected"), including two new files added under `01_BASELINE/`
@@ -364,47 +411,69 @@ hash-recording commits in earlier rounds. For the actual current tip, run
    condition, cross-EA RSI synthesis, persisted-drawdown wording, momentum-
    vs-expansion framing, and package metadata, including this section's
    own recursive-hash problem).
-7. Fourth correction-pass commit — responding to this fourth review,
-   touching the same documents plus `01_BASELINE/inventory.md` (see
+7. `c73947b` — fourth correction-pass commit (**hash filled in now that it
+   exists in history — the symbolic-reference approach applies only to
+   describing the commit currently being made, not to past commits, which
+   can and should just be cited directly**), responding to Codex's fourth
+   review. Touched the same documents plus `01_BASELINE/inventory.md` (see
    Baseline-behaviour section above for why this one preserved-directory
-   file needed a correction) and a new round-four response file. Referenced
-   symbolically per the structural note above, not by embedded hash.
+   file needed a correction) and added
+   `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md`.
+   Reviewed by Codex a fifth time; disposition **changes requested a fifth
+   time** (narrower still — most items verified, remaining precision
+   issues in the ROTATION source-note name and citations, the V6.37 RSI-
+   fallback claim for its compound entry expression, persisted-drawdown
+   wording, momentum-vs-expansion classification consistency, an
+   `inventory.md` commit-attribution error, an ambiguous SHA-256-vs-blob-ID
+   claim, a miscounted hash-follow-up total, and a false claim of
+   cross-section status alignment).
+8. Fifth correction-pass commit — responding to this fifth review, touching
+   the same five documents plus `01_BASELINE/inventory.md` again and a new
+   round-five response file. Referenced symbolically per the structural
+   note above, not by embedded hash (this commit doesn't exist yet as this
+   section is being written).
 
-**Precision correction, third-pass review:** "no file under `01_BASELINE/` is
+**Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
 identical correction and its full reasoning under "Files affected" above.
-The accurate, verified claim is that the *preserved baseline artifacts*
-(both `.mq5` files, the set file, all 13 screenshots) are unmodified by
-every commit above (scoped `git diff <tag> -- 01_BASELINE/EA_V637` /
-`-- 01_BASELINE/EA_V811` empty throughout), while `01_BASELINE/inventory.md`
-and `01_BASELINE/screenshots/visual_notes.md` were intentionally added as
-new audit documentation in commit 1.
+The accurate, verified claim is that the *preserved baseline artifacts* are
+unmodified by every commit above, evidenced separately per artifact type:
+both `.mq5` files via scoped `git diff <tag> -- 01_BASELINE/EA_V637` /
+`-- 01_BASELINE/EA_V811` (empty throughout); the set file via SHA-256 and
+Git blob-ID equality (see Evidence section); all 13 screenshots via
+individually recorded SHA-256 hashes in `inventory.md`. Separately,
+`01_BASELINE/inventory.md` and `01_BASELINE/screenshots/visual_notes.md`
+were intentionally added as new audit documentation in commit 1
+(`c61903f`) — a different, later commit than the one that introduced the
+baselines (`0d65f95`).
 
 ## Reviewer
 
-Codex — four independent review passes completed via
+Codex — five independent review passes completed via
 `09_HANDOVERS/claude_to_codex/TASK-001_handover.md` →
 `09_HANDOVERS/codex_to_claude/TASK-001_review.md` (updated in place for each
 subsequent pass) → `09_HANDOVERS/claude_to_codex/TASK-001_review_response.md`
 → `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round2.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md`. All four
-passes returned **changes requested**. Required changes from the first
-three passes were applied in commits `3f69469`, `4a6946b`, and `538bc39`
-respectively; the fourth pass's required changes are being applied in this
-correction pass (see Commit section for the commit reference — deliberately
-not embedded here, per the structural fix noted there).
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md`. All five
+passes returned **changes requested**. Required changes from the first four
+passes were applied in commits `3f69469`, `4a6946b`, `538bc39`, and
+`c73947b` respectively; the fifth pass's required changes are being applied
+in this correction pass (see Commit section for the commit reference —
+deliberately not embedded here, per the structural fix noted there).
 
 ## Final decision
 
-**Pending fifth review pass.** All changes requested by Codex's *fourth*
+**Pending sixth review pass.** All changes requested by Codex's *fifth*
 review have been applied in this correction pass — consistent with this
-task's own repeated finding across all four prior passes (a document
+task's own repeated finding across all five prior passes (a document
 package that looks complete does not always survive its own consistency
-check), this is stated as "applied, pending confirmation," not "resolved,"
-here and everywhere else in this document (Acceptance criteria, Reviewer,
-`TASKS.md`) — **fourth-pass review specifically flagged these sections
-disagreeing on tense in the prior round; they are now aligned.** Per
-`00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release gates), this branch
-needs Codex to confirm the corrections resolve the disposition before
-`main` merge is considered, and merge must not be performed by the same
-agent that produced the audit.
+check, and a prior round's *claim* of cross-section alignment was itself
+found false by the next pass), this is stated as "applied, pending
+confirmation," not "resolved," here and everywhere else in this document
+(Acceptance criteria, Reviewer, `TASKS.md`) — **checked word-for-word
+against each other after editing this round, not merely assumed
+consistent.** Per `00_MASTER_PROMPT_FOR_CLAUDE.md` section 21 (release
+gates), this branch needs Codex to confirm the corrections resolve the
+disposition before `main` merge is considered, and merge must not be
+performed by the same agent that produced the audit.

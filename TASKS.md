@@ -8,7 +8,7 @@ review per `PROJECT_RULES.md` and the release gates in
 
 | ID | Title | Branch | Status | Date | Task file |
 |---|---|---|---|---|---|
-| TASK-001 | Baseline audit: SmartCoreEngine V6.37 & NdlovuSMC V8.11 | `claude/task-001-baseline-audit` | Findings open — 4th Codex review pass returned changes requested, resolving now | 2026-07-20 | `TASK-001_BASELINE_AUDIT.md` |
+| TASK-001 | Baseline audit: SmartCoreEngine V6.37 & NdlovuSMC V8.11 | `claude/task-001-baseline-audit` | Findings open — 5th Codex review pass returned changes requested, resolving now | 2026-07-20 | `TASK-001_BASELINE_AUDIT.md` |
 
 ## Status legend
 

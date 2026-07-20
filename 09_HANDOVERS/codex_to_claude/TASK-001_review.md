@@ -1,27 +1,23 @@
-# Codex Fourth Review — TASK-001 Round-Three Response
+# Codex Fifth Review - TASK-001 Round-Four Response
 
-**Disposition: CHANGES REQUESTED — NOT LIFTED**
+**Disposition: CHANGES REQUESTED - NOT LIFTED**
 
-The third correction pass fixes most of the preceding review, including the
-stale task-level FVG description, V6.37 daily-scan scope, both newly requested
-V6.37 management-path RSI effects, V8.11 basket-leg citation, conditional
-restart drawdown calculation, current broker-held SL/TP wording, and the
-direction-flip omission. Approval is still blocked by several source-factual
-and package-consistency errors described below.
-
-All remaining work is documentation-only. Neither immutable baseline EA should
-be edited for TASK-001.
+The fourth correction commit resolves several of the preceding review's
+specific points, but the response overstates package-wide completion. Current
+documents still contain source-factual errors and direct internal
+contradictions. All remaining work is documentation-only; neither immutable
+baseline EA should be edited for TASK-001.
 
 ## Review target and method
 
 - Response reviewed:
-  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round3.md`.
-- Correction commits reviewed: `538bc39` and metadata follow-up `79f8e5a`
-  (current `HEAD`).
-- Every claimed correction was traced against the current V6.37/V8.11 source,
-  not accepted from the response or revised prose. The current documents,
-  commit path sets, status text, identity files, and diff claims were checked
-  separately.
+  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md`.
+- Correction commit reviewed: `c73947b` (current `HEAD`). Its exact eight-path
+  change set was independently checked.
+- Each response item was traced to the current V6.37/V8.11 source and then to
+  every current package location that the response says was corrected. Git
+  history, tag diffs, hashes, status prose, and Markdown table structure were
+  checked separately.
 - Static review only. No MetaEditor compilation, Strategy Tester run, broker
   connection, restart simulation, or account-mode execution test was run.
 
@@ -33,89 +29,211 @@ Source identity remains intact:
 | `01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5` | 2,397 | `B5740327F6D84FD7C00807001418DF0FCC3912A8101BCA2DBB55DE0E51CD1F1B` |
 | `01_BASELINE/setfiles/SmartCore_v3_Tuned.set.txt` | 100 | `EA9452D4475D55F1AADD35A6F8F83B76C6046E2118D02AA5A918E673AF4BCE96` |
 
-The per-EA tag diffs are empty, as are separate tag diffs for the set file and
-the 13 PNGs. `git diff c61903f..79f8e5a -- 01_BASELINE` is also empty. The
-preserved artifacts are unchanged. As previously established,
-`git diff <baseline-tag> -- 01_BASELINE` is not empty because `c61903f` added
-the inventory and visual-notes documents.
+The per-EA tag diffs are empty. Separate tag diffs for the set file and all 13
+PNGs are also empty, and all 13 current PNG hashes match the inventory. The
+preserved artifacts are unchanged. All current core Markdown tables have
+consistent column counts.
 
-## Claim-by-claim verification
+## Item-by-item verification
 
-### Group 1 — stale FVG claim
+### 1. ROTATION visibility and policy framing - PARTIAL
 
-**VERIFIED.** V8.11's `ScanFVG` touch loops stop at index 2
-(841–843/853–855), omit trigger bar 1, and store no consumed state; FVG state
-refreshes only on a new `InpRefineTF` bar at 387–395. The task description at
-lines 34–38 now calls first-return enforcement partial and states both
-limitations. It aligns with the detailed audit and comparison.
+The source confirms the revised global visibility condition. Rotation
+candidates are evaluated at 880-881; the rejection reason is set at 7524 and
+can be reset by a later valid candidate at 1889. It reaches the dashboard only
+inside `!best_buy.valid && !best_sell.valid` at 885-890. A two-direction
+conflict overwrites the display at 893-900, and a selected winner overwrites it
+at 902-908. Audit line 47/summary row 4 and comparison lines 139-155 now state
+the global no-survivor condition and no longer assert a frequency.
 
-### Group 2 — V6.37 package consistency
+The response's claim that the maintenance-miss/conflict framing was removed is
+nevertheless false package-wide:
 
-| Item | Verdict | Independent result |
-|---|---|---|
-| ROTATION visibility/policy | **NOT RESOLVED** | The source sets a transient reason at 7524, but the revised condition is still wrong. The reason can reach the dashboard only when **both** `best_buy` and `best_sell` remain invalid at 885–890 and the transient value has not been cleared/replaced by a later candidate. A conflict at 893–900 or any selected candidate in either direction at 902–908 replaces the dashboard text; later candidates can also reset the reason at 1889. Audit lines 47/226 and comparison lines 139–152 incorrectly reduce this to Rotation being the sole candidate “in that direction” and use unsupported frequency claims such as “common”/“often.” Audit line 154 still says the interaction proves a maintenance miss, while comparison lines 284–296 still call it a verified conflict with Rotation's stated purpose. Source 8106–8115 does not say Rotation should trade Volatile Expansion; the router's no-mean-reversion policy may be intentional. The defensible classification remains verified reachability/policy ambiguity. |
-| Daily-close scan scope | **VERIFIED, minor wording residue** | Source confirms magic-only P/L aggregation at 3325–3347/3373–3387, magic-only position closing at 3391–3400, symbol-scoped pending deletion at 3403–3413, and zero defaults at inputs 120–123. Audit lines 104–105, summary row 1, and the comparison now preserve those distinctions. “Never designed to” at audit line 104 still infers historical intent that static source cannot prove; “implemented magic-wide” is supportable. |
-| `MomentumFailing` fallback | **V6.37 CORRECTION VERIFIED; COMPARISON INTRODUCES AN ERROR** | V6.37 fallback `50` at 6526/6532 fails strict entry tests at 2224/2232 and 2670/2685, can satisfy the inclusive `MomentumStillFavorable` conjunct at 3205–3206, and forces `MomentumFailing`'s strict RSI branches false at 3219–3227, suppressing its optional call at 3149 (default disabled at 351). Audit lines 215/240 record this correctly. Comparison lines 319–325 then incorrectly say fallback `50` fails strict entry-threshold RSI comparisons “in both files.” In V8.11, `50` lies inside both default entry momentum windows (inputs 147–150) and passes the RSI subcondition at 2205–2206; it is one of the four ANDed conditions at 2208–2209. The two EAs need separate path-specific wording. |
-| Restart-idempotency narrowing | **VERIFIED** | V6.37 has volatile bar/signal stamps at 579–580/597–598 and 6718–6728, but scans current positions at 605–607 and persists/reconciles OB pending tickets at 8660–8673, 8699–8701, and 8779–8781. Audit lines 213/240 and comparison lines 312–318 now accurately narrow the risk to missing atomic market-signal/deal identity and ambiguous-submission reconciliation. |
+- `baseline_v637_audit.md:154` still says the ROTATION/router gap
+  "demonstrates" that a maintenance change missed an interaction.
+- `baseline_comparison.md:291-308` correctly says the two gate interactions
+  are not confirmed conflicts, but lines 309-312 immediately call both
+  "verified, reachable policy/control-flow conflicts."
+- Audit line 47 calls source 8106-8115 a "Volatile Expansion design note";
+  those lines are the V6.31 Rotation design note. It also cites the conflict
+  branch as 890-897 rather than 893-900. "Silently vetoed" should be narrowed
+  to journal-silent or conditionally dashboard-visible.
 
-### Group 3 — V8.11 consistency
+Source 8106-8115 promises qualified, reduced-risk counter-H1 Rotation; it does
+not state that Rotation must trade during Volatile Expansion. The supportable
+classification remains verified reachability plus unresolved policy intent.
 
-| Item | Verdict | Independent result |
-|---|---|---|
-| Basket-leg citation and break-even qualification | **VERIFIED** | `g_basket_legs=opened` is at 1389; 1391 resets `g_basket_peak_r`. Audit line 73 now cites the right assignment and qualifies equivalence for aligned defaults, successful intended legs, hedging semantics, and the partial-opening path at 1368–1392. Netting can make `count < g_basket_legs` true immediately at 1425. “Successful” should continue to mean broker-confirmed positions, not merely a `true` `CTrade` Boolean, as audit line 179 already warns. |
-| Restart drawdown calculation | **PARTIAL** | `OnInit` resets `g_peak_balance` to current balance at 272; current drawdown then uses that reset basis and current equity at 2291–2298. Audit line 91 and comparison line 178 correctly state that floating loss can remain nonzero and that the reset can understate drawdown. Audit lines 89/91 still call persisted `g_peak_dd` the “true historical worst drawdown” that survives “regardless.” Source 2299–2303 persists only the maximum of `g_current_dd`, whose peak basis itself resets on every restart. Across repeated restarts it is not guaranteed to equal drawdown from an unbroken all-time peak. Call it the persisted maximum session-relative drawdown observed by this calculation/display statistic. |
-| Current broker-held SL/TP | **VERIFIED** | `MoveBasketStops` reads current SL/TP and can modify SL at 1477–1481. Audit line 152, comparison lines 269–278, and task lines 159–163 now correctly say current broker-held values survive, not necessarily the original basket-open values. |
-| Momentum versus expansion | **PARTIAL** | Source uses configurable `InpMomTF` for momentum at 2173–2235 and configurable `InpWorkingTF` for `g_expansion` at 449/453–456; the blanket gate returns at 340–344. The revised long paragraph at audit line 127 and comparison failure item 3 distinguish the measurements. Stale text remains at audit line 61 and comparison lines 156–163, which still say the setup was explicitly designed to trade the blocked “volatility expansion” state. Source comment 2213–2218 promises only a premium/discount **location-gate** exemption because a breakout expands beyond value; it does not equate that concept with `g_expansion`. Calling the interaction a verified contradiction/policy conflict is therefore still stronger than the source supports. “Verified gate interaction; intent and impact unresolved” is supportable. Audit line 55, summary row 2 at line 203, and comparison lines 159–161 also retain hard-coded M5/M15 wording where `InpMomTF`/`InpWorkingTF` are configurable defaults. |
+### 2. Daily-close scan wording - VERIFIED
 
-All Markdown tables in the core package have consistent column counts. The
-prior table-schema issue remains resolved.
+`GetTodayClosedProfit` and `GetOpenProfitForMagic` are magic-only at
+3325-3347/3373-3387. `CloseAllOurPositions` closes positions by magic only at
+3391-3400, while its pending-order loop additionally checks `_Symbol` at
+3403-3413. Audit lines 104-105 now describe observable implementation rather
+than claiming historical design intent, and preserve the default-disabled and
+scope-specification qualifications.
 
-### Group 4 and C7 equivalent — metadata and response accuracy
+For maximum epistemic consistency, "unambiguous defect" at audit line 104
+would be better written as a verified scope mismatch requiring a specification
+decision; static source proves the mismatch, not the intended distributed
+multi-chart policy. This does not invalidate the requested wording correction.
 
-| Item | Verdict | Independent result |
-|---|---|---|
-| Preserved-artifact diff wording | **PARTIAL** | Task lines 114–126 and 325–333 now distinguish preserved artifacts from the two audit documents added under `01_BASELINE`. However, `01_BASELINE/inventory.md:7–9` still says the unscoped tag diffs are empty “against `01_BASELINE/`,” contradicting its own correctly scoped commands at 83–86 and the response's claim that scoped wording is now used everywhere. Task lines 22–23 also retain the broad “nothing in `01_BASELINE/` was modified” wording. |
-| Immutability evidence attribution | **PARTIAL** | The artifacts are genuinely unchanged, but per-EA-directory diffs prove only the EA directories, not the set file or PNGs. Cite the separate set-file/PNG path diffs or tag-blob equality for those artifacts. Task lines 46–48 also say the orphaned set hash matched `IDENTITY.md`; `01_BASELINE/setfiles/IDENTITY.md` contains no hash. The EA hashes match their identity files; the set hash is recorded in the inventory and matches the preservation-tag blob. |
-| Exact paths and “full history” | **CURRENT CLAIM FALSE** | `538bc39` changed seven paths: both audits, comparison, task file, `TASKS.md`, the overwritten Codex review, and the new round-three response. `79f8e5a` then changed only the task file. Files affected stops at `538bc39`, while task lines 290–323 call the list the full history through current `HEAD`; current `HEAD` is `79f8e5a`. Another hash-recording commit would recreate the same self-reference problem. Remove the “through current HEAD” guarantee or describe the latest metadata-only commit symbolically instead of trying to embed a commit's own hash in itself. |
-| Acceptance/status/reviewer chain | **FAILED** | The response says these were realigned, but task acceptance lines 209–221 say third-pass fixes are “now being addressed,” Reviewer lines 337–345 say they “are being applied” and omit `TASK-001_review_response_round3.md`, while Final Decision lines 349–353 says the fixes are already applied and pending confirmation. `TASKS.md:11` likewise says “resolving now.” The checked internal-consistency criterion at task lines 198–200 is therefore false, and `TASKS.md` does not contain the claimed matching file list. |
-| Direction-flip risk item | **VERIFIED** | Task lines 159–163 now include direction-flip exit, matching source 1462–1464 and the detailed audit. |
-| Historical-error acknowledgment | **PARTIAL** | The response accurately acknowledges the round-two response's two false claims. Its further assertion that correct scoped wording is now used everywhere is disproved by `01_BASELINE/inventory.md:7–9`. Historical response/handover files may remain unchanged if clearly treated as historical, but current core deliverables and package-wide claims must not repeat their errors. |
-| Verification-document count | **MINOR ERROR** | Response lines 117–119 say all edited sections of “all four documents” were read, while `538bc39` changed five substantive package documents (both audits, comparison, task file, and `TASKS.md`), in addition to the review and new response. Name the intended subset or use the actual count. |
+### 3. Cross-EA RSI fallback - PARTIAL; V6.37 is still overgeneralized
+
+The V8.11 correction is accurate. Fallback `50` at 2366/2371 lies inside both
+default RSI windows at inputs 147-150, so it passes `rsi_buy`/`rsi_sell` at
+2205-2206, while the other three ANDed conditions at 2208-2209 are still
+required.
+
+V6.37's two management-path effects are also accurately described: `50` can
+satisfy the inclusive `MomentumStillFavorable` RSI conjunct at 3205-3206 and
+makes the strict RSI branches of `MomentumFailing` false at 3219-3227,
+suppressing its optional, default-off use at 3149/351.
+
+However, "fails strict entries" is not correct for every cited V6.37 entry
+path:
+
+- It deterministically fails the simple SR checks `rsi1 > 50` / `rsi1 < 50`
+  at 2224/2232.
+- The MA-momentum checks at 2670/2685 are compound expressions:
+  `((rsi2 < 30 && rsi1 > 30) || rsi1 > 50)` and its sell mirror. If `rsi1`
+  falls back to `50` while a valid `rsi2` is below 30 (or above 70 for sell),
+  the reversal-cross branch can still pass. If only `rsi2` falls back, the
+  direct `rsi1 > 50` / `< 50` branch can still pass.
+
+Therefore `baseline_v637_audit.md:215`, summary row 18 at line 240, and
+`baseline_comparison.md:339-343` must distinguish the simple SR threshold from
+the compound MA-momentum expression. Response item 3's V6.37 blanket wording
+cannot be accepted as source-verified.
+
+### 4. Persisted drawdown wording - PARTIAL
+
+Audit lines 89/91 now correctly explain the main calculation. `OnInit` resets
+`g_peak_balance` to current balance at 272; `g_current_dd` uses that reset
+basis at 2291-2298; and 2299-2303 retains the greatest observed
+session-relative reading in `g_peak_dd`.
+
+Two residues remain:
+
+- `baseline_v811_audit.md:166` still says persisted `g_peak_dd` remembers the
+  "true historical maximum," directly contradicting lines 89/91 and response
+  item 4.
+- Persistence must be qualified as non-Strategy-Tester behavior. Both loading
+  at source 274 and saving at 2302 are guarded by `!MQL_TESTER`.
+
+The source-supported phrase is "highest observed session-relative drawdown
+reading, persisted outside Strategy Tester," not a guaranteed all-time
+peak-to-trough maximum.
+
+### 5. Momentum versus expansion - PARTIAL
+
+The corrected passages at audit line 61/summary row 2 and comparison lines
+159-174/291-308 now match the source. Momentum uses configurable `InpMomTF`
+(2173-2235; M5 default), while `g_expansion` uses configurable `InpWorkingTF`
+(449/453-456; M15 default), and the blanket return at 340-344 precedes signal
+construction. Comment 2213-2218 promises a location-gate exemption for a
+breakout beyond value; it does not equate that phrase with `g_expansion`.
+
+The package is still internally inconsistent:
+
+- `baseline_v811_audit.md:127` remains headed "CONTRADICTION - a verified
+  policy/comment conflict" and repeats that conclusion, conflicting with the
+  corrected "gate interaction; intent and impact unresolved" classification.
+- `baseline_comparison.md:309-312` reverses the corrected conclusion in the
+  immediately preceding paragraph.
+- Audit line 55 calls index 2 an unqualified "M5 bar" even though the array is
+  sourced from configurable `InpMomTF` at 2230. It should say `InpMomTF` bar
+  (M5 default).
+
+Thus the two named passages were changed, but the classification was not made
+consistent throughout the current deliverables.
+
+### 6. Package metadata and immutability evidence - PARTIAL
+
+The scoped inventory wording, task opening, and distinction between EA
+`IDENTITY.md` hashes and the set file's lack of an identity hash are
+substantively improved. Git independently confirms `c73947b` changed exactly
+the eight paths described, and the preserved artifacts remain unchanged.
+
+Current metadata still needs correction:
+
+- `01_BASELINE/inventory.md:13-15` says `inventory.md` and `visual_notes.md`
+  were added in the same commit that introduced the baselines. The baselines
+  were introduced by `0d65f95`; those audit documents were added later by
+  `c61903f`.
+- `TASK-001_BASELINE_AUDIT.md:54-55` says the set file's SHA-256 "matches the
+  git blob." This is ambiguous: the current/tagged contents do match, but a
+  SHA-256 and a Git object ID are different checks. State separately that the
+  SHA-256 is `EA9452...` and that the identical HEAD/tag Git blob ID is
+  `3cd45788021a671b9ccf4502c8da1afaea4bcfac`.
+- Task lines 138-150 and 373-381 cite per-EA-directory diffs as proof for the
+  EAs, set file, and PNGs together. Those diffs cover only the EA directories.
+  Cite the separately verified set-file and PNG path diffs/blob equality for
+  the other artifacts.
+- The rejection criterion at task lines 259-265 says *any* `01_BASELINE/` file
+  modification rejects the task and then says none occurred, but `c73947b`
+  modified `01_BASELINE/inventory.md`. Narrow this criterion to the preserved
+  artifacts or acknowledge that the literal criterion was triggered.
+
+### 7. Commit-history structural fix - PARTIAL
+
+The symbolic current-commit approach is sound, and the previously omitted
+`79f8e5a` entry is now present. It avoids embedding a commit's own unknowable
+hash.
+
+The stated history count is false. Git contains two dedicated post-commit
+metadata/hash follow-ups, `7319306` and `79f8e5a`, not three. (`7319306` also
+fixed a path typo.) `3f69469` was a substantive first correction commit, not a
+dedicated hash follow-up. Correct response lines 9-10/90-92 and task lines
+133-135/324-325 accordingly.
+
+### 8. Acceptance, reviewer, decision, and ledger status - FAILED
+
+The four locations are not aligned as response lines 100-107 claim:
+
+- Acceptance at task lines 244-249 says pass-four findings are "currently
+  being addressed."
+- Reviewer at task lines 385-395 says they "are being applied." Its chain ends
+  at `TASK-001_review_response_round3.md`, which is enough to lead into the
+  completed fourth review but does not record the current round-four response
+  artifact; add that artifact if the chain is intended to describe the current
+  correction package too.
+- Final Decision at task lines 399-406 says they "have been applied" and are
+  pending confirmation.
+- `TASKS.md:11` says "Findings open ... resolving now."
+
+Task lines 163-164 and 196-199 also still say three reviews occurred, although
+four had occurred before this fifth review. The checked acceptance item at
+task lines 222-224 claims matching file lists/status across the task and
+`TASKS.md`; the statuses differ and `TASKS.md` contains no matching deliverable
+file list. It must be corrected or left unchecked.
 
 ## Required corrections before approval
 
-1. Correct ROTATION visibility to the actual global condition: no surviving
-   buy **or** sell candidate, with the Rotation reason still the last transient
-   reason. Remove unsupported “sole candidate in that direction,”
-   “common/often,” proven-maintenance-miss, and stated-purpose-conflict claims
-   at audit lines 47/154/226 and comparison lines 139–152/284–296.
-2. Repair the cross-EA RSI synthesis at comparison lines 319–325: V6.37
-   fallback `50` fails its strict entries but has the two documented management
-   effects; V8.11 fallback `50` passes its default RSI-window subcondition but
-   still needs the other three momentum conditions.
-3. In the V8.11 audit, replace “true historical worst drawdown” with the
-   source-supported persisted session-relative maximum, and finish aligning
-   audit line 61/summary row 2 plus comparison lines 156–163 with the related-
-   but-distinct `InpMomTF`/`InpWorkingTF` gate interaction.
-4. Correct current package metadata:
-   - align `inventory.md:7–9` and the task opening with the scoped immutability
-     explanation;
-   - distinguish EA `IDENTITY.md` hash matches from the set file's
-     inventory/tag-blob verification, and cite set/PNG-specific diff evidence;
-   - remove the recursively stale “full history through current HEAD” claim;
-   - align Acceptance criteria, Reviewer, Final Decision, and `TASKS.md`, and
-     include the round-three response in the reviewer chain;
-   - correct the response's “all four documents” verification count or name
-     the four-document subset intended.
+1. Finish the ROTATION cleanup at V6.37 audit lines 47/154 and comparison
+   lines 291-312, including the source-note name and conflict-branch citation.
+2. Correct V6.37 RSI wording to distinguish the simple SR thresholds from the
+   compound MA-momentum expression at 2670/2685; retain the verified V811 and
+   management-path descriptions.
+3. Remove the stale "true historical maximum" drawdown claim, qualify
+   persistence outside Strategy Tester, and make expansion classification and
+   configurable-timeframe wording consistent throughout the V8.11 audit and
+   comparison.
+4. Correct the inventory's commit history, separate SHA-256 from Git blob-ID
+   equality, cite set/PNG-specific immutability evidence, and narrow the
+   rejection criterion to preserved artifacts.
+5. Change the false count of dedicated post-commit metadata/hash follow-ups
+   from three to two.
+6. Align every review-count/status location, record the current response in the
+   reviewer chain if that chain is meant to cover the correction package, and
+   repair or uncheck the false internal-consistency acceptance item.
 
 ## Decision
 
 The prior **CHANGES REQUESTED** disposition cannot be lifted. The remaining
-issues are narrower than the previous pass, but they include false source
-characterizations (ROTATION visibility, cross-EA RSI behavior, persisted
-drawdown meaning, and expansion intent) and demonstrably inconsistent package
-metadata. These are material in an audit whose acceptance criterion requires
-source-backed, internally consistent documentation.
+issues include a fresh source-factual RSI overgeneralization, stale opposite
+conclusions about ROTATION/expansion policy, an incorrect drawdown claim, and
+demonstrably false Git/status metadata. These are material for a source-backed,
+internally consistent baseline audit.
 
 A focused documentation-only correction pass should be sufficient. No baseline
 source change, profitability claim, or live-safety claim is requested or

@@ -142,10 +142,11 @@ behavior.
   second-pass review:** this is a verified, reachable policy question, not a
   confirmed contradiction — "self-confirmed" was documented to mean
   bypassing value-area/SR confirmation gates specifically, not regime
-  policy. The Volatile Expansion design note doesn't itself say Rotation
-  should be allowed to trade during Expansion, so this may be intentional
-  mean-reversion exclusion rather than an oversight — source alone can't
-  settle which. **Dashboard-visibility condition corrected precisely,
+  policy. The **V6.31 Rotation design note** (name corrected in fifth-pass
+  review, was mislabeled "Volatile Expansion design note") doesn't itself
+  say Rotation should be allowed to trade during Expansion, so this may be
+  intentional mean-reversion exclusion rather than an oversight — source
+  alone can't settle which. **Dashboard-visibility condition corrected precisely,
   fourth-pass review (stated wrong in two prior drafts):** the router's
   rejection reason only reaches the dashboard when **no candidate survives
   in either direction that tick**, not "Rotation was the sole candidate in
@@ -292,24 +293,26 @@ disposition: changes requested, now integrated into both audit documents).
    intent and impact are unresolved from static reading alone (V6.37's
    ROTATION-vs-regime-router; V8.11's momentum-breakout-vs-expansion-
    filter). **Reframed per independent review, precision-corrected across
-   third- and fourth-pass review:** neither case should be described as a
-   setup "conflicting with its own stated purpose." V6.37's Volatile
-   Expansion design note never says Rotation should be allowed to trade
-   during Expansion, so excluding it may be intentional, not an oversight.
-   V8.11's momentum-breakout setup is not "blocked by exactly the condition
-   it was built to trade" — its stated purpose (comment 2213–2218) is a
-   premium/discount *location-gate* exemption for trading expansion beyond
-   value, which the source does not equate with the specific, separately-
-   defined `g_expansion` state; the setup's own `InpMomTF`-scale (M5
-   default) breakout condition and the blocking `InpWorkingTF`-scale (M15
-   default) expansion flag are related but not the same measurement (see
+   third-, fourth-, and fifth-pass review (an editing leftover previously
+   left a directly self-contradictory duplicate sentence here — removed):**
+   neither case should be described as a setup "conflicting with its own
+   stated purpose." V6.37's **V6.31 Rotation design note** (name corrected
+   in fifth-pass review, was mislabeled "Volatile Expansion design note")
+   never says Rotation should be allowed to trade during Expansion, so
+   excluding it may be intentional, not an oversight. V8.11's momentum-
+   breakout setup is not "blocked by exactly the condition it was built to
+   trade" — its stated purpose (comment 2213–2218) is a premium/discount
+   *location-gate* exemption for trading expansion beyond value, which the
+   source does not equate with the specific, separately-defined
+   `g_expansion` state; the setup's own `InpMomTF`-scale (M5 default)
+   breakout condition and the blocking `InpWorkingTF`-scale (M15 default)
+   expansion flag are related but not the same measurement (see
    `baseline_v811_audit.md`'s expansion section). Both are best described
-   as verified gate interactions with unresolved intent and impact, not
-   confirmed conflicts.
-   Both cases are verified, reachable policy/control-flow conflicts,
-   not proven bugs — each needs an explicit specification decision (was the
+   as verified, reachable gate interactions with unresolved intent and
+   impact — each needs an explicit specification decision (was the
    restriction intended?) and backtest evidence (does it actually cost
-   good trades?) before being treated as a defect to fix.
+   good trades?) before being treated as a defect to fix, not confirmed
+   conflicts and not proven bugs.
 4. **New, added by independent review — applies to both EAs:** neither file
    branches on `ACCOUNT_MARGIN_MODE`; both have netting-account defects
    (V637's add-on cap doesn't bind, risk state gets overwritten across
@@ -336,11 +339,18 @@ disposition: changes requested, now integrated into both audit documents).
    is EA-specific, not a shared blanket behavior — corrected in fourth-pass
    review after an earlier draft wrongly generalized V637's behavior to
    "both files"**:
-   - **V637:** `50` *fails* the strict entry-threshold RSI comparisons
-     (2224/2232, 2670/2685), but can pass the more permissive
-     `MomentumStillFavorable` management subcondition (3205/3206), and
-     separately suppresses the optional, off-by-default `MomentumFailing`
-     exit (3219–3227, exit itself disabled by default at 351).
+   - **V637: not uniform across its two entry paths — corrected in
+     fifth-pass review, an earlier draft here also overgeneralized.** `50`
+     deterministically *fails* the simple SR strict-threshold checks
+     (2224/2232, single-sided comparisons). It does **not** reliably fail
+     the compound MA-momentum entry expression (2670/2685: `(rsi2<30 &&
+     rsi1>30) || rsi1>50`, mirrored for sell) — a fallback on one of the two
+     RSI reads can still let the other genuine reading satisfy the
+     compound condition. Separately, the fallback can pass the more
+     permissive `MomentumStillFavorable` management subcondition
+     (3205/3206), and suppresses the optional, off-by-default
+     `MomentumFailing` exit (3219–3227, exit itself disabled by default at
+     351).
    - **V811:** `50` *passes* — it sits inside **both** default momentum-
      engine RSI windows (`InpMomRsiBuyMin/Max`=40–65, `InpMomRsiSellMin/Max`=35–60,
      inputs 147–150), so the fallback satisfies the RSI subcondition

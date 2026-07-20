@@ -9,10 +9,15 @@ themselves are untouched — **scoped diff wording corrected in fourth-pass
 review, was previously stated as an unscoped claim that contradicts its own
 correctly-scoped commands below**: `git diff baseline-v637 --
 01_BASELINE/EA_V637` and `git diff baseline-v811 -- 01_BASELINE/EA_V811` are
-both empty. An *unscoped* `git diff <tag> -- 01_BASELINE` is **not** empty,
-because this very file and `screenshots/visual_notes.md` were added under
-that path in the same commit that introduced the baselines — new audit
-documentation, not edits to the preserved evidence.
+both empty. An *unscoped* `git diff <baseline-tag> -- 01_BASELINE` is
+**not** empty, because this very file and `screenshots/visual_notes.md`
+were added under that path — **commit attribution corrected in fifth-pass
+review, was wrongly stated as the same commit that introduced the
+baselines**: the baselines were introduced by commit `0d65f95` (tagged
+`baseline-v637`/`baseline-v811`); these two audit-documentation files were
+added later, by the separate TASK-001 commit `c61903f` — new audit
+documentation, not edits to the preserved evidence, and not part of the
+baseline-preservation commit itself.
 
 ## EA source files
 
