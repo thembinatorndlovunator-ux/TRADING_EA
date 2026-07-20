@@ -1,318 +1,665 @@
-# Codex Twelfth Review — TASK-001 Round-Eleven Response
+# Codex Thirteenth Review — TASK-001 Round-Twelve Response
 
 **Disposition: CHANGES REQUESTED — NOT LIFTED**
 
-The round-eleven correction commit fixes a substantial part of the prior review, but the package is not yet accurate enough to approve. Several claimed corrections are incomplete, several new sentences are false against source or Git history, and the open-ended sweep found additional material source behaviors that the audit still omits.
+Commit `ce9f712` fixes a substantial portion of the twelfth review, but the
+four-document audit package is still not source-factual and internally
+consistent throughout. In particular, the claimed trendline-count correction
+was not actually applied everywhere, several risk/formula statements remain
+under-qualified, and this fresh source sweep found material behaviors that the
+audits still omit.
+
+The detailed record below contains **45 labeled findings**: A1–A7 (7),
+B1–B21 (21), C1–C10 (10), and D1–D7 (7).
 
 ## Review target and method
 
-- Branch reviewed: claude/task-001-baseline-audit.
-- Commit reviewed: a0f4ac3ce5a98435dfb8bd13aa7c0325e5260555.
-- Parent used for the correction diff: b1a8ea5.
-- Response reviewed: 09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md.
-- Source independently read:
-  - 01_BASELINE/EA_V637/Thembabot14 Max.mq5, 8,822 lines.
-  - 01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5, 2,397 lines.
-- Git checks included the a0f4ac3 diff, the relevant historical commit diffs, the full branch history after the baseline import, preservation-tag tree/blob identity, and source-file follow history.
-- This remains a static source and history review. I did not compile, backtest, connect to a broker, or run concurrent-terminal experiments.
+- Branch reviewed: `claude/task-001-baseline-audit`.
+- Commit reviewed: `ce9f712643d9dff6ac9a24ae8087233561d5c47e`.
+- Parent used for the correction diff:
+  `a0f4ac3ce5a98435dfb8bd13aa7c0325e5260555`.
+- Response reviewed:
+  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`.
+- Sources independently checked:
+  - `01_BASELINE/EA_V637/Thembabot14 Max.mq5` — 8,822 lines;
+  - `01_BASELINE/EA_V811/NdlovuSMC_V8.11.mq5` — 2,397 lines.
+- I inspected the actual `a0f4ac3..ce9f712` patch, every cited function/input
+  and source range in both individual audits, the comparison mirrors, the task
+  file's Git/process history, and the arithmetic/formulas. This remains static
+  review only: no compilation, backtest, terminal, broker, restart, or
+  concurrent-instance experiment was performed.
 
-The actual a0f4ac3 path set is exactly six paths:
+Git reports exactly six paths in `ce9f712`:
 
-- added 09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md;
-- modified 09_HANDOVERS/codex_to_claude/TASK-001_review.md;
-- modified TASK-001_BASELINE_AUDIT.md;
-- modified baseline_comparison.md;
-- modified baseline_v637_audit.md;
-- modified baseline_v811_audit.md.
+- added
+  `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`;
+- modified
+  `09_HANDOVERS/codex_to_claude/TASK-001_review.md`,
+  `TASK-001_BASELINE_AUDIT.md`, `baseline_comparison.md`,
+  `baseline_v637_audit.md`, and `baseline_v811_audit.md`.
 
-It did not modify TASKS.md or any path under 01_BASELINE.
+It did not modify `TASKS.md` or any path under `01_BASELINE/`. The task file's
+“first commit after `a0f4ac3`” locator resolves uniquely to `ce9f712`. At the
+start of this review, its pass-12 “applied/pending review” status is the correct
+pre-review state; the response to this review should naturally record pass 12
+as addressed in `ce9f712` and add pass 13 as the new pending-review pass.
 
 ## Immutable-baseline verification
 
-**PASS. Both complete EA directories are byte-identical to their preservation tags, and no commit in the TASK-001 audit history changed them.**
+**PASS — both complete EA directories, including both `IDENTITY.md` files, are
+byte-identical to their preservation tags.**
 
-- 01_BASELINE/EA_V637 has the same Git tree at HEAD and baseline-v637:
-  fe46191174b150c4c1e0dceb1bffc6c42a076384.
-  - IDENTITY.md blob: 5bc1a9b4a3198f5575d9efc35ad723242ac4b2d6.
-  - ThembaBot source blob: 26018c013b60e371c112cea4f57552884d1e6902.
-  - ThembaBot source SHA-256:
-    C35BCC7E0095D60B0C672FAEEBA696B4DB8587B0AFB80E6EFBBFDC8ACCDFBC1D.
-- 01_BASELINE/EA_V811 has the same Git tree at HEAD and baseline-v811:
-  3bc9e68939873de57c70319ff75f3b39ffd58c75.
-  - IDENTITY.md blob: e1ba7a7b741969d96b07db179edd9dfa82c0b44a.
-  - NdlovuSMC source blob: f0644ad8a3ce8f7471d3e3ed8393c375977ac551.
-  - NdlovuSMC source SHA-256:
-    B5740327F6D84FD7C00807001418DF0FCC3912A8101BCA2DBB55DE0E51CD1F1B.
+- `EA_V637` has tree
+  `fe46191174b150c4c1e0dceb1bffc6c42a076384` at both HEAD and
+  `baseline-v637`:
+  - `IDENTITY.md` blob
+    `5bc1a9b4a3198f5575d9efc35ad723242ac4b2d6`, SHA-256
+    `60172420BDE832187466D27A364977B4F71C7390DF389B4795A6200B8394E382`;
+  - source blob `26018c013b60e371c112cea4f57552884d1e6902`, SHA-256
+    `C35BCC7E0095D60B0C672FAEEBA696B4DB8587B0AFB80E6EFBBFDC8ACCDFBC1D`.
+- `EA_V811` has tree
+  `3bc9e68939873de57c70319ff75f3b39ffd58c75` at both HEAD and
+  `baseline-v811`:
+  - `IDENTITY.md` blob
+    `e1ba7a7b741969d96b07db179edd9dfa82c0b44a`, SHA-256
+    `A1286C257D32A95D18A7B2719A649DDC6FCF4EBFCBD2D71FDED20678561D367E`;
+  - source blob `f0644ad8a3ce8f7471d3e3ed8393c375977ac551`, SHA-256
+    `B5740327F6D84FD7C00807001418DF0FCC3912A8101BCA2DBB55DE0E51CD1F1B`.
 
-For every commit after baseline import 0d65f95 through a0f4ac3, both of these commands were effectively empty for the corresponding preservation tag and commit: a scoped directory comparison for EA_V637 and a scoped directory comparison for EA_V811. Each .mq5 file's follow history contains only 0d65f95. The immutable evidence requirement is therefore satisfied.
+Both scoped tag diffs are empty. I also checked every commit reachable after
+the baseline import `0d65f95` through `ce9f712`; none changes either preserved
+EA directory. Each directory contains exactly the two tracked files named
+above.
 
-## Round-eleven corrections independently verified
+## Round-twelve response: item-by-item result
 
-The following corrections do check out against current source and Git history:
+- **A1/A2: partial.** The unsupported broad-sweep/progressive-narrowing claims
+  were removed from the Acceptance narrative, but the Commit entries still
+  recreate the progressive “narrower still” story; see A3.
+- **A3 and A5: verified.** The tense-defect location and `79f8e5a` diff are now
+  described materially correctly.
+- **A4: partial.** The round-11 tense was repaired, but the same self-expiring
+  wording was immediately repeated for round 12; see A4.
+- **A6: acknowledged correctly, then repeated.** See A2.
+- **A7: partial.** Files affected and Acceptance now recognize both complete EA
+  directories, but Rejection and Commit evidence still omit the two identity
+  files; see A5.
+- **B1: partial.** The flat/calm pilot ratios are numerically right, but their
+  runtime conditions and XAU symbol-key condition are not propagated; see B10.
+- **B2–B5, B7, B9, and B10: the targeted edits materially check out**, subject
+  to the additional source and mirror findings below.
+- **B6 and B8: partial.** A stale pilot mirror and stale classifier-summary
+  wording remain; see B9/B16.
+- **B11: not fully applied.** The response says both trendline locations now
+  use “three mechanisms/four implementations”; the V6.37 audit and comparison
+  feature table still say three implementations; see B1.
+- **C1: partial.** The percentage floors and zero-budget branch were corrected,
+  but the displayed underwater formula still omits the outer zero clamp; see
+  C1.
+- **C2: partial.** The stale runtime message is identified, but the per-leg
+  number still lacks the condition that a two-leg split remains viable; see C6.
+- **C3: verified.** The underwater fallback cases and zero-budget early return
+  are correctly derived.
+- **C4–C10: the new body findings are directionally correct**, but close-result
+  wording, recurrence/scoring claims, summaries, and comparison mirrors remain
+  inconsistent; see C4–C10 and D2–D6.
 
-1. V6.37 journal FileOpen failures are now distinguished correctly. The read probe at source 3425 does not return on INVALID_HANDLE; the write-mode header open at 3433–3435, LogJournal at 3475–3477, and LoadJournalMemory at 3549–3551 do abandon their operations silently.
-2. The unconditional V6.37 OnInit clean-slate print is correctly identified at source 525–545.
-3. The normal-pipeline regime-bench scope, the separate minimum-score blocker at 647, the NFP bypass at 632–638/7346, and the OB-limit bypass at 588/8658–8792 are directionally corrected.
-4. The market-entry versus resting-limit stop paths and their visible versus silent rejection behavior are correctly separated.
-5. The binomial arithmetic is now correct: 186/256 = 72.65625% for the literal two-tailed threshold and 185/256 = 72.265625% for behavior-changing outcomes after excluding zero wins.
-6. The narrower V6.37 peak-R statement is correct: the EA has one explicit deletion site, while terminal globals may also expire after four weeks without access.
-7. The broadened HasFreshStructureShiftMomentum role, the added InpTrendSwingDepth call at 6331, and the redundant caller/function trendline-touch guards are correctly identified as far as those specific edits go.
-8. V8.11 RiskBudgetCash is correctly removed from the peak-drawdown-definition taxonomy. g_peak_dd is correctly described as being updated from g_current_dd at source 2299–2303, and RiskBudgetCash does use both balance and equity.
-9. InpMagicNumber is correctly described as configurable, and different-symbol instances can independently consume the same account-wide balance/equity regardless of whether their magic numbers differ.
-10. The round-eleven edit added the important strict-greater-than/next-tick, partial-TP, unchecked-close-result, and restart caveats to the V8.11 time-exit discussion.
-11. The stale-valid versus blank distinction for manual news times and the H1-versus-M30 reversal-lag distinction are directionally correct, subject to findings C5 and C8 below.
-12. TASK-001_BASELINE_AUDIT.md correctly records pass 10 as addressed in b1a8ea5, records pass 11 as applied/pending review, lists the round-11 response in the reviewer chain, and uses a locator whose first child after b1a8ea5 resolves uniquely to a0f4ac3.
-13. The Files-affected path set for a0f4ac3 matches Git, and Commit entry 14 references rather than re-enumerates that canonical path list.
-
-These confirmations do not cure the findings below.
+The arithmetic that does check out is: `186/256 = 72.65625%` (72.7%) for the
+literal eight-trade two-tail event; `185/256 = 72.265625%` (72.3%) for the
+implemented behavior-changing event after excluding zero wins;
+`1.18 × 1.20 = 1.416`; 48 M30 bars = 24 hours; and a 3R-to-2.9R pullback is
+3.33% of peak R. V6.37 also still has 282 real inputs, 25 group headings, and
+a 44-field journal schema; V8.11 has 107 inputs and 9 group headings.
 
 ## A. Package and Git-history findings
 
-### A1 — Pass 10 and pass 11 are both called the first full package sweep
+### A1 — Round 12 had 28 findings, not 26
 
-**Location:** TASK-001_BASELINE_AUDIT.md, Acceptance criteria, lines 347–353 and 422–424.
+**Locations:** round-12 response lines 11–13;
+`TASK-001_BASELINE_AUDIT.md` Acceptance line 485 and Commit lines 803–815.
 
-Line 350 says pass 10 was “the first full independent package sweep.” Line 422 says pass 11 was “the first full independent package sweep.” Both cannot be first.
+The prior review contains A1–A7 (7), B1–B11 (11), and C1–C10 (10): 28
+labeled findings. The response happens to contain 26 response actions because
+A1/A2 share a bullet and A6 was acknowledged without an edit. “26 findings”
+and “26-item open sweep” are therefore false; the durable description is “28
+findings handled in 26 response bullets/actions.”
 
-Git/history reality also does not support either absolute formulation. The initial Codex review of the c61903f package, recorded in the review that 3f69469 answered, already ranged across both audit files, the comparison, task metadata, preserved evidence, and source. Round 10 was a return to a broad/open-ended sweep after several narrower response checks; round 11 was another broad sweep. State that durable fact instead of assigning “first” twice.
+### A2 — The response repeats the path-list overclaim it acknowledges
 
-### A2 — “Passes 1–9 narrowed progressively” is an unsupported qualitative history
+**Location:** round-12 response lines 40–45 and 162–167.
 
-**Location:** TASK-001_BASELINE_AUDIT.md lines 347–353; round-11 response lines 167–172.
+The response correctly admits that Reviewer chain does not enumerate the six
+changed paths, then says the six-path list was confirmed in
+“Files affected/Commit/Reviewer-chain.” Files affected enumerates the paths;
+Commit references that list; Reviewer records response filenames. Git confirms
+the six paths, but not the response's claim about all three sections.
 
-The response removed “each narrower than the last” but replaced it with “passes 1–9 narrowed progressively.” The artifacts do not establish that monotonic progression. The number and breadth of corrections rise again in several passes; even simple numbered-response counts are non-monotonic. Git can establish which files and claims changed, not an ordered qualitative narrowness scale.
+### A3 — The unsupported monotonic-narrowing story remains in Commit
 
-Remove the monotonic inference. A supportable summary is that some intermediate passes were targeted response checks, while passes 10 and 11 explicitly returned to broader sweeps.
+**Locations:** `TASK-001_BASELINE_AUDIT.md` Acceptance lines 370–384 versus
+Commit lines 647–650, 662–664, 675–679, 688–695, 704–710, 718–727,
+735–743, and 752–759.
 
-### A3 — Pass 11 mislocates the prior tense defect
+Acceptance now correctly says Git does not establish monotonic narrowing.
+The successive Commit entries still say “narrower” and “narrower still” for
+passes 2 through 9, recreating precisely the unsupported qualitative history
+that the response says it removed. Retain concrete finding descriptions and
+remove the comparative ordering.
 
-**Location:** TASK-001_BASELINE_AUDIT.md lines 447–450 and Commit entry 13, lines 697–710.
+### A4 — The Reviewer-chain annotation is already stale at `ce9f712`
 
-Both locations say the prior stale-tense issue was in the Commit section or “this very Commit section.” The prior review identified the sentence in the Reviewer-chain annotation, now around lines 758–761. The fix was applied there. Record the correct section.
+**Location:** `TASK-001_BASELINE_AUDIT.md` lines 871–872.
 
-### A4 — The reviewer-chain annotation is already stale at a0f4ac3
+It says round 12's filename is stated “before its own commit exists.” At the
+reviewed HEAD, `ce9f712` exists and contains that file. Use past tense and the
+known hash, or rely on the durable first-child locator without a self-expiring
+temporal clause.
 
-**Location:** TASK-001_BASELINE_AUDIT.md lines 758–761.
+### A5 — Rejection and Commit evidence omit both immutable identity files
 
-It says the round-11 filename “is stated now, before its own commit exists.” At the reviewed HEAD, a0f4ac3 exists and contains that file. The round-10 clause was updated to past tense but the immediately following round-11 clause repeats the same self-expiring wording.
+**Locations:** `TASK-001_BASELINE_AUDIT.md` lines 557–563 and 823–831, versus
+the correct complete-directory wording at lines 238–263 and 347–350.
 
-Use past tense and identify a0f4ac3, or rely solely on the durable first-child locator.
+The former sections enumerate preserved evidence as two MQ5 files, the set
+file, and screenshots. Git proves each EA directory also contains and preserves
+an `IDENTITY.md`. All four sections should describe the same evidence set.
 
-### A5 — 79f8e5a is still falsely characterized as hash-recording-only
+### A6 — Commit entry 7 does not record or reference the full `c73947b` path set
 
-**Location:** TASK-001_BASELINE_AUDIT.md lines 143–153 and Commit entry 6, lines 584–587.
+**Location:** `TASK-001_BASELINE_AUDIT.md` lines 680–687.
 
-The current text says 79f8e5a “genuinely was hash-recording-only,” and Commit entry 6 says it filled in the 538bc39 hash. Direct inspection of git show 79f8e5a shows a 14-line task-file diff with 9 insertions and 5 deletions. In addition to inserting the hash, it replaced the vague round-three response placeholder with the exact response-file path and explicitly recorded that the Codex review path was overwritten in place. The commit message describes the intended primary purpose, but the actual diff controls this audit.
+Git shows eight paths in `c73947b`, including the overwritten
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md`. The Files-affected entry at
+lines 134–140 records this; Commit entry 7 neither names that review file nor
+clearly points to the canonical path list. Make it an explicit reference.
 
-Describe it as a follow-up metadata commit that filled the hash and completed the exact path record. The general “two dedicated hash-recording commits” language at lines 543–545 should likewise be softened.
+### A7 — Two process-history explanations are not verifiable from Git
 
-### A6 — The current response repeats the path-list verification overclaim it acknowledges
+**Locations:** `TASK-001_BASELINE_AUDIT.md` lines 360–365 and 573–577.
 
-**Location:** TASK-001_review_response_round11.md lines 177–183 and 201–206.
+Git establishes that status prose drifted; it does not establish the asserted
+cause (“not because facts were unclear ... because ... paraphrases drift”). It
+also cannot prove that two agents each read an entire source file end-to-end.
+These may be retained as attributed process attestations, but not presented as
+independently verified historical facts.
 
-Lines 177–183 correctly acknowledge that the Reviewer chain does not enumerate the six paths. Lines 201–206 then say the six-path list was confirmed in “Files affected/Commit/Reviewer-chain.” Git confirms the six actual paths, but the three sections do different jobs: Files affected enumerates them; Commit entry 14 references that list; Reviewer records the exchanged response filenames.
+## B. V6.37 source and audit findings
 
-If response files are retained as immutable historical exchanges, record this round-11 response defect accurately in the canonical task history and do not repeat the collective-enumeration claim.
+### B1 — The trendline count and timeframe are still wrong
 
-### A7 — The task understates what the preservation-tag directory checks prove
+**Locations:** `baseline_v637_audit.md` lines 26–30;
+`baseline_comparison.md` line 75; `TASK-001_BASELINE_AUDIT.md` line 31;
+round-12 response lines 100–102.
 
-**Location:** TASK-001_BASELINE_AUDIT.md lines 223–240, Acceptance criterion lines 326–327, and Commit evidence lines 718–726.
+The source has four entry implementations: `EvaluateSRChannel` (2452),
+`EvaluateTrendBreaker` (2562), `BuildTrendlineTouchSignal` (7573), and
+`BuildTrendlineBreakRetestSignal` (7663). They can be grouped as three
+conceptual mechanisms because the dedicated pair shares a mechanism, but they
+are not three implementations. Audit line 28's “H1/H4” is also false as a
+shipped-default statement: `EvaluateTrendBreaker` reads configurable
+`InpTrendHigherTF2`/`InpTrendHigherTF1` at 2572–2576, whose defaults are M15
+and H1 at 149/148. The response's B11 “fixed at both locations” claim is false.
 
-The text repeatedly says the scoped EA-directory diffs verify “only the two .mq5 files.” Each preserved EA directory also contains IDENTITY.md, and the directory tree IDs and per-file blobs prove those files identical too. The user-required fact is that both complete directories are byte-identical to their tags, not merely that two source files match.
+### B2 — The purported M5 FVG confirmation actually uses the entry timeframe
 
-Retain the separate set-file and screenshot checks, but update this particular evidence description to say the scoped comparisons verify every tracked file in EA_V637 and EA_V811, namely each .mq5 plus its IDENTITY.md.
+**Location:** `baseline_v637_audit.md` lines 37–39.
 
-## B. V6.37 source and consistency findings
+`HasFVGM5Confirmation` copies `InpEntryTF` at source 1628; that input defaults
+to M3 at line 147 and is configurable. The source's function/input names and
+comments are themselves stale “M5” labels. The audit should state the actual
+entry-TF behavior rather than silently inheriting the misleading identifier.
 
-### B1 — The pilot-ceiling ratios use a false “standing 1–2% budget”
+### B3 — `FindClusterBoundary` does not fall back to an intact cluster
 
-**Location:** baseline_v637_audit.md lines 81–82, 174, and summary row 6 at 234; baseline_comparison.md lines 208–210 and 454–460.
+**Location:** `baseline_v637_audit.md` line 44.
 
-InpRiskPercent defaults to 1.0% at source 79, while InpMaxRiskPercent at 80 is a cap, not a standing 2% budget. EffectiveRiskPercent at 5773–5780 also selects 0.25% under the shipped-enabled XAU profile. CalculateAllowedRiskCash at 5889–5913 then applies the 20% balance/equity reserve and volatility/news/add-on factors.
+Source 7895–7920 first chooses the highest-touch/nearest cluster without
+checking invalidation. It then returns `false` at 7925–7927 if that winning
+cluster is invalidated; it does not select the next-best intact cluster. Thus
+“keeps the highest-touch-count cluster that is not invalidated” is false.
 
-At flat balance/equity, calm volatility, no news reduction, and no open position, the implemented default cash budgets are 0.8% for non-XAU and 0.2% for XAU. A 5% pilot ceiling is 6.25 times and 25 times those respective budgets, not 2.5–5 times. Other reduction factors can widen the ratio further. Distinguish input/default/cap percentages from the implemented cash budget.
+### B4 — The self-confirmed-bypass paragraph contradicts itself and the comments
 
-### B2 — The pilot state does not guarantee a one-position minimum-lot throttle until confirmation
+**Location:** `baseline_v637_audit.md` line 55.
 
-**Location:** baseline_v637_audit.md lines 80, 84, 155, and 174; summary row 6.
+The paragraph first says the two bypass checks are identical, then correctly
+describes their difference. Source 1895 applies only `IsSelfConfirmedSetup` in
+the PD gate; source 2001–2003 additionally accepts `OB_SR_` in the SR gate.
+The audit also calls that asymmetry undocumented, but source comments 1997–2000
+explicitly explain that OB+SR bypasses horizontal SR while premium/discount
+still applies.
 
-Three source paths invalidate the current universal framing:
+### B5 — `AnalyzeStructure` is not one consistent BOS/CHoCH definition
 
-1. EffectiveMaxPositions at 7543–7551 begins with configurable InpMaxPositionsPerSymbol at every stage. If input 67 is above 1, stage 0 or 1 can permit multiple positions. Once the first pilot sets stage 1 at 2779–2780, CalculateVolumeForRisk's pilot-only branch at 2865 is skipped, so a subsequent entry can use ordinary risk sizing before confirmation.
-2. The optional OB-limit path sizes at 8749 and sets pilot stage 1 immediately after successful pending-order placement at 8782–8783, before a fill. Pending orders are not counted by CountOurPositions. ManageOrderBlockLimitOrders calls the buy and sell synchronizers consecutively at 8654–8655, and OnTick continues into the market-signal path after the call at 588. A second pending or market entry can therefore be risk-sized while the supposed pilot is only resting. InpUseOBLimitOrders is off by default, but this is a reachable configured path.
-3. The losing-close reset at 736–737 is inside OnTradeTransaction, which returns at 662–663 whenever InpUseTradingJournal is false. With journal logging disabled, a losing pilot does not reset to stage 0 through that path; stage 1 remains until the positionless timeout.
+**Locations:** `baseline_v637_audit.md` lines 59–60;
+`baseline_comparison.md` line 72.
 
-The default InpMaxPositionsPerSymbol=1 and default-disabled OB pending feature mitigate portions of this, but the audit describes configurable behavior, not only one default path. This journal/risk-state coupling and pending-before-fill transition are material and need explicit treatment.
+`AnalyzeStructure` (4791–4839) is one live classifier.
+`FindRecentStructureShiftLevel` (1176–1205) is a different live older-swing
+break test, and `BuildBOSRetestSignal` combines the mechanisms at 7777–7788.
+`HasEntryCHOCH` (5013–5025) is a third, dead definition. “Canonical, clean,
+single definition used consistently” is contradicted by both source and the
+next audit bullet.
 
-### B3 — Same-symbol journal learning is not isolated by magic number
+### B6 — The M30 order block is not guaranteed to be an untouched first return
 
-**Location:** baseline_v637_audit.md lines 96–99 and 162–164, plus summary row 12 at 240; baseline_comparison.md lines 267–272.
+**Location:** `baseline_v637_audit.md` line 66.
 
-OnTradeTransaction filters live deal events by magic and symbol at source 672–681. The 44-column header at 3440–3450, however, contains no magic-number field. LoadJournalMemory reads CLOSE rows and filters only by row symbol at 3586–3589; it never filters by magic.
+`ScanM30OrderBlock` starts at candidate `i=2` (8316). In that case `rates[1]`
+is simultaneously the displacement candle at 8324 and the alleged current
+return/rejection candle consumed at 8512–8516. For older candidates, the
+mitigation loop at 8337–8338 excludes both `rates[1]` and `rates[2]`, so a
+prior touch at index 2 is ignored. The comment claims first return; the code
+does not enforce it.
+
+### B7 — The two named OB integration paths are not identically H1-gated
+
+**Location:** `baseline_v637_audit.md` line 68.
+
+The standalone builder has the opposing-H1/fresh-shift check at 8497–8500,
+and the separate pending-order path has it at 8680–8683. The named score
+modifier `ApplyOrderBlockConfluence` (8554–8576) has no such check. The audit's
+second citation points to a third path, not the second path named in its claim.
+
+### B8 — Two pending-order guarantees conflict with source and with the audit
+
+**Locations:** `baseline_v637_audit.md` lines 74 and 76, plus its own account-
+mode finding around line 195.
 
-Two same-symbol instances with different magic numbers and the same configured journal filename will each log only their own live events, but after restart each will load and learn from both instances' historical close rows. The journal is symbol-scoped, not symbol-and-magic scoped. The current duplicate-row discussion covers same-symbol/same-magic live duplication but misses this separate learning-contamination path.
+- When the feature is disabled, source 8637–8641 ignores `OrderDelete`'s
+  result and deletes the tracking keys regardless. It attempts cleanup; a
+  failed cancellation can leave an untracked live order.
+- On fill, source 697–699 stores risk under a key built from
+  `DEAL_POSITION_ID`, while management reads a key based on `POSITION_TICKET`
+  at 5997–6002. Those identifiers are not guaranteed interchangeable, as the
+  audit itself already notes. Line 76 therefore cannot guarantee that
+  trailing/giveback uses the stored actual-fill risk.
 
-### B4 — “Called unconditionally every tick” is false
+### B9 — “Pilot trade of a fresh trend” is not an identity-enforced invariant
 
-**Location:** baseline_v637_audit.md line 92.
+**Locations:** `baseline_v637_audit.md` lines 80–81, 155, 174, and summary
+row 6 at 234; `baseline_comparison.md` line 78.
 
-ManageOrderBlockLimitOrders is not called unconditionally every tick. OnTick returns first for the daily lock, disabled new trades, and every non-new InpEntryTF bar at source 573–580. The call is at 588. The function then has its own once-per-InpStructureTF-bar guard at 8646–8652.
+`CalculateVolumeForRisk` checks only symbol/magic-scoped `PilotStage()==0`
+at 2865; it stores no pilot ticket, direction, setup, or trend identity. Any
+setup/direction can consume stage 0, including while the stored trend is zero.
+`UpdatePilotTrendState` can let any same-symbol/magic position confirm stage 2
+at 6953–6977, and any same-symbol/magic exit while stage 1 can confirm/reset it
+at 720–737. Line 155 also still says one minimum-lot position until confirmed,
+contradicting line 80's own configurable-position, pending-before-fill, and
+journal-gated qualifications. Describe a symbol/magic stage-based minimum-lot
+mode, not an identity-specific pilot guarantee or a universal single-position
+throttle.
 
-The supportable statement is that this bypass is reached from the new-entry-bar path and can submit without ApplyLearningToScore when its configurable feature is enabled.
+### B10 — The pilot-ceiling ratios still omit required runtime conditions
 
-### B5 — The “caller list completed” label remains false
+**Locations:** `baseline_v637_audit.md` lines 81, 174, and summary row 6 at
+234; `baseline_comparison.md` lines 212–214 and 468–474.
+
+Source 5889–5913 gives approximately 0.8% non-XAU and 0.2% XAU only when
+equity is at least balance, volatility factor is 1, no news reduction applies,
+and no existing position applies the add-on factor. If balance exceeds equity
+or any factor is below 1, the implemented budget is lower and the
+5%-ceiling-to-budget ratio is greater than 6.25×/25×. The XAU result also
+requires the case-sensitive configurable key `InpXAUUSDSymbolKey` (default
+`"XAU"`) to match `_Symbol` at 5766–5770. Comparison line 212's “1.0%–2.0%
+standing budget” is independently false: 2% is a cap, while the XAU raw input
+is 0.25% and the implemented budget is state-dependent.
 
-**Location:** baseline_v637_audit.md line 17.
+### B11 — Favorable add-on spacing is fail-open
+
+**Location:** `baseline_v637_audit.md` line 82.
+
+`AddOnConditionsMet` returns `true` at 8089–8091 when ATR is unavailable,
+bypassing the spacing test. Same-direction is enforced, but favorable spacing
+is conditional on obtaining a valid ATR; the blanket “both pieces enforce”
+claim is too strong.
+
+### B12 — The profit-lock ordering “hypothesis” is settled by the source
 
-The three listed MathMax(2, input) forms are not a complete caller/depth taxonomy. Current source also has:
+**Location:** `baseline_v637_audit.md` line 120.
+
+Source 7130–7136 attempts the stop modification before the giveback block at
+7144–7158. The giveback predicate reads `rr` and `peak`, not `sl`, and local
+`sl` is updated after a true modification result. There is explicit statement
+order and no unresolved same-pass ordering question of the kind asserted.
+
+### B13 — Two historical-target descriptions use the wrong mechanism/timing
 
-- raw InpStructureSwingDepth passed at 2458–2459;
-- MathMax(3, InpStructureSwingDepth + 2) at 5337–5338;
-- configurable InpMajorSwingDepth at input 382, transformed by MajorSwingDepthForTimeframe at 4205–4214 and used by IsSwing at 4222–4223 and later scans;
-- a hard-coded depth of 2 at 7376–7384.
+**Locations:** `baseline_v637_audit.md` lines 125–126.
 
-The narrower summary-row finding about three comments that claim a fixed three-bar fractal may remain. Line 17 should say it gives examples or document the actual broader caller taxonomy.
+- The “M30/H4 major swings” at 1861–1872 call ordinary
+  `FindQualifiedFractalTarget`, whose depth comes from `InpFractalDepth`.
+  They do not use `IsConfirmedMajorSwing`/`InpMajorSwingDepth` at 4217 onward.
+- The ladder is not universally created at trade-open time. Pending fills at
+  697–699 store only risk, and `EnsureStagedTargetState` can first create the
+  targets later from `ManageStagedHistoricalTargets` at 6120. Restored or
+  otherwise missing-state positions can also be initialized during management.
+  The supportable invariant is that existing stored ladder state is not
+  continually re-derived, not that all state is born at open.
+
+### B14 — Two pipeline claims ignore bypass/configuration branches
+
+**Locations:** `baseline_v637_audit.md` lines 146 and 148.
 
-### B6 — One exact “pilot risk increase” mirror was not fixed
+- Although `IsSelfConfirmedSetup` contains `NFP_`, the live NFP entry path at
+  632–638 calls `OpenSignal` directly. It bypasses
+  `SelectBestIndependentSignal`, regime routing, OB score modification, and
+  learning. NFP therefore does not “skip only gates 1 and 2” and traverse
+  gates 3/5; the audit already recognizes this bypass at line 91.
+- `BuildRangeCycleSignal` requires ranging at 7945 only when configurable
+  `InpRangeCycleOnlyWhenRanging` is true. Its Trending-regime router can fire
+  when that input is false. The overlap is shipped-default redundancy, not an
+  unreachable branch in every configuration.
+
+### B15 — The signal-family count has no consistent arithmetic basis
 
-**Location:** baseline_v637_audit.md line 177; round-11 response lines 67–74.
+**Location:** `baseline_v637_audit.md` line 153.
 
-The response says all stale increase/escalation framing was changed. Line 177 still calls the add-on factor a contrast to “the pilot-trade risk increase above.” The audit itself correctly established only a looser ceiling, not a guaranteed increase. Change this exact mirror.
-
-### B7 — The live XAU M5-versus-M15 source-comment contradiction is omitted
-
-**Location:** baseline_v637_audit.md lines 111–112 and 184.
-
-Source input line 103 says the XAU cap is “six M5 ATRs.” GetMaximumStopDistance at 5876–5883 uses InpStructureTF, whose shipped default is M15 at line 146. The audit correctly describes the current M15 computation, but it does not record that the still-live input comment says M5. This is precisely the kind of comment-versus-code contradiction the package is intended to catalogue.
-
-### B8 — The two symbol classifiers do not use the same vocabulary
-
-**Location:** baseline_v637_audit.md line 134.
-
-IsSyntheticIndexSymbol at source 7237–7240 recognizes volatility, boom, crash, jump, step, range break, and drift. DirectionAllowedForSymbol at 6686–6689 recognizes only boom and crash, in addition to broker trade mode. Only boom/crash vocabulary overlaps.
-
-A naming mismatch for jump/step/range-break/drift can affect synthetic/news classification but does not simultaneously affect the Boom/Crash direction restriction. Rewrite the cross-effect claim to match the actual two vocabularies.
-
-### B9 — Ordinary row interleaving remains unsupported, and FILE_COMMON scope is understated
-
-**Location:** baseline_v637_audit.md lines 162–164 and summary row 12 at 240.
-
-The verified concurrent-access mechanisms are missing FILE_SHARE_READ/FILE_SHARE_WRITE, silent failed opens/dropped operations, and the two-handle empty-check/append duplicate-header race. Missing share flags do not themselves establish successful overlapping writers. The claim that rows can interleave or corrupt “even where opens succeed” has no runtime evidence or documented mechanism here; FileWrite is a single row-writing call.
-
-Remove that ordinary-row-interleaving hypothesis unless a concurrent runtime test demonstrates it. Also, the official [MQL5 file-flags reference](https://www.mql5.com/en/docs/constants/io_constants/fileflags) defines FILE_COMMON as the common folder for all client terminals on the computer, not only chart instances in one terminal. Continue separating reachability from actual same-filename sharing.
-
-### B10 — Static inspection cannot verify that modules “work”
-
-**Location:** baseline_comparison.md lines 396–398.
-
-The comparison says the SR/dealing-range modules were independently verified “to work as documented.” The package's own method caveat says no compilation or runtime test was performed. Static reading can verify that implementation matches the described algorithm; it cannot verify runtime operation. Replace “work” with “are implemented consistently with the documented behavior.”
-
-### B11 — Trendline duplication uses two incompatible counts without a taxonomy
-
-**Location:** baseline_comparison.md lines 110–114 and 432–433.
-
-The comparison calls the trendline logic tripled/three-times duplicated while the same passage enumerates EvaluateSRChannel, EvaluateTrendBreaker, BuildTrendlineTouchSignal, and BuildTrendlineBreakRetestSignal as four implementations. baseline_v637_audit.md lines 26–30 groups the dedicated pair into one third mechanism.
-
-Use one explicit taxonomy, for example: three conceptual mechanisms containing four entry implementations.
-
-## C. V8.11 source and consistency findings
-
-### C1 — RiskBudgetCash still contains two mathematical errors
-
-**Location:** baseline_v811_audit.md line 99.
-
-First, the audit writes pct as MathMin(InpRiskPercent, InpMaxRiskPercent), but source 1512 is:
-
-MathMin(MathMax(0.01, InpRiskPercent), MathMax(0.01, InpMaxRiskPercent)).
-
-The 0.01 floors matter for non-default configuration.
-
-Second, the statement that the budget reaches zero “in the E >= B case” after an approximately 80% loss is impossible. If E >= B, MathMax(B,E)=E and risk_base is always 0.8E under the 20% default. Zero is reached only in the B > E branch when E - 0.2B <= 0, equivalently E <= 0.2B. Correct the branch and the derivation.
-
-### C2 — The summary says 0.8% per leg, and the executable 0.5%-per-leg message is omitted
-
-**Location:** baseline_v811_audit.md line 7 and summary row 9 at 216; source line 279.
-
-When E >= B, RiskBudgetCash is approximately 0.8% per basket. With two legs it is approximately 0.4% per leg before volume rounding. Summary row 9 says “conditional ~0.8%/leg,” which is wrong by a factor of two.
-
-The audit identifies the header comment's stale “0.5% per leg” claim at source line 33, but source line 279 also prints “2-leg baskets at 0.5% per leg” on every initialization. Record this as an executable misleading runtime status, not merely a comment discrepancy.
-
-### C3 — The minimum-lot fallback summary and comparison omit their conditioning
-
-**Location:** baseline_v811_audit.md line 125 and summary row 5 at 212; baseline_comparison.md lines 208–210 and 462–466.
-
-The detailed paragraph at line 125 properly introduces the approximately 0.8% trigger and 2.5-times ratio as the E >= B case, but the summary row and comparison reuse them as general figures, and none of these locations completes the underwater branch. In the B > E but E > 0.2B branch, RiskBudgetCash/equity is 0.01 times (1 - 0.2B/E), which is below 0.8%; a 2% accepted minimum lot can therefore exceed the implemented budget by more than 2.5 times. If E <= 0.2B, RiskBudgetCash returns zero and OpenBasket exits at source 1319–1320 before the fallback.
-
-Condition the 0.8%/2.5-times statements on E >= B and describe the underwater branch separately.
-
-### C4 — Residual “force-closed” and “hard cutoff” language still overstates the time exit
-
-**Location:** baseline_v811_audit.md lines 83, 89, 91, and summary row 7 at 214; baseline_comparison.md lines 82 and 222–230.
-
-The newly added caveat at audit line 87 correctly says CloseBasket only attempts closes and ignores CTrade result codes. The surrounding text nevertheless says the exit is “enforced,” the basket “is force-closed,” and it is a “hard wall-clock cutoff.” Those stronger claims contradict the caveat and source 1485–1500.
-
-The source establishes a close attempt on the first tick strictly after the threshold during uninterrupted, reconstructable basket state. It does not establish successful closure. Apply that wording consistently in the audit, summary, and comparison.
-
-The TP1 discussion at line 85 should also retain the other source conditions: a two-leg configuration must still be in effect and both leg submissions must have succeeded; the sizing loop can reduce legs at 1328–1334, individual submissions can fail at 1368–1380, and netting can collapse positions.
-
-### C5 — “Syntactically invalid” overstates the news-time validation
-
-**Location:** baseline_v811_audit.md line 107 and summary row 11 at 218.
-
-InNewsWindow at source 2332–2338 rejects only empty text, text shorter than four characters, or text without a colon. It does not validate digits, exact HH:MM shape, hour range, or minute range before StringToInteger and StructToTime. Many malformed strings with a colon pass those checks and may coerce or normalize to an unintended time rather than return false.
-
-Name the three actual rejected forms instead of generalizing them to all syntactically invalid inputs.
-
-### C6 — g_peak_dd restart persistence still lacks the four-week expiry condition
-
-**Location:** baseline_v811_audit.md lines 95, 97, 151, 172, and summary row 3 at 210; baseline_comparison.md lines 123–127.
-
-g_peak_dd uses a terminal global variable at source 273–275 and 2299–2303. The official [MQL5 terminal-global reference](https://www.mql5.com/en/docs/globals) states that terminal globals are automatically deleted four weeks after their last access. Therefore the value survives ordinary restarts only while the key still exists; it is not guaranteed across an arbitrarily late restart.
-
-This qualification was correctly added for the analogous V6.37 peak-R key in round 11 and should be applied consistently here. It does not change the separate finding that g_peak_dd is display-only while g_current_dd gates entries.
-
-### C7 — Basket management is based on requested quotes, not actual fills
-
-**Location:** baseline_v811_audit.md lines 65, 73–79; baseline_comparison.md lines 222–228.
-
-The audit briefly acknowledges at line 65 that actual fills can differ, but it does not carry the consequence into its break-even, R, trail, and giveback claims. OpenBasket samples bid/ask at source 1286–1287, submits at 1376, then stores that requested entry and pre-submit distance in g_basket_entry/g_basket_risk at 1385–1387. The source never reads POSITION_PRICE_OPEN.
-
-ManageBasket at 1419–1445 and the dashboard at 2062–2070 therefore compute R, break-even, trail, and giveback from requested values, not actual per-position fill prices. Slippage or differing leg fills shift every claimed R threshold and can make “break-even” not true economic break-even. This material management defect needs explicit treatment.
-
-### C8 — The cross-instance summary is too broad for same-symbol/same-magic charts
-
-**Location:** baseline_v811_audit.md lines 117 and 216.
-
-The established exposure gap is different symbols regardless of magic, or the same symbol with different magic numbers. On the same symbol with the same magic, CountOurPositions at 1639–1653 sees the other instance's open positions, and the OnTick gate at 307–308 normally blocks another basket after exposure exists.
-
-Summary row 9 says risk exists whenever the EA runs on multiple “symbols/charts” regardless of magic. Narrow it to the combinations the source actually establishes. A same-symbol/same-magic simultaneous race would require separate runtime evidence and should not be smuggled into the general statement.
-
-### C9 — The persisted peak-DD key can collide across magic values and accounts
-
-**Location:** baseline_v811_audit.md Peak drawdown lock and restart sections, especially lines 95, 151, and 172; source line 273.
-
-The key is constructed as NSMC_PeakDD_ plus symbol plus IntegerToString((int)InpMagicNumber). InpMagicNumber is a long at line 48 but is truncated to int in the key. Distinct long magic values can therefore map to the same key. The key also contains no account login or server identifier, so changing accounts in the same terminal can load another account's value for the same symbol/truncated magic.
-
-The current source uses g_peak_dd for display, not the live gate, so this is a display/history-integrity defect rather than a direct drawdown-lock bypass. It should still be documented in a package that discusses persistence and cross-instance scope in detail.
-
-### C10 — Partial basket submission can print the wrong terminal TP rung
-
-**Location:** baseline_v811_audit.md Basket entries/Laddered take profits sections, lines 65–73; source 1368–1396.
-
-The loop increments opened for any successful leg but the status message indexes ladder by the count of successes. If leg 1 fails and leg 2 succeeds, the surviving order was submitted with ladder[1] = 1.5R, while opened is 1 and the message reports ladder[0] = 1.0R. Other non-prefix success patterns have the same problem.
-
-The audit already notes partial submission for break-even semantics, but it misses this observable status/reporting defect.
+`BuildCombinedSignal` contains 11 top-level families: SR, Trend, and nine
+others. Replacing the SR umbrella with its six methods and Trend with its two
+methods produces 17; counting direction-specific candidate objects produces
+20. Neither “at least 13” nor “twelve to fourteen” follows from the stated
+taxonomy.
+
+### B16 — Summary row 9 reintroduces the classifier-vocabulary overclaim
+
+**Location:** `baseline_v637_audit.md` summary row 9 at line 237.
+
+`IsSyntheticIndexSymbol` has seven terms at 7233–7241;
+`DirectionAllowedForSymbol` recognizes only boom/crash at 6678–6698. Naming
+mismatches for jump/step/range-break/drift affect NFP classification only, not
+both filters. The body at line 134 is correct; the summary is stale.
+
+### B17 — The fractal-depth contradiction is stated against the wrong promise
+
+**Locations:** `baseline_v637_audit.md` lines 21 and summary row 13 at 241;
+`baseline_comparison.md` lines 145–148.
+
+The line-201 comment does not promise one input for every fractal subsystem;
+it specifically says `InpStructureSwingDepth` is used by SR, structure, and
+FVG. The direct contradiction is within FVG context itself: `AnalyzeStructure`
+uses `InpStructureSwingDepth` at 1593, while
+`FindRecentStructureShiftLevel`/`FindFVGLinkedBreakOfStructure` reaches
+`FindTwoConfirmedSwingsBefore`, which hardwires `InpFractalDepth` at 1156.
+Trend/dealing-range having other inputs is fragmentation, but does not by
+itself falsify that narrower comment.
+
+### B18 — A material learning-sign defect is absent from the audit
+
+**Location:** the learning discussion at `baseline_v637_audit.md` lines
+98 and 166–176.
+
+At source 3697–3700, a strategy with win rate above 50% but net loss enters the
+`else` branch and subtracts `(0.50-win_rate)`, a negative number. It is boosted,
+not penalized. With 60% wins and default 14% penalty, the factor gains 2.8%.
+The regime branch repeats the sign error at 3730–3733, gaining 4% under the
+default 20% penalty. A 50%-win/net-loss bucket receives no penalty. This is a
+direct arithmetic/control-flow defect in the very learning system being
+audited and belongs in the body and summary.
+
+### B19 — Market-entry R management mixes requested and actual prices
+
+**Location:** missing from the V6.37 sizing/management findings, especially
+`baseline_v637_audit.md` lines 76, 115–120, and 186–195.
+
+Market entries sample a requested quote at 2707 and store requested
+`abs(entry-sl)` at 2796/5965–5976. Management and pilot confirmation then use
+actual `POSITION_PRICE_OPEN` at 3034/6963 but divide by that requested risk at
+3042–3050/6967–6974. Slippage therefore distorts R, break-even/trailing/
+giveback, and pilot-confirmation thresholds. This is the V6.37 analogue of the
+requested-fill defect newly documented for V8.11.
+
+### B20 — Several close/delete outcomes are still stated as guarantees
+
+**Locations:** `baseline_v637_audit.md` lines 74, 103, and 117;
+`TASK-001_BASELINE_AUDIT.md` lines 294–296;
+`baseline_comparison.md` lines 231–232 and 320.
+
+V6.37 ignores the result of daily-lock `PositionClose` at 3399, giveback
+`PositionClose` at 7157 (then deletes the peak key at 7158), and several
+`OrderDelete` calls at 8639/8692/8704. These paths implement attempts, not
+verified force-closes/closures/cleanup. The audit partly admits this at line
+118, making the remaining “closed outright,” “force-close,” and “genuinely
+enforced” wording internally inconsistent.
+
+### B21 — Two material persistence/fail-open risks remain uncatalogued
+
+**Locations:** `baseline_v637_audit.md` lines 18 and 52/159.
+
+- `HasHTFLevelNear` returns `true` when no H4 levels or ATR are available at
+  7392–7393. `FindSRZone` then passes the hard H4-confluence requirement and
+  awards the positive confluence bonus at 5107–5111. Missing data is treated
+  as affirmative confluence, not merely “not punished.”
+- The locked-range keys at 7169–7177 contain only symbol and magic, while the
+  stored range depends on configurable timeframe/depth/range settings. A
+  settings change can reload a range produced under older semantics until a
+  later break/reset. The persistence discussion does not disclose that
+  configuration-staleness risk.
+
+## C. V8.11 source and audit findings
+
+### C1 — The underwater `RiskBudgetCash` equation still omits the zero clamp
+
+**Location:** `baseline_v811_audit.md` line 102.
+
+For shipped defaults and `E>0`, source 1509–1513 gives
+`RiskBudgetCash/E = 0.01 × max(0, 1 − 0.2B/E)` in the `B>E` branch. The
+document omits `max(0,...)`; its displayed expression becomes negative below
+`E=0.2B`, while the source remains zero for every `E<=0.2B`. The boundary
+prose is right, but the equation is not. Independent checks: `B=100`,
+`E=80/50/25` yields 0.75%/0.60%/0.20% of equity and 2%-cap ratios
+2.6667×/3.3333×/10×; `E<=20` yields zero.
+
+### C2 — Sweep/shift lookback and final-stop formulas are incomplete
+
+**Location:** `baseline_v811_audit.md` line 25.
+
+Source 1008–1012 scans
+`4..min(copied-2,4+max(10,InpSweepLookback))` inclusively (31 pool bars at
+default 30). Source 1036–1049 scans
+`2..min(copied-2,2+max(3,InpShiftLookback))` inclusively (7 micro bars at
+default 6), not simply “the following 6 bars.” The eventual stop at 1292–1310
+also adds spread, applies an ATR floor, rejects an over-cap distance,
+normalizes, and recomputes distance; if the floor fires, it rebuilds the stop
+from entry rather than retaining the raw sweep extreme plus buffer.
+
+### C3 — Six threshold formulas omit their source-enforced floors
+
+**Locations:** `baseline_v811_audit.md` lines 29, 37, 47, 75, 77, and 81.
+
+- Cluster tolerance is `atr*MathMax(0.05,InpClusterTolATR)` at source 608.
+- FVG minimum is
+  `MathMax(3*_Point,atr*MathMax(0.03,InpFVGMinGapATR))` at 830.
+- Pin wick uses `2*MathMax(Body,_Point)` at 1707/1714.
+- Effective BE threshold is `MathMax(0.3,InpBasketBreakEvenAtR)` at 1426.
+- Trail start/step are `MathMax(0.5,InpTrailStartR)` and
+  `MathMax(0.2,InpTrailStepR)` at 1438/1440.
+- Giveback arm/floor are `MathMax(0.3,InpGivebackArmR)` and
+  `MathMax(0.0,InpGivebackFloorR)` at 1448–1449.
+
+The stated defaults happen to exceed these floors, but the claims are written
+as general configurable-input formulas.
+
+### C4 — The manual news times recur daily, and midnight is mishandled
+
+**Locations:** `baseline_v811_audit.md` line 110;
+`baseline_comparison.md` lines 249–253.
+
+Source 2339–2344 begins with the current date and replaces its hour/minute, so
+every configured `HH:MM` recurs every calendar day. What is absent is
+date-, weekday-, and event-specific scheduling, not recurrence. Because the
+event is always built on the current date, before/after windows crossing
+midnight are truncated. Audit line 110 also ends by saying blank/“invalid”
+times provide no protection, reintroducing the overclaim corrected earlier in
+the same paragraph: only empty, under-four-character, and colonless strings
+are rejected; other malformed colon-containing strings are coerced and may
+create a wrong window.
+
+### C5 — Final scores are live-dynamic even though outcome learning is absent
+
+**Locations:** `baseline_v811_audit.md` line 114;
+`baseline_comparison.md` lines 280–281.
+
+It is correct that there is no journal/outcome-feedback learning and base
+scores are input constants. It is false that “all scoring” is static: live
+sweep/touch/bias bonuses occur at 1088–1120, refined-OB/bias bonuses at 1164,
+FVG bias at 1205, momentum strength/bias at 2257–2278, and OB/momentum
+confluence at 922–945. Say fixed non-learning base scores with live evidence
+bonuses.
+
+### C6 — Risk wording still confuses nominal, modeled, and per-leg amounts
+
+**Locations:** `baseline_v811_audit.md` lines 7 and 122, plus summary row 9 at
+219.
+
+Line 122 calls the comparison a “sized 1% budget”; source 1505–1514 produces
+0.8% of equity for `E>=B`, less when `B>E>0.2B`, and zero at/below `0.2B`,
+apart from the minimum-lot exception. “Nominal 1% input” is accurate. Its
+claim that spike-prone synthetics are the exact class guarded by
+`DirectionAllowed` is also too broad: source 1616–1628 recognizes boom/crash
+substrings and broker long-/short-only modes, not all synthetic or spike-prone
+instruments.
+
+The approximately 0.4%-per-leg figure at lines 7/219 additionally requires a
+viable two-leg normal split. Source 1328–1347 can reduce the requested default
+to one leg; that one normal leg receives approximately 0.8%, and fallback can
+differ further. This exposes a source-comment contradiction the audit omits:
+header line 19 and group line 71 say 2–4 positions, while `LegsForScore`
+1276–1280 and sizing 1328–1347 permit one.
+
+### C7 — Status and execution wording still claims outcomes not established
+
+**Locations:** `baseline_v811_audit.md` lines 71, 75, and 81.
+
+- Line 71 calls `g_last_action` “printed/journaled.” V8.11 has no journal.
+  Source 1394–1398 sets it, conditionally prints it, and source 2111 displays
+  it on the dashboard.
+- Line 75 says `ManageBasket` “moves all legs” to BE, and line 81 says the
+  giveback path closes the basket. `MoveBasketStops` and `CloseBasket` ignore
+  `CTrade` results at 1467–1500; source 1431 marks BE done even if every stop
+  modification failed. These are modification/close attempts.
+
+The same stale outcome language remains in comparison lines 231–232/320 and
+task line 45 (“hard 45-minute time exit”), despite the detailed audit correctly
+describing the time exit as an unchecked attempt.
+
+### C8 — The round-12 additions were not carried into the audit summary
+
+**Location:** `baseline_v811_audit.md` summary table, lines 209–225.
+
+The table omits the requested-price R/BE/trail defect from line 66, the
+truncated-magic/account-unspecified peak-DD key collision from line 98, and the
+partial-submission wrong-TP status from line 71. Summary row 3 also omits the
+four-week-without-access expiry qualification now present in body line 97.
+The response says these findings were added; the document's own contradictions
+summary should not silently drop them.
+
+### C9 — The document's “no correctness claims” statement is literally false
+
+**Locations:** `baseline_v811_audit.md` lines 126 and 227;
+`baseline_comparison.md` lines 78 and 215;
+`TASK-001_BASELINE_AUDIT.md` lines 557–569.
+
+The audit explicitly says “the core math is correct,” while its closing line
+says no correctness claim is made anywhere. The comparison repeats the claim,
+and the task says no rejection criterion occurred. Narrow this to “no blanket
+EA/runtime correctness claim”; a limited modeled-math conclusion must itself
+carry the requested-fill, rounding, submission-success, and slippage conditions
+in D4.
+
+### C10 — Two further visual/state contradictions are absent
+
+**Locations:** the range/visual discussion in `baseline_v811_audit.md` around
+lines 29 and 146–150, and the startup discussion at line 7.
+
+- Source comment 463 says `g_range_start` is the older boundary origin, but
+  line 464 assigns a fixed lookback-bar time; `FindClusterBoundary` returns no
+  origin. The strong/weak scan at 472–480 is also not restricted to bars after
+  the selected boundary formed, so an older wick can mark a newly selected
+  boundary “Strong.”
+- `OnInit` line 279 hard-codes 0.60–1.40 stops and two legs as well as the
+  already-noted 0.5% figure, despite configurable inputs at 72–74/90–92.
+  Dashboard line 2020 hard-codes `H1`/`M30` labels despite configurable
+  `InpBiasTF`/`InpDirectionTF` at 50–51. These messages can misstate a valid
+  operator configuration.
+
+## D. Remaining comparison-document drift
+
+### D1 — V8.11 SR is not “touch-count only”
+
+**Location:** `baseline_comparison.md` line 71.
+
+`FindClusterBoundary` ranks primarily by touch count, but source 644–652 uses
+distance to current price as a tie-breaker, 657–669 invalidates after two
+consecutive closes, and the function derives cluster width. “Touch-count only”
+is false.
+
+### D2 — The V8.11 peak-DD expiry correction is missing from comparison
+
+**Location:** `baseline_comparison.md` lines 119–138.
+
+The comparison describes `g_peak_dd` persistence outside Strategy Tester but
+omits the four-week-without-access terminal-global expiry now correctly stated
+in `baseline_v811_audit.md` line 97.
+
+### D3 — The cross-instance row denies awareness that exists
+
+**Location:** `baseline_comparison.md` line 218.
+
+Same-symbol/same-magic exposure is seen by `CountOurPositions` at V8.11 source
+1639–1653 and normally blocks a later basket at `OnTick` 307–308. The confirmed
+gap is different symbols regardless of magic, or the same symbol with different
+magic values. “No cross-instance awareness ... independent of magic” is too
+broad and contradicts the corrected individual audit.
+
+### D4 — Requested-fill correction is missing from comparison math/management
+
+**Locations:** `baseline_comparison.md` lines 78, 214–215, 226–230, and
+478–484.
+
+V8.11 sizes from requested entry-to-SL at source 1286–1330; submissions can
+fail at 1368–1383; actual fills are never read; and R/BE/trail/giveback use the
+requested basis at 1419–1445. The comparison should say modeled requested-basis
+risk, conditional on intended submissions succeeding and before volume
+rounding, fill differences, gaps, and slippage. Line 480 is specifically wrong
+to call 2.5× a cap on “realized risk”; the code caps modeled requested-price
+stop risk, while realized loss can exceed it.
+
+### D5 — Journal strengths omit the magic-isolation defect
+
+**Location:** `baseline_comparison.md` lines 274–279.
+
+V6.37's physical file is configurable/common, not intrinsically per-symbol,
+and restart replay filters only by symbol at source 3586–3589. The schema has
+no magic field. Same-symbol/different-magic instances sharing a filename learn
+from each other's historical rows. “Per-symbol scoped” needs “not per-magic
+isolated,” matching the corrected individual audit.
+
+### D6 — The restart section falsely says both EAs scan positions and orders
+
+**Location:** `baseline_comparison.md` lines 365–371.
+
+V6.37 source 605–607 calls `CountOurPositions`, which counts positions only.
+It does not count resting pending orders; that omission is part of the
+pending-pilot-before-fill behavior already documented elsewhere. V8.11 scans
+positions through its gate, but the blanket positions/orders claim does not
+hold for both EAs.
+
+### D7 — “H1/M30 direction + PD location only” is not V8.11's whole routing
+
+**Location:** `baseline_comparison.md` line 86.
+
+It is correct that V8.11 has no named regime classifier. “Only” is false:
+`OnTick` 325–344 also applies session, news, spread, and global expansion
+gates; `BuildBestSignal` 916–945 applies momentum/confluence; and individual
+builders have setup-specific gates. Retain the no-regime-classifier comparison
+without reducing all routing to two controls.
 
 ## Required disposition
 
-The “changes requested” disposition cannot be lifted.
-
-Before approval, the package should:
-
-1. correct the package-history contradictions and the 79f8e5a account from the actual diff;
-2. state complete EA-directory immutability, including IDENTITY.md, while retaining the separate evidence checks for screenshots and the set file;
-3. repair the V6.37 pilot-budget/state, journal magic-isolation, call-scope, classifier, and unsupported-concurrency claims;
-4. repair the V8.11 risk arithmetic, per-leg percentages, time-exit wording, parsing scope, persistence condition, fill-basis management, and cross-instance scope;
-5. propagate each correction consistently through the detailed audits, summary tables, comparison, Acceptance criteria, Files affected, Commit, and Reviewer-chain annotations as applicable.
-
-No file under 01_BASELINE was modified during this review, and I did not create a commit.
+The `changes requested` disposition **cannot be lifted**. No preserved baseline
+source should be edited. Correct the documentation and response-history record,
+propagate each correction through the individual-audit summaries, comparison,
+and canonical task file, then return the package for another independent
+review.

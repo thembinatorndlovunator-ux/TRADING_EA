@@ -68,7 +68,7 @@ behavior.
 | Capability | V6.37 | V8.11 |
 |---|---|---|
 | Fractal/swing detection | Yes — `IsSwingHigh/Low`, depth-configurable | Yes — `FindLastTwoSwings`, `InpSwingDepth` |
-| Support/resistance with touch-decay scoring | Yes — `FindSRZone` | Yes (simpler) — `FindClusterBoundary`, touch-count only |
+| Support/resistance with touch-decay scoring | Yes — `FindSRZone` | Yes (simpler) — `FindClusterBoundary`, ranked primarily by touch count but also using distance-to-price as a tie-breaker and consecutive-close invalidation (**"touch-count only" corrected, thirteenth-pass review**, source 644–669) |
 | BOS/CHoCH structural break detection | Yes — `AnalyzeStructure`, one consistent definition | Yes for `StructureTrend`/M30 direction, but **a second, disconnected definition** exists only for chart marks (`BuildStructureMarks`) — see "Contradictions and unresolved policy questions" |
 | Order blocks | Yes — M30, with SR confluence requirement | Yes — two-stage M15→M5 refinement, single shared accessor `ActiveOB()` |
 | FVG detection with "fresh/untouched, first-return-only" rule | Yes — enforced, verified | **Overstated, corrected in second-pass review** — partially enforced: touch scan omits the trigger bar and there is no persistent consumed-flag, so a cached gap can in principle be reconsidered on a later bar (see `baseline_v811_audit.md`'s "M5 FVG" section) |
@@ -83,7 +83,7 @@ behavior.
 | Drawdown lock | No dedicated equity-peak lock (giveback guard + daily limits instead) | Yes — but restart-vulnerable (see Contradictions) |
 | Baskets/trades-per-day cap | Daily money/percent limits only, no trade-count cap found | Yes — `InpMaxDayBaskets` |
 | Journal/learning system | Yes — CSV journal, per-strategy and per-strategy-per-regime win-rate adjustment | **None** — explicitly no journal files by design (header comment, verified by full-file grep for `FileOpen`) |
-| Regime classification feeding strategy routing | Yes — 3-way (Trending/Ranging/Volatile Expansion), used to block/bench setups | No regime classifier — routing is H1/M30 direction + PD location only |
+| Regime classification feeding strategy routing | Yes — 3-way (Trending/Ranging/Volatile Expansion), used to block/bench setups | No named regime classifier (**"routing is H1/M30 + PD location only" narrowed, thirteenth-pass review** — H1/M30 direction and PD location are real gates, but `OnTick` also applies session/news/spread/global-expansion gates at 325–344, `BuildBestSignal` applies momentum/confluence at 916–945, and individual builders carry their own setup-specific gates; "no regime classifier" holds, "only two controls" does not) |
 | News handling | Yes — NFP heuristic + synthetic-index bypass, both fragile (see Contradictions) | Manual `HH:MM` text windows only, off by default, no economic-calendar link at all |
 | Candlestick confirmation | Yes, embedded per-strategy | Yes — shared pin-bar/engulfing helpers reused across 4 setup builders |
 | Chart-pattern detection (double top, H&S, triangles, etc., per `CHART_PATTERN_SPEC.md`) | **Not present** | **Not present** |
@@ -125,8 +125,10 @@ behavior.
   is computed fresh each call from the restart-vulnerable `g_peak_balance`
   (`UpdateDrawdownGuard`, 2289–2296) — this is the gating value new baskets
   are checked against; `g_peak_dd` (display-only, persisted outside
-  Strategy Tester — **qualifier added in sixth-pass review**) is directly
-  derived from it, updated via `if(g_current_dd > g_peak_dd) g_peak_dd =
+  Strategy Tester — **qualifier added in sixth-pass review**, and even then
+  only until the terminal's four-week no-access global-variable expiry —
+  **added thirteenth-pass review**, matching the V811 audit's corrected
+  note) is directly derived from it, updated via `if(g_current_dd > g_peak_dd) g_peak_dd =
   g_current_dd` (2299–2301) — so `g_peak_dd` is the running maximum of
   `g_current_dd` readings, not an independent, unrelated figure. Separately,
   `RiskBudgetCash`'s `MathMax(0.0, equity - MathMax(balance,equity) *
@@ -211,11 +213,11 @@ correct classification individually.
 |---|---|---|
 | Base risk per trade | 1.0%–2.0% standing budget | 1.0% "total per basket" (nominal) |
 | Weak-sample risk *ceiling* (**"increase" corrected to "ceiling," eleventh-pass review — pilot always sizes at broker minimum lot, not scaled up; ratio corrected in twelfth-pass review**) | Looser ceiling only — pilot trade permitted up to 5.0% actual risk (the least-confirmed trade of a new trend) vs. the EA's implemented cash budget of ~0.8% (non-XAU) / ~0.2% (XAU) at shipped defaults — a 6.25×/25× ceiling, not "1–2% standing budget"/2.5–5× as earlier stated — but actual risk can be below the implemented budget since volume is always the broker minimum lot | No equivalent looser-ceiling-on-low-confidence path found |
-| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget when equity ≥ balance (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the implemented budget in that case; the ratio widens further if the account is underwater — **condition added, twelfth-pass review**) |
-| Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — correct when the split succeeds |
+| Minimum-lot fallback risk cap | Two different ceilings for what is the same situation depending on *why* min-lot was forced (pilot: 5.0%; ordinary min-lot-compatibility: 2.0%/0.30% gold) | One fallback path, reachable above the ~0.8% implemented budget when equity ≥ balance (not the nominal 1.0% input — **corrected, eleventh-pass review**), letting a single leg risk up to the 2.0% cap (up to ~2.5× the **modeled, requested-price-basis** budget in that case, not a cap on realized risk — **"realized risk" corrected to "modeled requested-basis risk," thirteenth-pass review**, since fills are never read back into the risk figures used, see finding #16; the ratio widens further if the account is underwater — **condition added, twelfth-pass review**) |
+| Add-on / multi-leg de-risking | `InpAddOnRiskFactor` (0.75×), sample-independent, always-on | Legs split the same fixed total-risk budget — modeled correctly when the split succeeds, **conditional on requested submissions succeeding, before volume rounding, fill differences, gaps, and slippage** (**qualifier added, thirteenth-pass review**) — see finding #16 |
 | Global stop/trailing behavior driven by a small sample | Yes — `OverallWinRate()` (min 8 trades, pooled across all strategies) adjusts stop width and trailing EA-wide | No equivalent global behavior-changing feedback (no journal at all) |
 | Drawdown lock persistence across restart | Not separately audited as a named "drawdown lock" (giveback guard + daily limits serve this role) | **Corrected in third-pass review** — gating variable's peak-balance reference resets to current balance on restart, which can *understate* current drawdown relative to the true historical peak (conditional on how much higher that prior peak was — not an unconditional reset to zero, since floating loss at restart still shows up) |
-| Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | None — `RiskBudgetCash` sizes off total account equity **and balance** (**"equity alone" corrected, eleventh-pass review**) per instance with no cross-instance awareness; this is independent of magic-number configuration, not conditioned on sharing one |
+| Cross-symbol / account-level exposure governance | **Corrected in second-pass review** — daily-limit P/L inputs (`GetTodayClosedProfit`/`GetOpenProfitForMagic`) are magic-wide, not symbol-scoped, to begin with; `CloseAllOurPositions`'s position-closing loop shares that same magic-only scope while its sibling pending-order loop is the one that's actually symbol-scoped — the two loops disagree with each other, not "everything except one loop" | Partial — `RiskBudgetCash` sizes off total account equity **and balance** (**"equity alone" corrected, eleventh-pass review**) per instance with no cross-instance risk-budget awareness, but `CountOurPositions`/`OnTick`'s gate (1639–1653/307–308) *does* see same-symbol/same-magic exposure and normally blocks a second basket there (**"no cross-instance awareness ... independent of magic" narrowed, thirteenth-pass review**) — the actual gap is different symbols (any magic) or the same symbol with different magic numbers, not every instance pair |
 
 ## Exit-management differences
 
@@ -272,13 +274,22 @@ correct classification individually.
 ## Journal strengths
 
 - V6.37 has a real (if imperfect) learning journal: 44-column CSV, per-
-  symbol scoped, minimum-sample gating before adjusting scores, a bench-
+  symbol scoped **but not per-magic isolated** (**qualifier added,
+  thirteenth-pass review** — the physical file is configurable/common
+  rather than intrinsically per-symbol, restart replay filters only by
+  symbol at source 3586–3589, and the schema has no magic field, so
+  same-symbol/different-magic instances sharing a filename learn from each
+  other's historical rows — see the V6.37 audit's Journal memory section),
+  minimum-sample gating before adjusting scores, a bench-
   losing-strategies safety valve. Its "BestStrategySetup" column is
   corrupted by a data-integrity bug (stores a summary-of-summaries instead
   of the real setup name) — this does not affect the win/loss counters that
   actually drive score adjustment, only downstream analytics.
 - V8.11 has no journal at all, by design — nothing to corrupt, but also
-  nothing to learn from; all scoring is static per-input.
+  nothing to learn from outcome history; base scores are fixed per-input,
+  but several setups layer live, tick-dynamic market-evidence bonuses on
+  top (**"all scoring is static" corrected in thirteenth-pass review** —
+  see the V8.11 audit's "No journal-learning system" section).
 
 ## Failure modes (most operationally significant, both files)
 
@@ -367,8 +378,15 @@ disposition: changes requested, now integrated into both audit documents).
    signal/deal identity or reliably reconciles ambiguous submissions across
    a restart — this is narrower than "duplicate-signal protection is
    runtime-only": both files *do* scan existing positions/orders before
-   entering (V637: 605–607; V811: `CountOurPositions` gate, see each
-   audit), so many but not all duplicate scenarios are already caught. Both
+   entering — **"positions/orders" corrected to "positions" for V637
+   specifically, thirteenth-pass review**: V637's `CountOurPositions` call
+   (605–607) counts open positions only, not resting pending orders (this
+   is the same gap the V637 audit's pilot-state section documents — a
+   pending OB-limit order isn't counted, so it can't block a duplicate
+   entry the way an open position does); V811's `CountOurPositions` gate
+   (see its own audit) does cover its equivalent position check — so many
+   but not all duplicate scenarios are already caught, and less so for
+   V637's pending-order case specifically. Both
    EAs' RSI wrappers fall back to `50` on a read failure, but **the effect
    is EA-specific, not a shared blanket behavior — corrected in fourth-pass
    review after an earlier draft wrongly generalized V637's behavior to

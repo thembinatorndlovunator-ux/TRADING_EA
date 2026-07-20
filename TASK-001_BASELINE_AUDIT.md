@@ -226,13 +226,21 @@ tenth-pass fix resolved correctly to this commit): `baseline_v637_audit.md`,
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md`. Did
 **not** touch `TASKS.md` or any `01_BASELINE/` path.
 
-**Modified in the twelfth correction pass** (hash not embedded here —
+**Modified in the twelfth correction commit `ce9f712`** (**hash filled in
+now that it exists, thirteenth-pass review**): `baseline_v637_audit.md`,
+`baseline_v811_audit.md`, `baseline_comparison.md`,
+`TASK-001_BASELINE_AUDIT.md`, overwrote
+`09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and added
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`. Did
+**not** touch `TASKS.md` or any `01_BASELINE/` path.
+
+**Modified in the thirteenth correction pass** (hash not embedded here —
 unknowable at authoring time; durable locator — see the first commit after
-`a0f4ac3` in `git log --oneline claude/task-001-baseline-audit`):
+`ce9f712` in `git log --oneline claude/task-001-baseline-audit`):
 `baseline_v637_audit.md`, `baseline_v811_audit.md`, `baseline_comparison.md`,
 `TASK-001_BASELINE_AUDIT.md`, overwriting
 `09_HANDOVERS/codex_to_claude/TASK-001_review.md` in place, and adding new
-file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`.
+file `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md`.
 Not touching `TASKS.md` or any `01_BASELINE/` path.
 
 **Precision correction, third-pass review, evidence-per-artifact separated in fifth-pass review (scope of the EA-directory diffs corrected in twelfth-pass review — they verify each entire tracked EA directory, not only the `.mq5` file within it):** the claim "no file
@@ -360,14 +368,17 @@ integrity:
       Three consecutive rounds (four, five, six) tried to independently
       restate this same status in the Acceptance/Reviewer/Final-Decision/
       `TASKS.md` sections and each time produced prose that disagreed in
-      tense or detail — not because the underlying facts were unclear, but
-      because four independently-written paraphrases of the same fact drift
-      from each other. As of this round, Reviewer and Final Decision below
+      tense or detail. **Causal claim narrowed in thirteenth-pass review:**
+      Git evidence establishes that the status prose drifted across those
+      sections each round; it does not establish *why* — "not because the
+      underlying facts were unclear, but because paraphrases drift" is an
+      attributed process account, not something Git history proves. As of
+      this round, Reviewer and Final Decision below
       no longer restate this status — they point here. `TASKS.md`'s one-line
       ledger entry is intentionally terse and generic rather than
       attempting to mirror this level of detail, for the same reason.
 
-      **Status:** twelve review passes so far, all returning changes requested
+      **Status:** thirteen review passes so far, all returning changes requested
       (**"each narrower than the last" removed as a blanket claim in
       eleventh-pass review; the replacement "passes 1–9 narrowed
       progressively" and "round 10 was the first full package sweep" claims
@@ -482,7 +493,10 @@ integrity:
         the round-11 canonical status itself mislocated it — see the
         round-11 response for the complete mapping) → addressed in
         `a0f4ac3`.
-      - Pass 12 (another open-ended full package sweep, 26 findings across
+      - Pass 12 (another open-ended full package sweep, **28 labeled
+        findings handled in 26 response bullets/actions — "26 findings"
+        corrected in thirteenth-pass review; A1/A2 shared one response
+        bullet and A6 was acknowledged without a separate edit** — across
         package/Git history, V6.37 source, and V8.11 source: two package-
         history findings this canonical status made about itself — both
         passes 10 and 11 called "first" to sweep broadly, and an unsupported
@@ -532,8 +546,42 @@ integrity:
         number to `int` and omits an account/server identifier, risking
         collisions; and a new finding that a partial-leg-submission status
         message can print the wrong TP rung — see the round-12 response for
-        the complete mapping) → **applied in the current symbolic
-        correction commit; pending review**.
+        the complete mapping) → addressed in `ce9f712`.
+      - Pass 13 (45 labeled findings from a large open-ended sweep spanning
+        package/Git history (A1–A7), V6.37 source/consistency (B1–B21),
+        V8.11 source/consistency (C1–C10), and comparison-document drift
+        (D1–D7) — most severely, a **sign-error defect** in
+        `ApplyLearningToScore`'s base and regime penalty branches that
+        boosts, rather than penalizes, a strategy with win rate above 50%
+        but net loss; also: an unapplied trendline-count fix from round 12,
+        a pilot mechanism reclassified as a symbol/magic-scoped staging
+        mode rather than an identity-tracked single-pilot guarantee, several
+        V637 gate/mechanism mischaracterizations (self-confirmed-bypass
+        self-contradiction, multiple live BOS/CHoCH definitions, an M30
+        order-block "untouched first return" gap, an OB-integration
+        H1-gating gap, unchecked `OrderDelete`/`PositionClose` results, a
+        fail-open add-on spacing check, a settled (not hypothesized)
+        profit-lock/giveback ordering question, historical-target
+        mechanism/timing corrections, NFP/RangeCycle pipeline bypass
+        corrections, a signal-family count ambiguity, a reintroduced
+        classifier-vocabulary overclaim, a fractal-depth contradiction
+        retargeted to its actual source, an `HasHTFLevelNear` fail-open
+        gap, a locked-range configuration-staleness gap, and a new
+        market-entry R-management requested-vs-actual-price mixing finding
+        (the V637 analogue of the V811 fill-basis defect); several V811
+        formula/wording corrections (a missing zero-clamp in the displayed
+        underwater formula, a per-leg/two-leg-viability condition, a
+        news-window daily-recurrence and midnight-truncation finding, a
+        corrected live-dynamic-scoring characterization, softened
+        close/modify-result-code wording, three new findings propagated
+        into the summary table that had been added to the body but not the
+        table, and a narrowed "no correctness claim" closing statement);
+        and several comparison-document corrections (SR touch-count,
+        peak-DD expiry, cross-instance exposure scope, requested-fill risk
+        wording, journal magic-isolation, a restart positions/orders
+        overclaim, and a routing-completeness overclaim) — see the
+        round-13 response for the complete mapping) → **applied in the
+        current symbolic correction commit; pending review**.
 
       **Overclaim corrected in tenth-pass review:** the BLOCKER (V6.37's
       completed-candle violation in `IsBullishInsideFalseBreak`/
@@ -555,7 +603,10 @@ integrity:
 ## Rejection criteria
 
 This task would be rejected if: any **preserved** `01_BASELINE/` artifact
-(either `.mq5` file, the set file, or any of the 13 screenshots) were
+(either `.mq5` file, either `IDENTITY.md`, the set file, or any of the 13
+screenshots — **`IDENTITY.md` added in thirteenth-pass review, was
+previously omitted from this enumeration despite being part of the same
+preserved evidence set documented elsewhere in this file**) were
 modified — **narrowed in fifth-pass review**: the literal, unqualified
 criterion "any `01_BASELINE/` file were modified" is not what this task
 actually rejects on, and taken literally would be triggered by this task's
@@ -633,6 +684,14 @@ addressing Codex's actual review content, not a dedicated hash-recording
 follow-up, even though it's also listed below). For the actual current
 tip, run `git log --oneline claude/task-001-baseline-audit`.**
 
+**Wording note, thirteenth-pass review:** entries below describing pass N's
+review as "narrower"/"narrower still" than the *immediately preceding* pass
+describe that one specific transition, verified from that round's own
+comparison — they are not a claim that passes 2 through 9 collectively
+formed a monotonic narrowing trend (the Acceptance criteria section above
+already corrects that broader claim; passes 10–12 explicitly returned to
+broad sweeps, breaking any such trend even if one had held through pass 9).
+
 1. `c61903f` — initial deliverables commit (9 files — see "Files
    affected"), including two new files added under `01_BASELINE/`
    (`inventory.md`, `screenshots/visual_notes.md` — new audit
@@ -681,7 +740,11 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
    exists in history — the symbolic-reference approach applies only to
    describing the commit currently being made, not to past commits, which
    can and should just be cited directly**), responding to Codex's fourth
-   review. Touched the same documents plus `01_BASELINE/inventory.md` (see
+   review. **References, per the canonical path list stated above in
+   "Files affected" (eight paths, including the overwritten
+   `09_HANDOVERS/codex_to_claude/TASK-001_review.md` — cross-reference
+   added in thirteenth-pass review, this entry previously named neither the
+   review file nor pointed explicitly to that list).** Touched the same documents plus `01_BASELINE/inventory.md` (see
    Baseline-behaviour section above for why this one preserved-directory
    file needed a correction) and added
    `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round4.md`.
@@ -810,23 +873,37 @@ tip, run `git log --oneline claude/task-001-baseline-audit`.**
     reclassification, the configurable-magic-number correction, the V8.11
     time-exit caveats, the news-time distinction, the canonical-status pass
     tracking, and the Files-affected/Commit path consistency) but its own
-    26-item open sweep found further errors spanning package/Git history
+    28-finding open sweep (**"26-item" corrected in thirteenth-pass
+    review**) found further errors spanning package/Git history
     and both EA audits — see Acceptance criteria pass 12 below for the
     complete list).
-15. Twelfth correction-pass commit (hash not embedded here — unknowable at
-    authoring time; durable locator — see the first commit after `a0f4ac3`
-    in `git log --oneline claude/task-001-baseline-audit`) — responding to
-    this twelfth review. This entry likewise references, rather than
-    restates, the twelfth-pass path list already stated above in "Files
-    affected."
+15. Twelfth correction-pass commit, `ce9f712` (**hash filled in now that it
+    exists, thirteenth-pass review**) — responding to the twelfth review.
+    This entry references, rather than restates, the twelfth-pass path
+    list already stated above in "Files affected." Reviewed by Codex a
+    thirteenth time; disposition **changes requested a thirteenth time**
+    (a large open-ended sweep — 45 labeled findings across package/Git
+    history and both EA audits, including a high-severity sign-error
+    defect in the base/regime learning-penalty formula that boosts rather
+    than penalizes a losing-but-high-win-rate strategy — see Acceptance
+    criteria pass 13 below for the summary).
+16. Thirteenth correction-pass commit (hash not embedded here — unknowable
+    at authoring time; durable locator — see the first commit after
+    `ce9f712` in `git log --oneline claude/task-001-baseline-audit`) —
+    responding to this thirteenth review. This entry likewise references,
+    rather than restates, the thirteenth-pass path list already stated
+    above in "Files affected."
 
 **Precision correction, third-pass review, per-artifact evidence separated in fifth-pass review:** "no file under `01_BASELINE/` is
 touched by any commit in this history" was inaccurate as stated — see the
 identical correction and its full reasoning under "Files affected" above.
 The accurate, verified claim is that the *preserved baseline artifacts* are
 unmodified by every commit above, evidenced separately per artifact type:
-both `.mq5` files via scoped `git diff <tag> -- 01_BASELINE/EA_V637` /
-`-- 01_BASELINE/EA_V811` (empty throughout); the set file via SHA-256 and
+both complete EA directories (each `.mq5` file **and** its `IDENTITY.md` —
+**identity files added to this enumeration in thirteenth-pass review**) via
+scoped `git diff <tag> -- 01_BASELINE/EA_V637` /
+`-- 01_BASELINE/EA_V811` (empty throughout, directory-scoped so both
+tracked files in each directory are covered); the set file via SHA-256 and
 Git blob-ID equality (see Evidence section); all 13 screenshots via
 individually recorded SHA-256 hashes in `inventory.md`. Separately,
 `01_BASELINE/inventory.md` and `01_BASELINE/screenshots/visual_notes.md`
@@ -856,7 +933,8 @@ each subsequent pass) →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round9.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round10.md` →
 `09_HANDOVERS/claude_to_codex/TASK-001_review_response_round11.md` →
-`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md`
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round12.md` →
+`09_HANDOVERS/claude_to_codex/TASK-001_review_response_round13.md`
 (**chain corrected in tenth-pass review to actually include round 9 —
 Codex's tenth review found this chain still ending at round 8 despite
 `acb8e45` already having added the round-9 response file, which directly
@@ -868,7 +946,13 @@ now exists, per the eighth-pass structural fix above; round 11's filename
 to past in twelfth-pass review**, since that commit (`a0f4ac3`) now exists —
 the eleventh-pass fix corrected round 10's tense but repeated the same
 self-expiring wording for round 11, which the twelfth review caught; round
-12's filename is stated now, before its own commit exists, for the same
+12's filename **was** likewise predeclared before its commit existed —
+**tense corrected to past in thirteenth-pass review, since that commit
+(`ce9f712`) now exists** — this same self-expiring-wording gap recurred a
+third time (round 10 fixed by round 11, round 11 fixed by round 12, round
+12 now fixed by round 13), confirming this is a structural pattern in how
+this annotation gets written each round, not an isolated slip; round 13's
+filename is stated now, before its own commit exists, for the same
 reason**).
 
 ## Final decision
