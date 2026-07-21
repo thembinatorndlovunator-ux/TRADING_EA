@@ -328,9 +328,141 @@ built for Codex's strict-auditor role per the user's own stated hybrid
 workflow** — see `09_HANDOVERS/claude_to_codex/TASK-028_handover.md` for
 exactly what to stress-test (edge cases, security, leakage risks).
 
+## Implementation notes (Claude, part 2 of N — completes the 9 scripts + 10 notebooks)
+
+Parts 2 through 7 of this implementation (commits on
+`claude/task-028-python-statistical-lab` after the part-1 commit above)
+completed all nine required scripts, added one bonus module closing a
+different task's deferred item, and built all ten required notebooks.
+
+### Scripts completed (all 9, each with its own test file)
+
+2. **`calculate_mfe_mae.py`** — per-trade MFE/MAE from bar high/low data
+   (`trade_math.py`'s `compute_mfe_mae`/`compute_r_multiple`, the latter a
+   direct port of `ExitManager.mqh`'s `EM_ComputeR`).
+3. **`analyse_giveback.py`** — offline simulation of both
+   `ExitManager.mqh` giveback-guard models (`exit_simulation.py`, ported
+   and cross-checked against the exact same hand-verified cases as
+   `Test_ExitManager.mq5`) against historical bar-close R paths — never
+   controls or wires to live trading.
+4. **`analyse_baseline.py`** — aggregate win rate/expectancy/profit
+   factor/max drawdown (`metrics.py`'s new `compute_max_drawdown`) over a
+   normalized trade-export CSV.
+5. **`join_news_events.py`** — independently recomputes `NEWS_BLACKOUT`
+   status per journal decision against a news-events export; directly
+   useful since every real journal record's `news_state` is currently
+   always empty.
+6. **`walk_forward.py`** — deterministic rolling train/test window
+   generation (`generate_windows`, hand-traced) and per-window win-rate/
+   expectancy stability metrics.
+7. **`monte_carlo.py`** — seeded bootstrap resampling of a trade P/L
+   sequence for final-equity/max-drawdown/ruin-probability distributions;
+   explicitly documents the i.i.d.-resampling simplification (no
+   trade-sequence autocorrelation).
+8. **`pattern_validation.py`** — Python ports of 4 of
+   `CandlestickPatternEngine.mqh`'s 18 pattern functions (bullish/bearish
+   pin bar incl. TASK-017's fix, bullish/bearish engulfing); explicitly
+   partial, and cross-checking against a real MQL5-exported
+   detector-results CSV is not yet possible (no such export exists).
+9. **`compare_releases.py`** — two-sample bootstrap CI on the win-rate/
+   expectancy difference between two releases; never declares a release
+   "better" automatically. Its own test suite incidentally demonstrates
+   the reproducibility contract's "tiny samples cannot drive automatic
+   changes" principle directly (a 4-trade-per-group stark gap correctly
+   fails to reach significance; a 20-trade-per-group version of the same
+   gap does).
+
+**Bonus, beyond the 9-minimum list:** `regime_validation.py` — a Python
+port of `MarketRegimeEngine.mqh`'s (TASK-016) classification formula,
+closing that task's own deferred "regime fixtures/confusion matrix" item.
+Accepts `swing_agreement`/`direction_agree` as caller-supplied inputs
+rather than re-implementing `MarketStructure.mqh`'s bias computation —
+validates the regime-selection FORMULA, not the structure module. All 7
+directly-computed regime states reproduced against synthetic fixtures.
+
+**Consolidation:** the `_parse_is_long` CSV-field parser, duplicated
+across 4 scripts by part 1's end, was factored into
+`analysis.csv_io.parse_is_long` and all call sites updated.
+
+### All 10 required notebooks built and EXECUTED FOR REAL
+
+Every notebook was run via `jupyter execute` against a registered kernel
+(`themba-python-lab`) — not hand-simulated — with every in-notebook
+`assert` passing (confirmed via each notebook's own real exit code, not
+merely "no exception printed"). Each is a thin wrapper (per the
+reproducibility contract's rule 1) around its paired script, using
+clearly-labelled synthetic fixtures reused from that script's own
+hand-verified test cases, with a closing "Real-data run: PENDING"
+section per rule 7:
+
+1. `01_baseline_trade_audit.ipynb` → `analyse_baseline.py`
+2. `02_profit_giveback_analysis.ipynb` → `analyse_giveback.py`
+3. `03_strategy_regime_analysis.ipynb` → `regime_validation.py`
+4. `04_session_and_news_analysis.ipynb` → `join_news_events.py`
+5. `05_mfe_mae_exit_analysis.ipynb` → `calculate_mfe_mae.py`
+6. `06_parameter_stability.ipynb` → `walk_forward.py` (stability framing)
+7. `07_walk_forward_analysis.ipynb` → `walk_forward.py` (split-mechanics framing)
+8. `08_monte_carlo_risk.ipynb` → `monte_carlo.py`
+9. `09_pattern_detector_validation.ipynb` → `pattern_validation.py`
+10. `10_baseline_vs_candidate.ipynb` → `compare_releases.py`
+
+(`00_journal_pipeline_demo.ipynb` from part 1 remains a non-required demo
+of the paired-notebook pattern, not one of these ten.)
+
+### What is still genuinely NOT done (explicit, not glossed over)
+
+- **No real evidence data anywhere.** Every script and notebook operates
+  on synthetic fixtures. Zero real MT5 trade exports, zero real news-event
+  exports, zero real MQL5-exported pattern-detector results, and zero
+  real journal files (the live EA's own runtime verification remains
+  batched per TASK-025/027) exist in this project yet. Every "Real-data
+  run: PENDING" note across all 11 notebooks is the honest, current state.
+- **Deferred validation from the original spec, still open:** score-
+  component correlation analysis (TASK-024's deferred item) has no
+  dedicated module yet. Candlestick/chart-pattern validation is only
+  4-of-18 patterns deep, and chart patterns (double top/bottom,
+  head-and-shoulders) are not ported at all.
+- **`03_SOURCE_CODE/Python/news_connectors/`** remains empty — no
+  offline/cached adapter built (would need an agreed news-event export
+  format from the MQL5 side first).
+- **`08_RESULTS/python_reports/`** not created — nothing has been run
+  against real data.
+- **A future MT5-export-bridging task** is needed before any script here
+  can run against real broker data — every script's own docstring states
+  the normalized CSV schema it expects and why no real export exists yet
+  to derive it from.
+- **Offline-learning / ONNX work** (master-prompt Phase 9's optional
+  ML track) is untouched, per the task's own explicit Out of scope
+  statement — correctly not started.
+
+## Commands run (parts 2-7, additive to part 1's)
+
+```
+# (same venv from part 1)
+cd 03_SOURCE_CODE/Python
+../../.venv/Scripts/python.exe -m pytest -v          # 196 passed
+../../.venv/Scripts/python.exe -m jupyter execute --kernel_name=themba-python-lab notebooks/<NN>_*.ipynb --output=/tmp/exec_<NN>.ipynb   # x10, all exit 0
+```
+
+## Test results (parts 2-7)
+
+**Real, verified.** `196 passed` via `pytest -v` (up from 70 at the end
+of part 1). All 10 required notebooks executed successfully via `jupyter
+execute` against a real registered kernel, confirmed via each notebook's
+own process exit code (not merely absence of a printed traceback) — every
+in-notebook `assert` (hand-verified numeric expectations, matching the
+corresponding pytest cases) passed.
+
 ## Final decision
 
-**IN PROGRESS — foundation + 1 of 9 scripts complete and tested with real
-evidence; 0 of 10 notebooks (1 non-required demo notebook built and
-executed for real); remaining 8 scripts and 10 notebooks explicitly
-backlogged as follow-up work, not silently claimed done.**
+**9 of 9 required scripts complete and tested (196 tests, all passing
+with real evidence). All 10 required notebooks built, paired to their
+scripts, and executed for real from a clean kernel. One bonus module
+(`regime_validation.py`) closes TASK-016's deferred confusion-matrix
+item.** Genuinely remaining: an MT5-export-bridging task (no real data
+exists anywhere in this project yet), score-correlation analysis
+(TASK-024's deferred item), the other 14 of 18 candlestick/chart
+patterns, `news_connectors/`, and — as with every MQL5 task in this
+project — real-world runtime confirmation, still batched. Ready for
+Codex's strict-auditor pass per the user's stated hybrid workflow (see
+`09_HANDOVERS/claude_to_codex/TASK-028_handover.md`).

@@ -106,3 +106,69 @@ New: `03_SOURCE_CODE/Python/` (full tree: `analysis/`, `data_collection/`,
 (Claude's implementation-notes addendum), `TASKS.md`, `requirements.txt`
 (added `pytest`, `nbformat`, `nbclient`, `ipykernel`). No file under
 `01_BASELINE/` touched. No MQL5 file touched.
+
+---
+
+## UPDATE — all 9 scripts + 10 notebooks now complete (parts 2-7)
+
+Everything below this line was added in later commits on this same
+branch, after the initial handover above (which only covered part 1:
+the shared foundation + `join_trade_journal.py`). The audit points above
+still apply to those first modules; this section adds what to check in
+the newer ones.
+
+**What's new:** `calculate_mfe_mae.py`, `analyse_giveback.py`,
+`analyse_baseline.py`, `join_news_events.py`, `walk_forward.py`,
+`monte_carlo.py`, `pattern_validation.py`, `compare_releases.py` (all 9
+required scripts now exist), plus a bonus `regime_validation.py`
+(closes TASK-016's deferred confusion-matrix item), plus all 10 required
+notebooks (each executed for real via `jupyter execute`, not
+hand-simulated). 196 tests total, all passing. Full detail in
+`TASK-028_PYTHON_STATISTICAL_LAB.md`'s "Implementation notes (Claude,
+part 2 of N)" section.
+
+### Additional things to audit, be adversarial
+
+1. **The `exit_simulation.py` ports (V637/V811 giveback models)** — these
+   are safety-adjacent (they inform whether a not-yet-enabled MQL5
+   feature should ever be enabled). Independently re-derive the algebra
+   in `should_giveback_close_v637`/`v811` against `ExitManager.mqh`'s
+   actual source, don't just trust that the hand-verified test cases
+   were copied correctly.
+2. **The sign convention in `analyse_giveback.py`'s `r_diff`** — Claude's
+   own working caught and fixed a sign-flip bug here mid-session (the
+   first draft computed `actual_final_r - trigger_r` instead of
+   `trigger_r - actual_final_r`, inverting the meaning of "the guard
+   would have helped"). Confirm the FINAL code and its tests are
+   internally consistent — this is exactly the kind of subtle,
+   easy-to-miss error a strict second reviewer should specifically hunt
+   for elsewhere in this codebase too.
+3. **`pattern_validation.py`'s array-index convention** — it deliberately
+   uses the MQL5 "index 0 = newest" convention, opposite of a typical
+   ascending-time DataFrame. Confirm no caller (now or in a future
+   notebook) accidentally passes chronologically-ascending arrays
+   without reversing them first — this would silently invert which bar
+   is "current" vs "prior" in every pattern check.
+4. **`regime_validation.py`'s scope-narrowing** — confirm the claim that
+   accepting `swing_agreement`/`direction_agree` as inputs (rather than
+   computing them from `MarketStructure.mqh`-equivalent logic) is
+   clearly and honestly flagged everywhere it matters, not quietly
+   presented as a full regime-engine validation.
+5. **`compare_releases.py`'s two-sample bootstrap independence claim** —
+   confirm that deriving the candidate stream's seed as `seed + 1` (not
+   a second independently-chosen seed) is actually sufficient to avoid
+   correlated draws between the two resampling streams; if you know a
+   reason this specific derivation could still correlate them, that
+   would be a valuable find.
+6. **Every notebook's synthetic fixture matches its script's own test
+   fixture "by eye" copy-paste** — confirm none of the 10 notebooks
+   silently drifted from the numbers actually verified in the
+   corresponding `tests/test_*.py` file (a copy-paste transcription slip
+   between a notebook and its test file would be easy to miss without
+   deliberately diffing them).
+7. **Compile/run evidence:** re-run
+   `cd 03_SOURCE_CODE/Python && pytest -v` yourself and independently
+   re-execute at least a few notebooks via
+   `jupyter execute --kernel_name=<your kernel> notebooks/<NN>_*.ipynb`
+   to confirm Claude's claimed "196 passed" and "all 10 notebooks exit 0"
+   are real, not just asserted in the task file.
