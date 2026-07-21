@@ -23,6 +23,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-013 | Phase 4 detection engines: SupportResistance (SR zones, equal-high/low liquidity) | `claude/task-013-support-resistance` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-013_SUPPORT_RESISTANCE.md` |
 | TASK-014 | Phase 4 detection engines: CandlestickPatternEngine (full section-5 pattern set) | `claude/task-014-candlestick-pattern-engine` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-014_CANDLESTICK_PATTERN_ENGINE.md` |
 | TASK-015 | Phase 4 detection engines: ICTSMCGeometry (FVG, order blocks, liquidity sweeps, premium/discount) | `claude/task-015-ict-smc-geometry` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-015_ICT_SMC_GEOMETRY.md` |
+| TASK-016 | Phase 4 detection engines: MarketRegimeEngine (nine-state classifier, corrected confidence formula) | `claude/task-016-market-regime-engine` | In progress — compiled clean (real evidence); array-based core hand-verifiable (reproduces spec's own extreme-value checks), live-symbol wrapper batched | 2026-07-21 | `TASK-016_MARKET_REGIME_ENGINE.md` |
 
 ## Status legend
 
