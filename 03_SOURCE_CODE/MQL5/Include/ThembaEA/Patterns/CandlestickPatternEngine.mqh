@@ -18,16 +18,27 @@
 //| required by whichever strategy consumes a pattern; this module only  |
 //| detects the pattern itself.                                          |
 //|                                                                    |
-//| Not yet cross-checked against the deeper reference material in       |
-//| `EA Files/Candlestick Bible.pdf` (kept local-only per                |
-//| SOURCE_LIBRARY.md's copyright rule) — a stated scope boundary, not   |
-//| an oversight, same as MarketStructure.mqh's SMC cross-check gap.     |
+//| Cross-checked against `EA Files/Candlestick Bible.pdf` (kept          |
+//| local-only per SOURCE_LIBRARY.md's copyright rule) during TASK-016's  |
+//| session — one gap found and fixed: the source states the pin-bar/     |
+//| hammer/shooting-star shadow "should be twice the length of the real   |
+//| body" (a wick-to-body ratio >= 2.0), which section 5 itself named as  |
+//| a valid alternative cross-check but which the pin-bar predicates      |
+//| never actually applied — CP_PIN_BAR_MIN_WICK_TO_BODY below closes     |
+//| that gap. Morning/evening star's overlap-based check (this file)      |
+//| deliberately replaces the source's strict "gapped up/down on the      |
+//| open" requirement — FX/CFD/synthetic instruments rarely gap between   |
+//| bars intraday the way the stock-market-oriented source material       |
+//| assumes, so a strict gap requirement would make the pattern           |
+//| essentially undetectable on this project's actual instruments; this   |
+//| divergence is deliberate, not an oversight.                           |
 //+------------------------------------------------------------------+
 #property strict
 
 #include "../Structure/SwingEngine.mqh"
 
 #define CP_BODY_EPSILON 0.00001
+#define CP_PIN_BAR_MIN_WICK_TO_BODY 2.0
 
 //+------------------------------------------------------------------+
 //| Base measurements                                                  |
@@ -144,6 +155,7 @@ bool CP_IsBullishPinBarArray(const double &opens[], const double &highs[],
    if(m.lower_wick_ratio < min_lower_wick_ratio) return false;
    if(m.body_ratio > max_body_ratio) return false;
    if(m.upper_wick_ratio > max_opposite_wick_ratio) return false;
+   if(m.lower_wick_to_body < CP_PIN_BAR_MIN_WICK_TO_BODY) return false;
 
    double close_position = (closes[k] - lows[k]) / (highs[k] - lows[k]);
    if(close_position < 0.60) // upper 40% of range
@@ -169,6 +181,7 @@ bool CP_IsBearishPinBarArray(const double &opens[], const double &highs[],
    if(m.upper_wick_ratio < min_upper_wick_ratio) return false;
    if(m.body_ratio > max_body_ratio) return false;
    if(m.lower_wick_ratio > max_opposite_wick_ratio) return false;
+   if(m.upper_wick_to_body < CP_PIN_BAR_MIN_WICK_TO_BODY) return false;
 
    double close_position = (closes[k] - lows[k]) / (highs[k] - lows[k]);
    if(close_position > 0.40) // lower 40% of range
