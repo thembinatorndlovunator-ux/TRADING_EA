@@ -17,6 +17,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-007 | Phase 3 common core: RiskManager (core risk-math functions) | `claude/task-007-risk-manager` | In progress — compiled clean (real evidence); runtime logic-test confirmation batched | 2026-07-21 | `TASK-007_RISK_MANAGER.md` |
 | TASK-008 | Phase 3 common core: DailyWeeklyLimits + EquityPeakManager + DrawdownController | `claude/task-008-daily-weekly-limits` | In progress — compiled clean (real evidence); runtime logic-test confirmation batched | 2026-07-21 | `TASK-008_DAILY_WEEKLY_LIMITS.md` |
 | TASK-009 | Phase 3 common core: DecisionJournal (TRADE_DECISION_SCHEMA.json serialization) | `claude/task-009-decision-journal` | In progress — compiled clean (real evidence); runtime logic-test confirmation batched | 2026-07-21 | `TASK-009_DECISION_JOURNAL.md` |
+| TASK-010 | Phase 3 common core: IntradayCloseManager (intraday boundary close) — completes Phase 3 | `claude/task-010-intraday-close-manager` | In progress — compiled clean (real evidence); runtime test batched, requires deliberate demo run (real trading actions) | 2026-07-21 | `TASK-010_INTRADAY_CLOSE_MANAGER.md` |
 
 ## Status legend
 
