@@ -8,6 +8,7 @@ import pytest
 
 from analysis.csv_io import CsvSchemaError
 from analysis.join_news_events import main, run
+from analysis.time_utils import TimezoneValidationError
 from tests.conftest import make_valid_record
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -194,3 +195,83 @@ def test_cli_main_missing_journal_dir(tmp_path, capsys):
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_duplicate_event_id_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {"event_id": "dup", "event_name": "NFP", "currency": "USD", "importance": 2,
+             "scheduled_utc": "2026-07-21T14:10:00Z"},
+            {"event_id": "dup", "event_name": "NFP revision", "currency": "USD", "importance": 2,
+             "scheduled_utc": "2026-07-21T14:10:00Z"},
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_non_finite_importance_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": float("nan"),
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_naive_news_timestamp_rejected(tmp_path):
+    """Regression for a Codex review finding: pd.to_datetime(utc=True)
+    silently accepted a naive news-event timestamp as UTC."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00"}],  # no "Z"
+    )
+    with pytest.raises(TimezoneValidationError):
+        run(tmp_path, news_path)
+
+
+def test_output_path_colliding_with_input_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path, output_csv=news_path)
+
+
+def test_dataset_hash_includes_journal_files_not_just_news(tmp_path):
+    """Regression for a Codex review finding: the reported dataset hash
+    previously covered only news_events_csv, so a changed journal file
+    would go undetected even though it directly affects the join result."""
+
+    _write_journal(tmp_path, [make_valid_record(signal_id="a")])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    summary_json_a = tmp_path / "out_a" / "summary.json"
+    run(tmp_path, news_path, summary_json=summary_json_a, currency="USD", repo_path=REPO_ROOT)
+    hash_a = json.loads(summary_json_a.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
+
+    # Change the JOURNAL only (not the news file) and confirm the hash changes.
+    _write_journal(tmp_path, [make_valid_record(signal_id="b")])
+    summary_json_b = tmp_path / "out_b" / "summary.json"
+    run(tmp_path, news_path, summary_json=summary_json_b, currency="USD", repo_path=REPO_ROOT)
+    hash_b = json.loads(summary_json_b.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
+
+    assert hash_a != hash_b

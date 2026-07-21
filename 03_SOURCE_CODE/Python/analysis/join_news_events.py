@@ -41,8 +41,9 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, read_csv_with_required_columns
+from analysis.csv_io import CsvSchemaError, assert_finite_columns, assert_unique_ids, read_csv_with_required_columns
 from analysis.report_metadata import build_report_metadata
+from analysis.time_utils import TimezoneValidationError, parse_utc_series
 from data_collection.journal_reader import read_journal_directory, to_dataframe
 
 REQUIRED_NEWS_COLUMNS = {"event_id", "event_name", "currency", "importance", "scheduled_utc"}
@@ -89,12 +90,18 @@ def run(
     default (a caller should supply the traded symbol's actual quote/base
     currency whenever it's known)."""
 
+    for out_path in (output_csv, summary_json):
+        if out_path is not None and out_path.resolve() in (journal_dir.resolve(), news_events_csv.resolve()):
+            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+
     read_result = read_journal_directory(journal_dir)
     decisions_df = to_dataframe(read_result.valid_records)
 
     news = read_csv_with_required_columns(news_events_csv, REQUIRED_NEWS_COLUMNS)
+    assert_unique_ids(news, "event_id", news_events_csv)
+    assert_finite_columns(news, ["importance"], news_events_csv)
     news = news.copy()
-    news["scheduled_utc"] = pd.to_datetime(news["scheduled_utc"], utc=True, errors="raise")
+    news["scheduled_utc"] = parse_utc_series(news["scheduled_utc"])
     news = news[news["importance"] >= min_importance]
     if currency is not None:
         news = news[news["currency"] == currency]
@@ -118,8 +125,16 @@ def run(
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
+        # Hash BOTH the news export AND every journal file that
+        # contributed a decision to the join -- a Codex review finding:
+        # this previously hashed only news_events_csv, so the reported
+        # dataset identity could not identify or reproduce the actual
+        # joined dataset (a changed/replaced journal file would go
+        # undetected).
+        journal_files = sorted(journal_dir.glob("decisions_*.jsonl"))
+        dataset_paths = [news_events_csv, *journal_files] if journal_files else [news_events_csv]
         metadata = build_report_metadata(
-            [news_events_csv], symbol=currency, random_seed=seed, repo_path=repo_path
+            dataset_paths, currency=currency, random_seed=seed, repo_path=repo_path
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -135,7 +150,7 @@ def run(
                 "min_importance": min_importance,
             },
         }
-        summary_json.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        summary_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
 
     return NewsJoinResult(
         joined=joined,
@@ -173,7 +188,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             min_importance=args.min_importance,
             seed=args.seed,
         )
-    except (FileNotFoundError, CsvSchemaError) as exc:
+    except (FileNotFoundError, CsvSchemaError, TimezoneValidationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
