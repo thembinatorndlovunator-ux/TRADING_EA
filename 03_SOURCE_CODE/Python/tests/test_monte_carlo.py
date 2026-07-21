@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from analysis.csv_io import CsvSchemaError
+from analysis.metrics import InsufficientSampleError
+from analysis.monte_carlo import main, run, run_monte_carlo
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+# --- run_monte_carlo ---------------------------------------------------------
+
+
+def test_empty_pnl_raises():
+    with pytest.raises(InsufficientSampleError):
+        run_monte_carlo([], n_resamples=10, seed=1)
+
+
+def test_non_positive_n_resamples_raises():
+    with pytest.raises(ValueError):
+        run_monte_carlo([1.0, 2.0], n_resamples=0, seed=1)
+
+
+def test_confidence_out_of_range_raises():
+    with pytest.raises(ValueError):
+        run_monte_carlo([1.0, 2.0], n_resamples=10, seed=1, confidence=1.5)
+
+
+def test_zero_variance_pnl_collapses_exactly():
+    """Every resample of identical P/L values produces the exact same
+    equity curve regardless of draw order -- an exact, deterministic-by-
+    construction property, not a randomized coincidence."""
+
+    result = run_monte_carlo([10.0] * 4, n_resamples=50, seed=7, starting_equity=100.0)
+    assert result.final_equity_mean == pytest.approx(140.0)
+    assert result.final_equity_ci_lower == pytest.approx(140.0)
+    assert result.final_equity_ci_upper == pytest.approx(140.0)
+    assert result.max_drawdown_pct_mean == pytest.approx(0.0)
+    assert result.n_trades == 4
+    assert result.n_resamples == 50
+    assert result.seed == 7
+
+
+def test_deterministic_given_same_seed():
+    pnl = [10.0, -5.0, 20.0, -15.0, 8.0]
+    a = run_monte_carlo(pnl, n_resamples=300, seed=42, starting_equity=100.0)
+    b = run_monte_carlo(pnl, n_resamples=300, seed=42, starting_equity=100.0)
+    assert a == b
+
+
+def test_different_seed_can_differ():
+    pnl = [10.0, -5.0, 20.0, -15.0, 8.0]
+    a = run_monte_carlo(pnl, n_resamples=300, seed=1, starting_equity=100.0)
+    b = run_monte_carlo(pnl, n_resamples=300, seed=2, starting_equity=100.0)
+    assert a != b
+
+
+def test_ruin_threshold_none_gives_none_prob_ruin():
+    result = run_monte_carlo([10.0, -5.0], n_resamples=20, seed=1, ruin_threshold=None)
+    assert result.prob_ruin is None
+    assert result.ruin_threshold is None
+
+
+def test_ruin_threshold_reachable_gives_positive_probability():
+    # A big enough loss relative to starting equity makes ruin reachable
+    # on any resample that draws it early; with 500 resamples of a
+    # 4-element pool, the chance of NEVER drawing it in a way that
+    # triggers ruin is negligible.
+    pnl = [-100.0, 50.0, 50.0, 50.0]
+    result = run_monte_carlo(pnl, n_resamples=500, seed=3, starting_equity=60.0, ruin_threshold=0.0)
+    assert result.prob_ruin is not None
+    assert 0.0 < result.prob_ruin <= 1.0
+
+
+def test_ruin_threshold_unreachable_gives_zero_probability():
+    pnl = [10.0, 20.0, 30.0]
+    result = run_monte_carlo(pnl, n_resamples=100, seed=1, starting_equity=1000.0, ruin_threshold=-1000.0)
+    assert result.prob_ruin == 0.0
+
+
+# --- run() (CSV wrapper) ------------------------------------------------------
+
+
+def test_missing_column_raises(tmp_path):
+    path = tmp_path / "trades.csv"
+    pd.DataFrame({"trade_id": ["t1"]}).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path, n_resamples=10, seed=1)
+
+
+def test_empty_trades_csv_raises(tmp_path):
+    path = tmp_path / "trades.csv"
+    pd.DataFrame(columns=["trade_id", "profit"]).to_csv(path, index=False)
+    with pytest.raises(InsufficientSampleError):
+        run(path, n_resamples=10, seed=1)
+
+
+def test_run_writes_output_json(tmp_path):
+    path = tmp_path / "trades.csv"
+    pd.DataFrame({"trade_id": ["t1", "t2", "t3"], "profit": [10.0, -5.0, 20.0]}).to_csv(path, index=False)
+    output_json = tmp_path / "out" / "mc.json"
+
+    result = run(path, n_resamples=50, seed=1, output_json=output_json, symbol="XAUUSD", repo_path=REPO_ROOT)
+
+    assert output_json.exists()
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["result"]["n_trades"] == 3
+    assert payload["metadata"]["symbol"] == "XAUUSD"
+    assert result.n_trades == 3
+
+
+def test_cli_main_success(tmp_path, capsys):
+    path = tmp_path / "trades.csv"
+    pd.DataFrame({"trade_id": ["t1", "t2"], "profit": [10.0, -5.0]}).to_csv(path, index=False)
+    exit_code = main(["--trades-csv", str(path), "--seed", "1", "--n-resamples", "20"])
+    assert exit_code == 0
+    assert "n_trades=2" in capsys.readouterr().out
+
+
+def test_cli_main_missing_file(tmp_path, capsys):
+    exit_code = main(["--trades-csv", str(tmp_path / "nope.csv"), "--seed", "1"])
+    assert exit_code == 1
+    assert "ERROR" in capsys.readouterr().err
