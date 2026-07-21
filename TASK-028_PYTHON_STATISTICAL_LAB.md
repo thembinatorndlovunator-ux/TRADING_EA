@@ -319,7 +319,9 @@ market_family/intraday_mode finding above.
 
 ## Commit
 
-Pending — see `git log` on `claude/task-028-python-statistical-lab`.
+9 commits on `claude/task-028-python-statistical-lab` (part 1 through the
+Codex-review remediation series ending `fffa9ad`) — see `git log` on that
+branch for the full list.
 
 ## Reviewer
 
@@ -373,12 +375,18 @@ different task's deferred item, and built all ten required notebooks.
    gap does).
 
 **Bonus, beyond the 9-minimum list:** `regime_validation.py` — a Python
-port of `MarketRegimeEngine.mqh`'s (TASK-016) classification formula,
-closing that task's own deferred "regime fixtures/confusion matrix" item.
+port of `MarketRegimeEngine.mqh`'s (TASK-016) classification formula.
 Accepts `swing_agreement`/`direction_agree` as caller-supplied inputs
 rather than re-implementing `MarketStructure.mqh`'s bias computation —
-validates the regime-selection FORMULA, not the structure module. All 7
-directly-computed regime states reproduced against synthetic fixtures.
+validates the regime-selection FORMULA, not the structure module. Only
+7 of the 9 states are directly-computed and reproduced against synthetic
+fixtures here (`NEWS_BLACKOUT`/`UNTRADEABLE_SPREAD_OR_LIQUIDITY` are
+gating overrides applied before this function, not ported). **This does
+NOT close TASK-016's deferred item** — full 9-state coverage, the
+gating/hysteresis logic, and a confusion matrix against real
+independently-labelled evidence are still open and are now tracked as
+`TASK-031_REGIME_VALIDATION_COMPLETION.md` (see Codex's TASK-028 review
+finding #1).
 
 **Consolidation:** the `_parse_is_long` CSV-field parser, duplicated
 across 4 scripts by part 1's end, was factored into
@@ -455,14 +463,45 @@ corresponding pytest cases) passed.
 
 ## Final decision
 
-**9 of 9 required scripts complete and tested (196 tests, all passing
-with real evidence). All 10 required notebooks built, paired to their
-scripts, and executed for real from a clean kernel. One bonus module
-(`regime_validation.py`) closes TASK-016's deferred confusion-matrix
-item.** Genuinely remaining: an MT5-export-bridging task (no real data
-exists anywhere in this project yet), score-correlation analysis
-(TASK-024's deferred item), the other 14 of 18 candlestick/chart
-patterns, `news_connectors/`, and — as with every MQL5 task in this
-project — real-world runtime confirmation, still batched. Ready for
-Codex's strict-auditor pass per the user's stated hybrid workflow (see
-`09_HANDOVERS/claude_to_codex/TASK-028_handover.md`).
+**9 of 9 required scripts complete and tested. All 10 required notebooks
+built, paired to their scripts, and executed for real from a clean
+kernel. One bonus module (`regime_validation.py`) partially addresses
+TASK-016's deferred item (7 of 9 states, formula-only, no gating/
+hysteresis, no confusion matrix against real evidence — full completion
+now tracked as `TASK-031_REGIME_VALIDATION_COMPLETION.md`).**
+
+## Implementation notes (Claude, part 3 of N — Codex review remediation)
+
+Codex's independent review (`09_HANDOVERS/codex_to_claude/TASK-028_review.md`,
+disposition CHANGES REQUESTED, 15 findings: 2 P0, 11 P1, 2 P2) was
+resolved across 8 remediation commits (`4d3db0f` and earlier through
+`fffa9ad`). Every P0/P1 finding got a real regression test reproducing
+the exact counterexample Codex found; every P2 finding was either fixed
+(environment pinning, ruff cleanup) or split into a numbered follow-up
+task (this section). Real re-verification after remediation:
+
+- `pytest -q` → **262 passed** (up from 196 pre-review).
+- `ruff check .` → **All checks passed** (0 findings, down from 19).
+- All 11 notebooks re-executed via
+  `jupyter execute --kernel_name=themba-python-lab`, all exit 0.
+
+Deferred deliverables Codex flagged as needing their own numbered tasks
+rather than staying an undifferentiated backlog bullet are now:
+
+- `TASK-031_REGIME_VALIDATION_COMPLETION.md` — full 9-state coverage,
+  gating/hysteresis, confusion matrix against real independently-labelled
+  evidence.
+- `TASK-032_SCORE_CORRELATION_ANALYSIS.md` — TASK-024's deferred
+  score-component correlation audit (BOS/displacement, pin-bar/wick, EMA
+  evidence correlation).
+- `TASK-033_PATTERN_VALIDATION_COMPLETION.md` — the remaining 14 of 18
+  candlestick patterns and all chart patterns (double top/bottom,
+  head-and-shoulders/inverse), cross-checked against real MQL5-exported
+  detector results.
+
+Genuinely still remaining beyond those three: an MT5-export-bridging
+task (no real data exists anywhere in this project yet), `news_connectors/`,
+and — as with every MQL5 task in this project — real-world runtime
+confirmation, still batched. Per Codex's own required disposition, a
+follow-up independent review round should be requested once the user is
+ready.
