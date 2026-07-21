@@ -30,6 +30,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-020 | Phase 5 strategy modules: SMCStrategy (order-block retest, sweep reversal, FVG return) | `claude/task-020-smc-ict-strategy` | In progress — compiled clean (real evidence); three regime-gated setups hand-verified incl. wrong-regime negatives; live-symbol wrapper batched | 2026-07-21 | `TASK-020_SMC_STRATEGY.md` |
 | TASK-021 | Phase 5 strategy modules: ChartPatternStrategy (trend-breakout-retest, range-boundary) | `claude/task-021-chart-pattern-strategy` | In progress — compiled clean (real evidence, 1 warning found+fixed); two setups hand-verified; live-symbol wrapper batched | 2026-07-21 | `TASK-021_CHART_PATTERN_STRATEGY.md` |
 | TASK-022 | Phase 5 strategy modules: TrendFollowingStrategy (trendline pullback, momentum continuation) | `claude/task-022-trend-following-strategy` | In progress — compiled clean (real evidence); fixes V6.37's two-anchor trendline defect; two setups hand-verified incl. invalid-trendline rejection; live-symbol wrapper batched | 2026-07-21 | `TASK-022_TREND_FOLLOWING_STRATEGY.md` |
+| TASK-023 | Phase 5 strategy modules: PostExpansionRetestStrategy — completes Phase 5's real strategy modules | `claude/task-023-post-expansion-retest-strategy` | In progress — compiled clean (real evidence); most speculative module (own formalization of a brief spec description); positive+4 negative cases hand-verified; live-symbol wrapper batched | 2026-07-21 | `TASK-023_POST_EXPANSION_RETEST_STRATEGY.md` |
 
 ## Status legend
 
