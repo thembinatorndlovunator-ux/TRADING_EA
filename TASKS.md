@@ -21,6 +21,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-011 | Phase 4 detection engines: SwingEngine (canonical confirmed-swing pivot predicate) — begins Phase 4 | `claude/task-011-swing-engine` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-011_SWING_ENGINE.md` |
 | TASK-012 | Phase 4 detection engines: MarketStructure (BOS/CHoCH, range, equilibrium) | `claude/task-012-market-structure` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-012_MARKET_STRUCTURE.md` |
 | TASK-013 | Phase 4 detection engines: SupportResistance (SR zones, equal-high/low liquidity) | `claude/task-013-support-resistance` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-013_SUPPORT_RESISTANCE.md` |
+| TASK-014 | Phase 4 detection engines: CandlestickPatternEngine (full section-5 pattern set) | `claude/task-014-candlestick-pattern-engine` | In progress — compiled clean (real evidence); array-based core hand-verifiable, live-symbol wrapper batched | 2026-07-21 | `TASK-014_CANDLESTICK_PATTERN_ENGINE.md` |
 
 ## Status legend
 
