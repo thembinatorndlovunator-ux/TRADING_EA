@@ -28,21 +28,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
-
 from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
+    assert_output_paths_distinct,
     assert_unique_ids,
+    assert_valid_stop_geometry,
     parse_is_long,
     read_csv_with_required_columns,
 )
 from analysis.metrics import InsufficientSampleError, compute_max_drawdown, expectancy, profit_factor, win_rate
-from analysis.report_metadata import build_report_metadata
+from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
 REQUIRED_COLUMNS = {
@@ -68,6 +70,8 @@ def run(
     symbol: Optional[str] = None,
     broker: Optional[str] = None,
     seed: Optional[int] = None,
+    ea_version: Optional[str] = None,
+    data_source: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
     """Reads 'trades_csv', computes the aggregate summary, and (if given)
@@ -84,13 +88,19 @@ def run(
     undefined otherwise -- see metrics.compute_max_drawdown).
     """
 
-    if starting_balance <= 0:
+    # **Fixed, 2026-07-22 Codex review finding:** `starting_balance <= 0`
+    # is False for NaN (every comparison against NaN is False in Python),
+    # so a NaN starting_balance previously passed this check and produced
+    # a NaN final balance with a plausible-looking 0.0 drawdown in memory
+    # instead of a visible error.
+    if not math.isfinite(starting_balance) or starting_balance <= 0:
         raise InsufficientSampleError(
-            f"analyse_baseline.run: starting_balance must be > 0, got {starting_balance}"
+            f"analyse_baseline.run: starting_balance must be a finite number > 0, got {starting_balance}"
         )
     for out_path in (output_json, per_trade_csv):
         if out_path is not None and out_path.resolve() == trades_csv.resolve():
             raise CsvSchemaError(f"output path {out_path} must not be the same as the input trades_csv")
+    assert_output_paths_distinct([output_json, per_trade_csv])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
@@ -100,8 +110,15 @@ def run(
 
     trades = trades.copy()
     trades["is_long"] = trades["is_long"].apply(parse_is_long)
-    trades["entry_time"] = pd.to_datetime(trades["entry_time"], utc=True, errors="raise")
-    trades["exit_time"] = pd.to_datetime(trades["exit_time"], utc=True, errors="raise")
+    # **Fixed, 2026-07-22 Codex review finding:** `pd.to_datetime(...,
+    # utc=True)` silently treats a naive string (no "Z"/offset) as if it
+    # were already UTC -- a direct probe with no "Z" or offset was
+    # accepted as a valid trade. `parse_utc_series` rejects any naive or
+    # non-UTC timestamp instead (already used by every other pipeline in
+    # this layer; this script had been missed).
+    trades["entry_time"] = parse_utc_series(trades["entry_time"])
+    trades["exit_time"] = parse_utc_series(trades["exit_time"])
+    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
             row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
@@ -110,7 +127,21 @@ def run(
     )
 
     trades_sorted = trades.sort_values("exit_time")
-    balance_curve = [starting_balance] + list(starting_balance + trades_sorted["profit"].cumsum())
+
+    # **Fixed, 2026-07-22 Codex review finding:** sorting only by
+    # exit_time leaves ties (multiple trades closing at the identical
+    # instant) in an ARBITRARY order (pandas' sort is stable against
+    # input row order, which is itself just CSV row order -- not a
+    # durable deal sequence). Reversing two same-time win/loss rows
+    # changed the independently observed max drawdown from 10.0% to
+    # ~9.09% with identical timestamps and net P/L. Since this schema has
+    # no durable intra-timestamp deal sequence field, same-instant P/L is
+    # now SUMMED into one balance step before computing drawdown -- the
+    # drawdown calculation no longer depends on an arbitrary tie-break
+    # order, though per-trade win-rate/expectancy below still use every
+    # individual row (order-independent statistics).
+    balance_steps = trades_sorted.groupby("exit_time", sort=True)["profit"].sum()
+    balance_curve = [starting_balance] + list(starting_balance + balance_steps.cumsum())
 
     profits = trades_sorted["profit"].tolist()
     r_multiples = trades_sorted["r_multiple"].tolist()
@@ -153,10 +184,11 @@ def run(
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv], symbol=symbol, broker=broker, random_seed=seed, repo_path=repo_path
+            [trades_csv], symbol=symbol, broker=broker, random_seed=seed,
+            ea_version=ea_version, data_source=data_source, repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
-        output_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     if per_trade_csv is not None:
         per_trade_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -174,6 +206,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--broker", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--ea-version", default=None)
+    parser.add_argument("--data-source", default=None)
     return parser
 
 
@@ -188,6 +222,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             symbol=args.symbol,
             broker=args.broker,
             seed=args.seed,
+            ea_version=args.ea_version,
+            data_source=args.data_source,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

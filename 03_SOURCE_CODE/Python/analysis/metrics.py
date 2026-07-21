@@ -22,6 +22,9 @@ class InsufficientSampleError(ValueError):
     """Raised when a metric is asked to summarize zero observations."""
 
 
+MIN_N_RESAMPLES = 100  # below this a percentile bootstrap CI is not a defensible estimate
+
+
 @dataclass(frozen=True)
 class WinRateResult:
     win_rate: float
@@ -36,7 +39,15 @@ class WinRateResult:
 class ExpectancyResult:
     expectancy: float
     n: int
-    std_dev: float
+    std_dev: float | None  # None when n < 2 -- spread is genuinely
+                           # unestimable from a single observation, never
+                           # reported as a false-precision 0.0 (Codex
+                           # review finding, 2026-07-22)
+    ci_lower: float | None  # bootstrap CI on the MEAN -- None when n < 2
+    ci_upper: float | None
+    confidence: float | None
+    n_resamples: int | None
+    seed: int | None
 
 
 @dataclass(frozen=True)
@@ -107,6 +118,54 @@ def wilson_confidence_interval(successes: int, n: int, confidence: float = 0.95)
     return max(0.0, lower), min(1.0, upper)
 
 
+@dataclass(frozen=True)
+class ProportionDiffResult:
+    diff: float  # p_a - p_b, on the actual observed proportions
+    ci_lower: float
+    ci_upper: float
+    likely_significant: bool  # True iff the CI excludes 0.0
+    n_a: int
+    n_b: int
+    confidence: float
+
+
+def wilson_diff_confidence_interval(
+    successes_a: int, n_a: int, successes_b: int, n_b: int, confidence: float = 0.95
+) -> ProportionDiffResult:
+    """Newcombe-Wilson hybrid score interval for the difference of two
+    INDEPENDENT binomial proportions (p_a - p_b) -- the standard
+    defensible interval for comparing two win rates, unlike resampling
+    the raw 0/1 outcomes with an empirical bootstrap.
+
+    **Added, 2026-07-22 Codex review finding:** bootstrapping a binary
+    0/1 outcome collapses at boundary samples -- ten all-loss vs. ten
+    all-win groups always returned a degenerate ``[1.0, 1.0]`` interval,
+    and two all-loss groups always returned ``[0.0, 0.0]``, neither of
+    which is a defensible sampling-uncertainty statement. This method
+    combines each group's own Wilson interval (already used elsewhere in
+    this module) via Newcombe's method:
+    ``lower = diff - sqrt((p_a-l_a)^2 + (u_b-p_b)^2)``,
+    ``upper = diff + sqrt((u_a-p_a)^2 + (p_b-l_b)^2)``.
+
+    Raises InsufficientSampleError if either n is 0.
+    """
+
+    l_a, u_a = wilson_confidence_interval(successes_a, n_a, confidence)
+    l_b, u_b = wilson_confidence_interval(successes_b, n_b, confidence)
+    p_a = successes_a / n_a
+    p_b = successes_b / n_b
+    diff = p_a - p_b
+
+    lower = diff - math.sqrt((p_a - l_a) ** 2 + (u_b - p_b) ** 2)
+    upper = diff + math.sqrt((u_a - p_a) ** 2 + (p_b - l_b) ** 2)
+
+    return ProportionDiffResult(
+        diff=diff, ci_lower=lower, ci_upper=upper,
+        likely_significant=(lower > 0.0 or upper < 0.0),
+        n_a=n_a, n_b=n_b, confidence=confidence,
+    )
+
+
 def _z_score(confidence: float) -> float:
     # Closed-form inverse-normal is not in the stdlib without scipy; this
     # project's requirements.txt already declares scipy, so use it directly
@@ -133,10 +192,21 @@ def win_rate(outcomes: Sequence[bool], confidence: float = 0.95) -> WinRateResul
     )
 
 
-def expectancy(pnl: Sequence[float]) -> ExpectancyResult:
-    """Mean P/L per trade, plus the sample standard deviation (population
-    std with ddof=1, i.e. the usual sample estimator) so a caller can judge
-    how noisy the mean is. Raises InsufficientSampleError if empty."""
+def expectancy(
+    pnl: Sequence[float], n_resamples: int = 2000, seed: int = 42, confidence: float = 0.95
+) -> ExpectancyResult:
+    """Mean P/L per trade, the sample standard deviation (ddof=1), and a
+    bootstrap confidence interval on the MEAN itself -- the actual
+    uncertainty-of-the-mean the reproducibility contract calls for, not
+    just sample dispersion (Codex review finding, 2026-07-22: reporting
+    dispersion alone, and reporting it as ``std_dev=0.0`` for a single
+    observation, both overstate what is actually known).
+
+    With n == 1, BOTH ``std_dev`` and the CI are ``None`` -- spread and
+    the mean's uncertainty are equally unestimable from one observation,
+    never reported as a false-precision zero. Raises
+    InsufficientSampleError only if empty (n == 1 is a valid, if
+    uncertainty-free, expectancy)."""
 
     n = len(pnl)
     if n == 0:
@@ -144,11 +214,20 @@ def expectancy(pnl: Sequence[float]) -> ExpectancyResult:
 
     mean = sum(pnl) / n
     if n == 1:
-        std_dev = 0.0  # a single observation has no estimable spread
-    else:
-        variance = sum((x - mean) ** 2 for x in pnl) / (n - 1)
-        std_dev = math.sqrt(variance)
-    return ExpectancyResult(expectancy=mean, n=n, std_dev=std_dev)
+        return ExpectancyResult(
+            expectancy=mean, n=n, std_dev=None, ci_lower=None, ci_upper=None,
+            confidence=None, n_resamples=None, seed=None,
+        )
+
+    variance = sum((x - mean) ** 2 for x in pnl) / (n - 1)
+    std_dev = math.sqrt(variance)
+    boot = bootstrap_confidence_interval(
+        pnl, statistic="mean", n_resamples=n_resamples, confidence=confidence, seed=seed
+    )
+    return ExpectancyResult(
+        expectancy=mean, n=n, std_dev=std_dev, ci_lower=boot.ci_lower, ci_upper=boot.ci_upper,
+        confidence=confidence, n_resamples=n_resamples, seed=seed,
+    )
 
 
 def profit_factor(pnl: Sequence[float]) -> ProfitFactorResult:
@@ -196,7 +275,12 @@ def bootstrap_confidence_interval(
     results (see resampling.seeded_bootstrap_indices).
 
     Raises InsufficientSampleError if data has fewer than 2 observations
-    (a bootstrap over 0 or 1 points cannot estimate any spread).
+    (a bootstrap over 0 or 1 points cannot estimate any spread). Raises
+    ValueError if 'confidence' is not in (0, 1), 'n_resamples' is below
+    ``MIN_N_RESAMPLES``, or 'data' contains a non-finite (NaN/inf) value
+    -- none of these were previously validated (Codex review finding,
+    2026-07-22): confidence 0 or 1 with a single resample previously
+    returned a degenerate interval instead of a visible error.
     """
 
     n = len(data)
@@ -204,10 +288,16 @@ def bootstrap_confidence_interval(
         raise InsufficientSampleError(f"bootstrap_confidence_interval: need n>=2, got {n}")
     if statistic not in ("mean", "median"):
         raise ValueError(f"statistic must be 'mean' or 'median', got {statistic!r}")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if n_resamples < MIN_N_RESAMPLES:
+        raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
 
     import numpy as np
 
     arr = np.asarray(data, dtype=float)
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("bootstrap_confidence_interval: data contains non-finite (NaN/inf) values")
     stat_fn = np.mean if statistic == "mean" else np.median
 
     resample_stats = np.empty(n_resamples, dtype=float)
@@ -244,11 +334,18 @@ def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
     Raises InsufficientSampleError if empty. Raises ValueError if the
     first value is not strictly positive -- percentage drawdown is
     undefined relative to a non-positive starting balance, so this must
-    be rejected rather than silently reported as 0%.
+    be rejected rather than silently reported as 0%. Raises ValueError if
+    ANY value (not just the first) is non-finite -- a NaN later in the
+    curve was previously silently skipped by every ``>`` comparison
+    (NaN comparisons are always False in Python), which could hide a real
+    drawdown entirely rather than surface the bad input (Codex review
+    finding, 2026-07-22).
     """
 
     if not balance_curve:
         raise InsufficientSampleError("compute_max_drawdown: empty balance curve")
+    if not all(math.isfinite(v) for v in balance_curve):
+        raise ValueError("compute_max_drawdown: balance_curve contains a non-finite (NaN/inf) value")
     if balance_curve[0] <= 0:
         raise ValueError(
             f"compute_max_drawdown: the first value ({balance_curve[0]!r}) must be > 0 -- "

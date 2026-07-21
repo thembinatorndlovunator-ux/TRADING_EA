@@ -41,12 +41,24 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, assert_finite_columns, assert_unique_ids, read_csv_with_required_columns
-from analysis.report_metadata import build_report_metadata
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_unique_ids,
+    read_csv_with_required_columns,
+    sanitize_for_csv,
+)
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import TimezoneValidationError, parse_utc_series
 from data_collection.journal_reader import read_journal_directory, to_dataframe
 
 REQUIRED_NEWS_COLUMNS = {"event_id", "event_name", "currency", "importance", "scheduled_utc"}
+# MT5CalendarProvider.mqh casts ENUM_CALENDAR_EVENT_IMPORTANCE directly to
+# int (0=none/low .. 3=high) -- see NewsManager.mqh's own SNewsEvent
+# docstring. A value outside this range cannot be a real MQL-sourced
+# importance and must be a visible schema failure, not silently accepted
+# as an unusually large/small ordinal.
+VALID_IMPORTANCE_VALUES = {0, 1, 2, 3}
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,8 @@ class NewsJoinResult:
     n_decisions: int
     n_news_events_considered: int
     n_in_blackout: int
+    n_parse_errors: int
+    n_validation_errors: int
 
 
 def _find_triggering_event(
@@ -73,6 +87,7 @@ def run(
     news_events_csv: Path,
     output_csv: Optional[Path] = None,
     summary_json: Optional[Path] = None,
+    errors_json: Optional[Path] = None,
     *,
     currency: Optional[str] = None,
     before_minutes: int = 15,
@@ -88,11 +103,55 @@ def run(
     If 'currency' is None, EVERY news event is considered regardless of
     its own currency field -- a documented fallback, not a recommended
     default (a caller should supply the traded symbol's actual quote/base
-    currency whenever it's known)."""
+    currency whenever it's known).
 
-    for out_path in (output_csv, summary_json):
-        if out_path is not None and out_path.resolve() in (journal_dir.resolve(), news_events_csv.resolve()):
+    **Fixed, 2026-07-22 Codex review finding:** this previously read ONLY
+    'valid_records', silently excluding every parse/schema failure from
+    the joined output with no row-level error artifact and a `main()`
+    that returned 0 regardless -- reachable in practice today, since the
+    live EA's `DJ_NewDecision` never sets `market_family`/`intraday_mode`
+    and the strict schema rejects both empty, meaning a REAL current-EA
+    journal directory previously produced a successful EMPTY CSV rather
+    than a visibly failing analysis. If 'errors_json' is given, every
+    parse/validation error is now written out row-by-row (matching
+    join_trade_journal.py's already-fixed pattern), and the CLI's exit
+    code reflects their presence.
+    """
+
+    resolved_journal_dir = journal_dir.resolve()
+    for out_path in (output_csv, summary_json, errors_json):
+        if out_path is None:
+            continue
+        if out_path.resolve() in (resolved_journal_dir, news_events_csv.resolve()):
             raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+        # **Fixed, 2026-07-22 Codex review finding:** an output written
+        # INSIDE journal_dir (even under a different name) could later be
+        # picked up by a SUBSEQUENT run's "decisions_*.jsonl" glob as if
+        # it were a real journal input, folding a derived output into its
+        # own future dataset hash. Outputs must live outside journal_dir
+        # entirely.
+        if out_path.resolve().parent == resolved_journal_dir:
+            raise CsvSchemaError(
+                f"output path {out_path} must not be written inside journal_dir "
+                f"({journal_dir}) -- it could be picked up as a journal input by a future run"
+            )
+    output_resolved = [p.resolve() for p in (output_csv, summary_json, errors_json) if p is not None]
+    if len(set(output_resolved)) != len(output_resolved):
+        raise CsvSchemaError("output_csv, summary_json, and errors_json must all be distinct paths")
+
+    # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
+    # previously computed AFTER read_journal_directory had already parsed
+    # every journal file -- hashing the journal files here, BEFORE
+    # parsing, narrows the window in which a concurrent append or a torn
+    # final line could make the reported hash describe different bytes
+    # than the ones actually analyzed. The resulting metadata is reused
+    # for both summary_json and errors_json below rather than recomputed
+    # (which would re-read the files a second time anyway).
+    journal_files = sorted(journal_dir.glob("decisions_*.jsonl"))
+    dataset_paths = [news_events_csv, *journal_files] if journal_files else [news_events_csv]
+    metadata = build_report_metadata(
+        dataset_paths, currency=currency, random_seed=seed, repo_path=repo_path
+    )
 
     read_result = read_journal_directory(journal_dir)
     decisions_df = to_dataframe(read_result.valid_records)
@@ -100,6 +159,15 @@ def run(
     news = read_csv_with_required_columns(news_events_csv, REQUIRED_NEWS_COLUMNS)
     assert_unique_ids(news, "event_id", news_events_csv)
     assert_finite_columns(news, ["importance"], news_events_csv)
+    # **Fixed, 2026-07-22 Codex review finding:** 'importance' was only
+    # checked for finiteness, not for matching the MQL integer enum's
+    # actual [0, 3] range.
+    bad_importance = news[~news["importance"].isin(VALID_IMPORTANCE_VALUES)]
+    if not bad_importance.empty:
+        raise CsvSchemaError(
+            f"{news_events_csv}: {len(bad_importance)} row(s) have an importance value outside "
+            f"{sorted(VALID_IMPORTANCE_VALUES)}: rows {bad_importance.index.tolist()}"
+        )
     news = news.copy()
     news["scheduled_utc"] = parse_utc_series(news["scheduled_utc"])
     news = news[news["importance"] >= min_importance]
@@ -121,21 +189,15 @@ def run(
 
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        joined.to_csv(output_csv, index=False)
+        # Sanitize caller-controlled journal strings against spreadsheet-
+        # formula injection before export -- same fix as join_trade_journal.py.
+        safe_joined = joined.copy()
+        for col in safe_joined.select_dtypes(include=["object", "str"]).columns:
+            safe_joined[col] = safe_joined[col].map(sanitize_for_csv)
+        safe_joined.to_csv(output_csv, index=False)
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
-        # Hash BOTH the news export AND every journal file that
-        # contributed a decision to the join -- a Codex review finding:
-        # this previously hashed only news_events_csv, so the reported
-        # dataset identity could not identify or reproduce the actual
-        # joined dataset (a changed/replaced journal file would go
-        # undetected).
-        journal_files = sorted(journal_dir.glob("decisions_*.jsonl"))
-        dataset_paths = [news_events_csv, *journal_files] if journal_files else [news_events_csv]
-        metadata = build_report_metadata(
-            dataset_paths, currency=currency, random_seed=seed, repo_path=repo_path
-        )
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -150,13 +212,41 @@ def run(
                 "min_importance": min_importance,
             },
         }
-        summary_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+
+    if errors_json is not None:
+        errors_json.parent.mkdir(parents=True, exist_ok=True)
+        error_payload = {
+            "metadata": metadata.to_dict(),
+            "summary": {
+                "n_valid_decisions": len(decisions_df),
+                "n_parse_errors": len(read_result.parse_errors),
+                "n_validation_errors": len(read_result.validation_errors),
+            },
+            "parse_errors": [
+                {
+                    "source_file": e.source_file, "line_number": e.line_number,
+                    "raw_line": e.raw_line, "error": e.error,
+                }
+                for e in read_result.parse_errors
+            ],
+            "validation_errors": [
+                {
+                    "source_file": e.source_file, "line_number": e.line_number,
+                    "raw_record": e.raw_record, "error": e.error,
+                }
+                for e in read_result.validation_errors
+            ],
+        }
+        atomic_write_text(errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False))
 
     return NewsJoinResult(
         joined=joined,
         n_decisions=len(decisions_df),
         n_news_events_considered=len(news),
         n_in_blackout=int(sum(in_blackout_flags)),
+        n_parse_errors=len(read_result.parse_errors),
+        n_validation_errors=len(read_result.validation_errors),
     )
 
 
@@ -166,6 +256,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--news-events-csv", required=True, type=Path)
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
+    parser.add_argument("--errors-json", type=Path, default=None)
     parser.add_argument("--currency", default=None)
     parser.add_argument("--before-minutes", type=int, default=15)
     parser.add_argument("--after-minutes", type=int, default=15)
@@ -182,6 +273,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             news_events_csv=args.news_events_csv,
             output_csv=args.output_csv,
             summary_json=args.summary_json,
+            errors_json=args.errors_json,
             currency=args.currency,
             before_minutes=args.before_minutes,
             after_minutes=args.after_minutes,
@@ -195,9 +287,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(
         f"join_news_events: {result.n_decisions} decisions, "
         f"{result.n_news_events_considered} news events considered, "
-        f"{result.n_in_blackout} in blackout."
+        f"{result.n_in_blackout} in blackout, "
+        f"{result.n_parse_errors} parse errors, {result.n_validation_errors} validation errors."
     )
-    return 0
+    return 1 if (result.n_parse_errors or result.n_validation_errors) else 0
 
 
 if __name__ == "__main__":

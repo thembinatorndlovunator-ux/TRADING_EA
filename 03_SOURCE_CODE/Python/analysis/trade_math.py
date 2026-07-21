@@ -40,7 +40,21 @@ class MfeMaeResult:
 class NoBarsInWindowError(ValueError):
     """Raised when a trade's [entry_time, exit_time] window has zero bars
     to compute MFE/MAE from -- never silently reported as 0.0 excursion,
-    since that would be indistinguishable from a genuinely flat trade."""
+    since that would be indistinguishable from a genuinely flat trade.
+
+    **Note:** since entry_time/exit_time alignment to an actual bar
+    timestamp is now REQUIRED (see compute_mfe_mae's own docstring,
+    Codex review finding 2026-07-22), this window can structurally never
+    be empty once alignment passes -- BarAlignmentError is what a caller
+    actually encounters for a misaligned or no-data case. This class is
+    kept as defensive dead code rather than removed, in case a future
+    change relaxes the alignment requirement."""
+
+
+class BarAlignmentError(ValueError):
+    """Raised when entry_time or exit_time does not exactly match a bar
+    timestamp present in the supplied bars -- see compute_mfe_mae's own
+    docstring for why this matters."""
 
 
 def compute_mfe_mae(
@@ -57,6 +71,25 @@ def compute_mfe_mae(
     caller's responsibility -- this function does not know about
     symbols). The window is inclusive of both entry_time and exit_time.
 
+    **Bar-timestamp convention, declared explicitly (Codex review
+    finding, 2026-07-22): 'timestamp' is the bar's OPEN time** (the
+    standard MT5 convention). Without this declared and enforced,
+    entry_time/exit_time could fall ANYWHERE inside a bar's true
+    [open, close) span -- the entry bar's full high/low could include
+    price action from before the trade actually opened, and the exit
+    bar's could include price action from after it actually closed
+    (look-ahead/measurement contamination, not a mere approximation).
+
+    **Alignment is now REQUIRED, not silently tolerated:** entry_time and
+    exit_time must each exactly match a bar timestamp present in
+    'bars' -- this bounds the residual approximation to "the single
+    entry/exit bar's full range may include some price action from
+    outside the trade's true open instant" (a known, documented
+    limitation that genuinely requires tick/sub-bar data to eliminate
+    entirely) rather than allowing UNBOUNDED misalignment across
+    multiple bars. Raises BarAlignmentError if either timestamp is not
+    an exact bar timestamp.
+
     Raises NoBarsInWindowError if no bar falls within the window -- a
     trade with a computable MFE/MAE of exactly 0.0 is different from a
     trade with no data at all, and the two must never be conflated.
@@ -64,6 +97,18 @@ def compute_mfe_mae(
 
     if entry_time > exit_time:
         raise ValueError(f"entry_time ({entry_time}) must not be after exit_time ({exit_time})")
+
+    bar_timestamps = set(bars["timestamp"])
+    if entry_time not in bar_timestamps:
+        raise BarAlignmentError(
+            f"trade_id={trade_id}: entry_time ({entry_time}) does not match any bar timestamp "
+            "(bar timestamps are bar-OPEN times -- see compute_mfe_mae's own docstring)"
+        )
+    if exit_time not in bar_timestamps:
+        raise BarAlignmentError(
+            f"trade_id={trade_id}: exit_time ({exit_time}) does not match any bar timestamp "
+            "(bar timestamps are bar-OPEN times -- see compute_mfe_mae's own docstring)"
+        )
 
     window = bars[(bars["timestamp"] >= entry_time) & (bars["timestamp"] <= exit_time)]
     if window.empty:

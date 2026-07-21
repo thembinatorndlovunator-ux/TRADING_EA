@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,13 +37,14 @@ import pandas as pd
 from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
+    assert_output_paths_distinct,
     assert_unique_ids,
     parse_is_long,
     read_csv_with_required_columns,
 )
 from analysis.exit_simulation import simulate_giveback_path
-from analysis.metrics import InsufficientSampleError, win_rate
-from analysis.report_metadata import build_report_metadata
+from analysis.metrics import InsufficientSampleError, bootstrap_confidence_interval, win_rate
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
@@ -90,9 +92,15 @@ def run(
     for out_path in (output_csv, summary_json):
         if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
             raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+    assert_output_paths_distinct([output_csv, summary_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
     bars = read_csv_with_required_columns(bars_csv, REQUIRED_BAR_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding:** a header-only (zero-row)
+    # trades.csv previously produced a "successful" empty run instead of a
+    # visible insufficient-sample failure.
+    if trades.empty:
+        raise CsvSchemaError(f"{trades_csv}: zero trade rows (header-only input)")
     assert_unique_ids(trades, "trade_id", trades_csv)
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["close"], bars_csv)
@@ -111,6 +119,16 @@ def run(
             exit_time = parse_iso8601_utc(str(row["exit_time"]))
             entry_price = float(row["entry_price"])
             stop_price = float(row["stop_price"])
+            if is_long and stop_price >= entry_price:
+                raise ValueError(
+                    f"trade_id={trade_id}: long trade stop_price ({stop_price}) must be below "
+                    f"entry_price ({entry_price})"
+                )
+            if not is_long and stop_price <= entry_price:
+                raise ValueError(
+                    f"trade_id={trade_id}: short trade stop_price ({stop_price}) must be above "
+                    f"entry_price ({entry_price})"
+                )
 
             symbol_bars = bars[
                 (bars["symbol"] == row["symbol"])
@@ -129,7 +147,15 @@ def run(
 
             has_exit_price = "exit_price" in trades.columns and pd.notna(row.get("exit_price"))
             if has_exit_price:
-                actual_final_r = compute_r_multiple(is_long, entry_price, stop_price, float(row["exit_price"]))
+                # **Fixed, 2026-07-22 Codex review finding:** the optional
+                # exit_price column was never checked for finiteness when
+                # populated -- `pd.notna(inf)` is True, so an infinite
+                # exit_price could reach compute_r_multiple and produce an
+                # infinite actual_final_r.
+                exit_price_val = float(row["exit_price"])
+                if not math.isfinite(exit_price_val):
+                    raise ValueError(f"trade_id={trade_id}: exit_price ({exit_price_val}) is not finite")
+                actual_final_r = compute_r_multiple(is_long, entry_price, stop_price, exit_price_val)
             else:
                 actual_final_r = r_path[-1]
 
@@ -177,24 +203,42 @@ def run(
         }
         for model in ("v637", "v811"):
             triggered = [c for c in comparisons if getattr(c, f"{model}_trigger_r") is not None]
-            summary[model] = {
+            # **Note (Codex review finding, 2026-07-22):** this mean is
+            # CONDITIONAL on this model's own trigger subset -- v637's and
+            # v811's triggered subsets are generally different trades, so
+            # this figure must never be read as a like-for-like comparison
+            # between the two models without accounting for that.
+            mean_r_diff = None
+            r_diff_ci_lower = None
+            r_diff_ci_upper = None
+            if triggered:
+                mean_r_diff = sum(getattr(c, f"{model}_r_diff") for c in triggered) / len(triggered)
+                # A bootstrap CI needs >= 2 observations; below that the
+                # mean is reported alone, per metrics.expectancy's own
+                # None-uncertainty convention for n < 2 (Codex review
+                # finding: this mean previously had NO interval at all).
+                if len(triggered) >= 2:
+                    r_diffs = [getattr(c, f"{model}_r_diff") for c in triggered]
+                    boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed or 42)
+                    r_diff_ci_lower = boot.ci_lower
+                    r_diff_ci_upper = boot.ci_upper
+            model_summary: dict = {
                 "n_triggered": len(triggered),
                 "n_not_triggered": len(comparisons) - len(triggered),
-                "mean_r_diff_when_triggered": (
-                    sum(getattr(c, f"{model}_r_diff") for c in triggered) / len(triggered)
-                    if triggered
-                    else None
-                ),
+                "mean_r_diff_when_triggered": mean_r_diff,
+                "mean_r_diff_when_triggered_ci_lower": r_diff_ci_lower,
+                "mean_r_diff_when_triggered_ci_upper": r_diff_ci_upper,
             }
             if triggered:
                 try:
                     wr = win_rate([getattr(c, f"{model}_r_diff") > 0.0 for c in triggered])
-                    summary[model]["guard_helped_rate"] = wr.win_rate
-                    summary[model]["guard_helped_rate_ci"] = [wr.ci_lower, wr.ci_upper]
-                    summary[model]["guard_helped_rate_n"] = wr.n
+                    model_summary["guard_helped_rate"] = wr.win_rate
+                    model_summary["guard_helped_rate_ci"] = [wr.ci_lower, wr.ci_upper]
+                    model_summary["guard_helped_rate_n"] = wr.n
                 except InsufficientSampleError:
                     pass
-        summary_json.write_text(json.dumps(summary, indent=2, default=str, allow_nan=False), encoding="utf-8")
+            summary[model] = model_summary
+        atomic_write_text(summary_json, json.dumps(summary, indent=2, default=str, allow_nan=False))
 
     return GivebackRunResult(comparisons=comparisons, row_errors=row_errors)
 

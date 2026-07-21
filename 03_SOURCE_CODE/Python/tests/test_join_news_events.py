@@ -225,6 +225,82 @@ def test_non_finite_importance_rejected(tmp_path):
         run(tmp_path, news_path)
 
 
+def test_importance_out_of_range_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): 'importance'
+    was only checked for finiteness, not for matching MT5's actual
+    ENUM_CALENDAR_EVENT_IMPORTANCE range ([0, 3])."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 5,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_invalid_journal_records_surfaced_not_silently_dropped(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): this script
+    previously read ONLY valid_records, silently excluding every parse/
+    schema failure from the joined output -- reachable in practice since
+    a real current-EA journal record fails schema validation on
+    market_family/intraday_mode (both always empty). A wholly-invalid
+    real journal directory must not silently produce a successful empty
+    analysis."""
+
+    bad_record = make_valid_record()
+    bad_record["market_family"] = ""  # matches the live EA's actual current output
+    _write_journal(tmp_path, [bad_record])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+
+    errors_json = tmp_path / "out" / "errors.json"
+    result = run(tmp_path, news_path, errors_json=errors_json)
+
+    assert result.n_decisions == 0  # the invalid record is correctly excluded from the JOIN
+    assert result.n_validation_errors == 1  # but it is NOT silently invisible
+    assert errors_json.exists()
+    payload = json.loads(errors_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["n_validation_errors"] == 1
+    assert len(payload["validation_errors"]) == 1
+
+
+def test_cli_reports_nonzero_exit_when_errors_present(tmp_path, capsys):
+    bad_record = make_valid_record()
+    bad_record["market_family"] = ""
+    _write_journal(tmp_path, [bad_record])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    exit_code = main(["--journal-dir", str(tmp_path), "--news-events-csv", str(news_path)])
+    assert exit_code == 1
+
+
+def test_output_inside_journal_dir_rejected(tmp_path):
+    """Regression for a Codex review finding: an output written INSIDE
+    journal_dir could later be picked up by a SUBSEQUENT run's own
+    "decisions_*.jsonl" glob as if it were a real journal input."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
+          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path, output_csv=tmp_path / "joined.csv")
+
+
 def test_naive_news_timestamp_rejected(tmp_path):
     """Regression for a Codex review finding: pd.to_datetime(utc=True)
     silently accepted a naive news-event timestamp as UTC."""

@@ -1,15 +1,26 @@
 # Pinned to the exact versions installed and tested against in the
-# TASK-028 development session (2026-07-21), Python 3.13.14, via
-# `.venv` at the repo root. A Codex review (2026-07-21, finding #14)
-# noted every dependency was previously unpinned with no lock file --
-# this is a first pass at reproducibility, not a full resolved lock
-# file (no `pip freeze` of the complete transitive closure is committed
-# here). Re-pin deliberately when a dependency is intentionally
-# upgraded; don't let it drift silently.
+# TASK-028 development session (2026-07-21/22), Python 3.13.14, via
+# `.venv` at the repo root. A Codex review (2026-07-21, finding #14;
+# reiterated 2026-07-22, finding #15) noted every dependency was
+# previously unpinned/under-declared with no resolved lock file -- this
+# file remains the direct-dependency pin list; the FULL resolved
+# transitive closure (every package actually installed, via a real
+# `pip freeze` in `03_SOURCE_CODE/Python/`) is now committed as
+# `03_SOURCE_CODE/Python/requirements-lock.txt`. Re-pin deliberately
+# when a dependency is intentionally upgraded; don't let it drift
+# silently.
 pandas==3.0.3
 numpy==2.5.1
 scipy==1.18.0
 pydantic==2.13.4
+
+# Quality gates -- installed and exercised for real (2026-07-22): ruff
+# 0.15.22 (linter), mypy 2.3.0 (type checker, `--ignore-missing-imports`,
+# `mypy analysis data_collection` -> "Success: no issues found in 23
+# source files"). Neither was previously declared here despite both
+# being used as claimed gates -- a Codex review finding.
+ruff==0.15.22
+mypy==2.3.0
 
 # Declared but NOT installed/exercised by any test in this session --
 # version numbers below are unverified lower bounds, not pins. Pin these
@@ -28,8 +39,8 @@ onnx>=1.15
 onnxruntime>=1.17
 skl2onnx>=1.16
 
-# Testing (TASK-028) -- installed and exercised (262 tests passing as of
-# the 2026-07-21 remediation commits).
+# Testing (TASK-028) -- installed and exercised (340 tests passing as of
+# the 2026-07-22 remediation commits).
 pytest==9.1.1
 
 # Lightweight notebook execution -- used to actually run paired notebooks

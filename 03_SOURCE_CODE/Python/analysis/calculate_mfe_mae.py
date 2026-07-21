@@ -34,13 +34,14 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_high_low_geometry,
+    assert_output_paths_distinct,
     assert_unique_ids,
     parse_is_long,
     read_csv_with_required_columns,
 )
-from analysis.report_metadata import build_report_metadata
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
-from analysis.trade_math import MfeMaeResult, NoBarsInWindowError, compute_mfe_mae
+from analysis.trade_math import BarAlignmentError, MfeMaeResult, NoBarsInWindowError, compute_mfe_mae
 
 TradesSchemaError = CsvSchemaError  # kept as a local alias for readability
                                      # at this script's own call sites
@@ -84,9 +85,16 @@ def run(
     for out_path in (output_csv, errors_json):
         if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
             raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+    assert_output_paths_distinct([output_csv, errors_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
     bars = read_csv_with_required_columns(bars_csv, REQUIRED_BAR_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding:** a header-only (zero-row)
+    # trades.csv previously produced a "successful" empty run (0 results,
+    # 0 row errors) instead of a visible insufficient-sample failure --
+    # indistinguishable from "every trade was valid and none had errors".
+    if trades.empty:
+        raise CsvSchemaError(f"{trades_csv}: zero trade rows (header-only input)")
     assert_unique_ids(trades, "trade_id", trades_csv)
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["high", "low"], bars_csv)
@@ -106,6 +114,20 @@ def run(
             exit_time = parse_iso8601_utc(str(row["exit_time"]))
             entry_price = float(row["entry_price"])
             stop_price = float(row["stop_price"])
+            # **Fixed, 2026-07-22 Codex review finding:** compute_r_multiple's
+            # (used inside compute_mfe_mae) live fail-safe silently returns
+            # 0R for malformed stop geometry rather than rejecting it --
+            # appropriate for a live guard, not for evidence cleaning.
+            if is_long and stop_price >= entry_price:
+                raise ValueError(
+                    f"trade_id={trade_id}: long trade stop_price ({stop_price}) must be below "
+                    f"entry_price ({entry_price})"
+                )
+            if not is_long and stop_price <= entry_price:
+                raise ValueError(
+                    f"trade_id={trade_id}: short trade stop_price ({stop_price}) must be above "
+                    f"entry_price ({entry_price})"
+                )
             symbol_bars = bars[bars["symbol"] == row["symbol"]]
 
             result = compute_mfe_mae(
@@ -118,7 +140,7 @@ def run(
                 bars=symbol_bars,
             )
             results.append(result)
-        except (ValueError, NoBarsInWindowError, KeyError) as exc:
+        except (ValueError, NoBarsInWindowError, BarAlignmentError, KeyError) as exc:
             row_errors.append({"trade_id": trade_id, "error": str(exc)})
 
     if output_csv is not None:
@@ -152,7 +174,7 @@ def run(
             },
             "row_errors": row_errors,
         }
-        errors_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(errors_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return MfeMaeRunResult(results=results, row_errors=row_errors)
 

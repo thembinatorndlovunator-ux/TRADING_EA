@@ -176,6 +176,26 @@ def test_utf8_bom_is_handled_transparently(tmp_path):
     assert result.parse_errors == []
 
 
+def test_duplicate_json_key_is_a_parse_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): json.loads'
+    default last-value-wins semantics for a duplicate object key meant a
+    record containing two "score" keys parsed as one valid record with
+    zero parse errors, silently dropping the first value."""
+
+    from data_collection.journal_reader import read_journal_directory
+
+    record = make_valid_record()
+    raw = json.dumps(record)
+    # Inject a literal duplicate "score" key into the raw JSON text.
+    raw = raw.replace('"score":', '"score": 1.0, "score":', 1)
+    (tmp_path / "decisions_20260721.jsonl").write_text(raw + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert result.valid_records == []
+    assert len(result.parse_errors) == 1
+    assert "duplicate" in result.parse_errors[0].error.lower()
+
+
 def test_max_records_limit_raises(tmp_path):
     """Regression for a Codex review finding: no cap existed on the
     number of lines a journal directory read would load into memory."""

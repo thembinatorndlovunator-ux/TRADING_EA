@@ -38,6 +38,46 @@ def test_run_empty_directory_no_journal_files(tmp_path):
     assert result.metadata.dataset_paths == ()
 
 
+def test_output_csv_inside_input_dir_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): output paths
+    were previously checked only against input_dir ITSELF, not against
+    the actual decisions_*.jsonl files inside it -- a direct probe used a
+    journal source file as output_csv and overwrote the source evidence.
+    Any output written inside input_dir must now be rejected outright,
+    regardless of filename."""
+
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record()])
+    with pytest.raises(ValueError):
+        run(input_dir=tmp_path, output_csv=tmp_path / "derived.csv", repo_path=REPO_ROOT)
+
+
+def test_output_csv_matching_actual_journal_file_rejected(tmp_path):
+    """The exact reproduced counterexample: using a real journal source
+    file's own path as an output path."""
+
+    journal_file = tmp_path / "decisions_20260721.jsonl"
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record()])
+    with pytest.raises(ValueError):
+        run(input_dir=tmp_path, output_csv=journal_file, repo_path=REPO_ROOT)
+
+
+def test_output_csv_sanitizes_formula_injection(tmp_path):
+    """Regression for a Codex review finding: caller-controlled journal
+    strings were written directly to CSV; a value like "=CMD(...)" could
+    become a live spreadsheet formula when a reviewer opens the export."""
+
+    record = make_valid_record()
+    record["strategy"] = "=CMD('calc.exe')"
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [record])
+
+    out_csv = tmp_path / "out" / "journal.csv"
+    run(input_dir=tmp_path, output_csv=out_csv, repo_path=REPO_ROOT)
+
+    raw = out_csv.read_text(encoding="utf-8")
+    assert "'=CMD" in raw  # neutralized with a leading single-quote
+    assert "\n=CMD" not in raw  # never appears as a live formula prefix
+
+
 def test_run_writes_csv_json_and_errors(tmp_path):
     _write_journal_file(
         tmp_path,

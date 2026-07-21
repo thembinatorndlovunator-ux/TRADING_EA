@@ -173,6 +173,64 @@ def test_symbol_filter_rejects_mismatched_rows(tmp_path):
         run(baseline_path, candidate_path, symbol="XAUUSD")
 
 
+def test_no_symbol_filter_still_rejects_datasets_covering_different_symbols(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): with NO
+    'symbol' filter supplied at all, the two datasets' own symbol sets
+    were never checked against EACH OTHER -- an EURUSD baseline vs. an
+    XAUUSD candidate was accepted and compared as if they were the same
+    instrument. This must be rejected even when the caller never passes
+    'symbol'."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12, symbol="EURUSD")
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12, symbol="XAUUSD")
+
+    with pytest.raises(CsvSchemaError):
+        run(baseline_path, candidate_path)  # no symbol= at all
+
+
+def test_naive_timestamp_rejected(tmp_path):
+    """Regression for a Codex review finding: this script previously did
+    not parse or validate entry/exit timestamps at all."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    rows = []
+    for i in range(12):
+        rows.append(
+            {
+                "trade_id": f"t{i}", "symbol": "XAUUSD", "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00", "exit_time": "2026-07-21T01:00:00",  # naive
+                "entry_price": 100.0, "exit_price": 105.0, "stop_price": 98.0, "profit": 10.0,
+            }
+        )
+    pd.DataFrame(rows).to_csv(candidate_path, index=False)
+
+    with pytest.raises(ValueError):
+        run(baseline_path, candidate_path)
+
+
+def test_win_rate_diff_uses_newcombe_wilson_not_bootstrap(tmp_path):
+    """Regression for a Codex review finding: bootstrapping raw 0/1
+    win-rate outcomes collapses to a degenerate [1.0, 1.0] interval for
+    an all-loss-vs-all-win boundary sample. This must now be a real,
+    non-degenerate interval via the Newcombe-Wilson method."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [95.0] * 10, [-10.0] * 10)  # 10 losses
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 10, [10.0] * 10)  # 10 wins
+
+    summary = run(baseline_path, candidate_path, n_resamples=2000, seed=1)
+    win_rate_diff = summary["win_rate_diff"]
+    assert win_rate_diff["method"] == "newcombe_wilson"
+    assert win_rate_diff["observed_diff"] == pytest.approx(1.0)
+    assert win_rate_diff["ci_upper"] == pytest.approx(1.0)
+    assert win_rate_diff["ci_lower"] < win_rate_diff["ci_upper"]  # NOT degenerate
+
+
 def test_output_path_colliding_with_input_rejected(tmp_path):
     baseline_path = tmp_path / "baseline.csv"
     _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)

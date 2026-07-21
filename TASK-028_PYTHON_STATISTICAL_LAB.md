@@ -319,16 +319,23 @@ market_family/intraday_mode finding above.
 
 ## Commit
 
-9 commits on `claude/task-028-python-statistical-lab` (part 1 through the
-Codex-review remediation series ending `fffa9ad`) — see `git log` on that
-branch for the full list.
+19+ commits on `claude/task-028-python-statistical-lab` (part 1 through
+both Codex-review remediation series) — see `git log` on that branch for
+the full, current list rather than trusting a specific count/hash
+recorded here, which has gone stale at least twice already (a lesson
+this document itself is a live example of — see the round-2 doc-staleness
+findings above).
 
 ## Reviewer
 
-**Not available this phase for a full review, but this task is explicitly
-built for Codex's strict-auditor role per the user's own stated hybrid
-workflow** — see `09_HANDOVERS/claude_to_codex/TASK-028_handover.md` for
-exactly what to stress-test (edge cases, security, leakage risks).
+**Codex, via `/code-review ultra` — two independent review rounds
+completed** (2026-07-21 and 2026-07-22; see
+`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
+round). Round 1: 15 findings (2 P0/11 P1/2 P2), all resolved. Round 2: 16
+findings (2 P0/11 P1/3 P2), all resolved — see the "part 4" remediation
+notes below. A third review round should be requested once the user is
+ready, per Codex's own stated disposition each time real correctness
+issues are found.
 
 ## Implementation notes (Claude, part 2 of N — completes the 9 scripts + 10 notebooks)
 
@@ -408,7 +415,9 @@ section per rule 7:
 3. `03_strategy_regime_analysis.ipynb` → `regime_validation.py`
 4. `04_session_and_news_analysis.ipynb` → `join_news_events.py`
 5. `05_mfe_mae_exit_analysis.ipynb` → `calculate_mfe_mae.py`
-6. `06_parameter_stability.ipynb` → `walk_forward.py` (stability framing)
+6. `06_parameter_stability.ipynb` → `parameter_stability.py` (real giveback-guard
+   parameter sweep, as of the 2026-07-22 remediation -- previously misattributed
+   to `walk_forward.py`, a stale mapping fixed per finding #16 of that round)
 7. `07_walk_forward_analysis.ipynb` → `walk_forward.py` (split-mechanics framing)
 8. `08_monte_carlo_risk.ipynb` → `monte_carlo.py`
 9. `09_pattern_detector_validation.ipynb` → `pattern_validation.py`
@@ -463,12 +472,17 @@ corresponding pytest cases) passed.
 
 ## Final decision
 
-**9 of 9 required scripts complete and tested. All 10 required notebooks
-built, paired to their scripts, and executed for real from a clean
-kernel. One bonus module (`regime_validation.py`) partially addresses
-TASK-016's deferred item (7 of 9 states, formula-only, no gating/
-hysteresis, no confusion matrix against real evidence — full completion
-now tracked as `TASK-031_REGIME_VALIDATION_COMPLETION.md`).**
+**9 of 9 required scripts complete and tested, plus two new real,
+tested pipelines (`performance_breakdown.py`, `parameter_stability.py`)
+added during round-2 remediation. All 10 required notebooks built,
+paired to their scripts, and executed for real from a clean kernel. One
+bonus module (`regime_validation.py`) partially addresses TASK-016's
+deferred item (7 of 9 states, formula-only, no gating/hysteresis, no
+confusion matrix against real evidence — full completion now tracked as
+`TASK-031_REGIME_VALIDATION_COMPLETION.md`). Two full independent Codex
+review rounds completed, 31 total findings across both, all resolved
+with regression tests reproducing each reported counterexample. 340
+tests passing, ruff and mypy both clean.**
 
 ## Implementation notes (Claude, part 3 of N — Codex review remediation)
 
@@ -505,3 +519,113 @@ and — as with every MQL5 task in this project — real-world runtime
 confirmation, still batched. Per Codex's own required disposition, a
 follow-up independent review round should be requested once the user is
 ready.
+
+## Implementation notes (Claude, part 4 of N — second Codex review round)
+
+A second Codex review round (2026-07-22, same
+`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place) again
+returned CHANGES REQUESTED — 16 findings (2 P0, 11 P1, 3 P2), several
+substantive: the paired-pipeline contract still not fully satisfied
+(notebooks 03/04/06 doing real analysis work inline instead of in a
+script), walk-forward's window anchor structurally excluding the earliest
+trade, a missing-profit column silently counted as a loss, timestamp
+validation gaps in `analyse_baseline.py`/`compare_releases.py`, malformed
+stop geometry producing plausible-looking 0R trades, Monte Carlo running
+on arbitrarily tiny samples with mislabelled "95% CI" language,
+`compare_releases` permitting cross-symbol comparisons and a degenerate
+bootstrap win-rate interval, MFE/MAE bar-boundary contamination,
+`join_news_events` silently dropping every invalid real-EA journal record,
+output-aliasing and hash-before-parse ordering bugs, permissive CSV/JSON
+validation (duplicate headers, blank IDs, duplicate JSON keys), a
+memory-unsafe journal reader, an undeclared environment, and several stale
+doc claims (including this document's own "closes TASK-016" and pattern-
+count errors, fixed in the TASK-031/033 registration above).
+
+**All 16 findings resolved this round:**
+
+- Built real paired pipelines closing the paired-pipeline gap:
+  `analysis/performance_breakdown.py` (strategy+regime+session/hour/day/
+  symbol/direction breakdown, replacing notebook 03/04's inline groupbys)
+  and `analysis/parameter_stability.py` (giveback-guard parameter sweep,
+  replacing notebook 06's inline sweep and fixing its subset-mismatch
+  statistical defect — every setting's mean is now computed over the same
+  full path set, never a shrinking triggered-only subset). Genuine
+  walk-forward parameter OPTIMIZATION (train-select-freeze-test, distinct
+  from `walk_forward.py`'s honestly-scoped descriptive report) is
+  registered as `TASK-038_WALK_FORWARD_OPTIMIZATION.md` rather than rushed.
+- Fixed `walk_forward.py`'s window-zero anchor (now the earliest ENTRY,
+  not earliest exit) and added `profit` to its finite-value validation
+  (a missing/NaN profit previously read as a loss).
+- Wired `parse_utc_series`/`assert_valid_stop_geometry` into
+  `analyse_baseline.py` and `compare_releases.py`; fixed
+  `analyse_baseline.py`'s same-timestamp drawdown nondeterminism by
+  summing same-instant P/L into one balance step.
+- Added `MIN_N_TRADES` floor, restored/strengthened the i.i.d.-resampling
+  caveat, and relabelled `monte_carlo.py`'s interval fields as percentile
+  scenario bounds, not "95% CI", everywhere they're presented.
+- `compare_releases.py` now rejects cross-symbol comparisons even with no
+  explicit `symbol` filter, and replaced the bootstrap win-rate-diff CI
+  (degenerate at all-loss/all-win boundaries) with a proper Newcombe-Wilson
+  two-proportion interval (`metrics.wilson_diff_confidence_interval`, new).
+- Declared bar timestamps as bar-OPEN time and now REQUIRE entry/exit
+  alignment to an actual bar in `calculate_mfe_mae.py`
+  (`trade_math.BarAlignmentError`, new).
+- `join_news_events.py` now surfaces every parse/validation error via an
+  `errors_json` artifact and a non-zero exit code, instead of silently
+  producing a successful empty analysis from a wholly-invalid real
+  current-EA journal.
+- Added `csv_io.assert_output_paths_distinct` (applied across every
+  multi-output pipeline plus `pattern_validation.py`, which had none at
+  all), fixed `join_trade_journal.py`/`join_news_events.py` to reject any
+  output written inside their own input directory (not just matching it
+  exactly), reordered journal hashing to happen BEFORE parsing, and wired
+  the previously-unused `atomic_write_text` into every JSON write site.
+- Added `csv_io.assert_high_low_geometry`'s open/close range check,
+  `assert_unique_ids`'s blank/null rejection, `read_csv_with_required_columns`'s
+  duplicate-header detection, `journal_reader`'s duplicate-JSON-key
+  rejection (`object_pairs_hook`), and `join_news_events.py`'s
+  importance-enum range check.
+- `journal_reader.py` now streams and enforces `max_records` DURING the
+  read (not after `readlines()` has already loaded everything), caps
+  retained raw error-line length, and reports source files relative to
+  the journal directory instead of an absolute path.
+- Added `csv_io.sanitize_for_csv` (spreadsheet-formula-injection defense)
+  and wired it into every CSV export carrying caller-controlled journal
+  strings.
+- `ReportMetadata` gained `ea_version`/`data_source` fields (wired into
+  `analyse_baseline.py`/`compare_releases.py`'s CLI; available to every
+  other script via `build_report_metadata`'s kwargs but not yet
+  CLI-exposed there — a disclosed, not silently-complete, residual gap).
+  `PIPELINE_VERSION` bumped `0.1.0` → `0.2.0`.
+- Environment: `requirements-lock.txt` (real `pip freeze` of the full
+  tested environment) added; ruff 0.15.22 and mypy 2.3.0 (new — this
+  project's first type-checker pass, `mypy analysis data_collection
+  --ignore-missing-imports` → "Success: no issues found in 23 source
+  files") declared in `pyproject.toml`/`requirements.txt`.
+- Fixed every stale doc claim this round found: this document's own
+  false "closes TASK-016" claim and wrong pattern count (corrected in the
+  TASK-031/033 registrations above), the Reviewer/notebook-06-mapping
+  staleness fixed directly above, and notebook 03's matching stale claim
+  in its own markdown.
+
+Real re-verification after this round's remediation:
+
+- `pytest -q` → **340 passed** (up from 262 after round 1).
+- `ruff check .` → **All checks passed.**
+- `mypy analysis data_collection --ignore-missing-imports` → **Success:
+  no issues found in 23 source files** (first run, this round).
+- All 11 notebooks re-executed via
+  `jupyter execute --kernel_name=themba-python-lab`, all exit 0.
+
+New numbered follow-ups registered this round (beyond TASK-031/032/033,
+already registered after round 1): `TASK-036_JOURNAL_PRODUCER_COMPLETION.md`
+(signal_id/market_family/intraday_mode/news_state/session_state
+population, order_id/deal_id, FILE_ANSI-vs-UTF-8 fix),
+`TASK-037_MT5_EXPORT_BRIDGE.md` (real trade/news/pattern-detector exports,
+now also owning the real-evidence confusion matrix and MQL5-export
+cross-check TASK-031/033 explicitly deferred to it), and
+`TASK-038_WALK_FORWARD_OPTIMIZATION.md` (genuine train-select-freeze-test
+parameter optimization).
+
+Per Codex's own required disposition each round, a third independent
+review round should be requested once the user is ready.

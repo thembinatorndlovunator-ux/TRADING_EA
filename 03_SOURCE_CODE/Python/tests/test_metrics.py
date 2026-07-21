@@ -9,6 +9,7 @@ from analysis.metrics import (
     expectancy,
     profit_factor,
     wilson_confidence_interval,
+    wilson_diff_confidence_interval,
     win_rate,
 )
 
@@ -88,12 +89,24 @@ def test_expectancy_hand_computed():
     assert result.expectancy == pytest.approx(2.0)
     assert result.std_dev == pytest.approx(1.0)  # sample variance ((1+0+1)/2)=1
     assert result.n == 3
+    # A bootstrap CI on the mean is now included -- real uncertainty of
+    # the mean, not just sample dispersion (Codex review finding).
+    assert result.ci_lower is not None
+    assert result.ci_upper is not None
+    assert result.ci_lower <= result.expectancy <= result.ci_upper
 
 
-def test_expectancy_single_observation_has_zero_std_dev():
+def test_expectancy_single_observation_has_no_estimable_uncertainty():
+    """Regression for a Codex review finding (2026-07-22): reporting
+    std_dev=0.0 for a single observation is FALSE PRECISION -- spread is
+    genuinely unestimable from one point, not zero. Both std_dev and the
+    CI must be None, not a fabricated exact value."""
+
     result = expectancy([5.0])
     assert result.expectancy == pytest.approx(5.0)
-    assert result.std_dev == 0.0
+    assert result.std_dev is None
+    assert result.ci_lower is None
+    assert result.ci_upper is None
 
 
 # --- profit_factor -----------------------------------------------------------
@@ -140,13 +153,34 @@ def test_bootstrap_ci_zero_variance_data_collapses_exactly():
     an exact, deterministic-by-construction property, not a randomized
     coincidence."""
 
-    result = bootstrap_confidence_interval([10.0] * 5, n_resamples=50, seed=7)
+    result = bootstrap_confidence_interval([10.0] * 5, n_resamples=100, seed=7)
     assert result.point_estimate == pytest.approx(10.0)
     assert result.ci_lower == pytest.approx(10.0)
     assert result.ci_upper == pytest.approx(10.0)
-    assert result.n_resamples == 50
+    assert result.n_resamples == 100
     assert result.seed == 7
     assert result.n == 5
+
+
+def test_bootstrap_ci_rejects_below_min_resamples():
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1.0, 2.0, 3.0], n_resamples=50, seed=1)
+
+
+def test_bootstrap_ci_rejects_confidence_out_of_range():
+    """Regression for a Codex review finding: confidence 0 or 1 with a
+    single resample previously returned a degenerate interval instead of
+    a visible error -- confidence must be validated to be in (0, 1)."""
+
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1.0, 2.0, 3.0], confidence=0.0, n_resamples=100, seed=1)
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1.0, 2.0, 3.0], confidence=1.0, n_resamples=100, seed=1)
+
+
+def test_bootstrap_ci_rejects_non_finite_data():
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1.0, float("nan"), 3.0], n_resamples=100, seed=1)
 
 
 def test_bootstrap_ci_deterministic_given_same_seed():
@@ -226,6 +260,16 @@ def test_max_drawdown_rejects_non_positive_first_value():
         compute_max_drawdown([-10.0, 5.0])
 
 
+def test_max_drawdown_rejects_non_finite_value_anywhere_in_curve():
+    """Regression for a Codex review finding: a NaN later in the curve
+    was silently ignored (every '>' comparison against NaN is False),
+    which could hide a real drawdown entirely instead of surfacing the
+    bad input."""
+
+    with pytest.raises(ValueError):
+        compute_max_drawdown([100.0, 120.0, float("nan"), 80.0])
+
+
 def test_max_drawdown_monotonically_rising_is_zero():
     result = compute_max_drawdown([100.0, 110.0, 120.0, 130.0])
     assert result.max_drawdown_abs == 0.0
@@ -246,3 +290,47 @@ def test_max_drawdown_pct_can_exceed_one_when_balance_goes_negative():
     result = compute_max_drawdown([100.0, -50.0])
     assert result.max_drawdown_pct == pytest.approx(1.5)
     assert result.max_drawdown_pct_trough_index == 1
+
+
+# --- wilson_diff_confidence_interval ---------------------------------------
+
+
+def test_wilson_diff_ci_boundary_case_is_not_degenerate():
+    """Regression for a Codex review finding (2026-07-22): bootstrapping
+    raw 0/1 outcomes for a win-rate DIFFERENCE collapses to a degenerate
+    [1.0, 1.0] interval for an all-loss-vs-all-win boundary sample (ten
+    trades each) -- not a defensible sampling-uncertainty statement. The
+    Newcombe-Wilson method must produce a real (non-degenerate) interval
+    even at this exact boundary."""
+
+    result = wilson_diff_confidence_interval(successes_a=10, n_a=10, successes_b=0, n_b=10)
+    assert result.diff == pytest.approx(1.0)
+    assert result.ci_upper == pytest.approx(1.0)  # correctly bounded, proportions can't exceed 1
+    assert result.ci_lower < result.ci_upper  # NOT degenerate, unlike the old bootstrap approach
+    assert result.likely_significant is True
+
+
+def test_wilson_diff_ci_two_all_loss_groups_is_not_degenerate_zero():
+    """The mirror boundary case: two all-loss groups previously collapsed
+    to a bootstrap [0.0, 0.0]. By symmetry (identical n and successes on
+    both sides), the Newcombe-Wilson interval is [-u, u] where u is
+    wilson_confidence_interval(0, 10)'s own upper bound -- a real,
+    non-degenerate interval straddling zero, not a fabricated exact 0."""
+
+    result = wilson_diff_confidence_interval(successes_a=0, n_a=10, successes_b=0, n_b=10)
+    assert result.diff == pytest.approx(0.0)
+    assert result.ci_upper > 0.0
+    assert result.ci_lower == pytest.approx(-result.ci_upper)
+    assert result.likely_significant is False
+
+
+def test_wilson_diff_ci_identical_proportions_straddles_zero():
+    result = wilson_diff_confidence_interval(successes_a=5, n_a=10, successes_b=5, n_b=10)
+    assert result.diff == pytest.approx(0.0)
+    assert result.ci_lower < 0.0 < result.ci_upper
+    assert result.likely_significant is False
+
+
+def test_wilson_diff_ci_insufficient_sample_raises():
+    with pytest.raises(InsufficientSampleError):
+        wilson_diff_confidence_interval(successes_a=0, n_a=0, successes_b=5, n_b=10)

@@ -91,6 +91,74 @@ def test_valid_trade_hand_computed(tmp_path):
     assert r.mae_price == pytest.approx(3.0)
 
 
+def test_header_only_trades_csv_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): a header-only
+    (zero-row) trades.csv previously produced a "successful" empty run
+    (0 results, 0 row errors) instead of a visible insufficient-sample
+    failure -- indistinguishable from "every trade was valid"."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    pd.DataFrame(
+        columns=["trade_id", "symbol", "is_long", "entry_time", "exit_time", "entry_price", "stop_price"]
+    ).to_csv(trades_path, index=False)
+
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_malformed_stop_geometry_captured_as_row_error(tmp_path):
+    """Regression for a Codex review finding: a long trade with entry
+    100 and stop 101 is malformed and must be rejected, not silently
+    computed as a plausible 0R trade."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0, "stop_price": 101.0,  # stop on wrong side for a long
+            }
+        ],
+    )
+
+    result = run(trades_path, bars_path)
+    assert result.results == []
+    assert len(result.row_errors) == 1
+    assert result.row_errors[0]["trade_id"] == "t1"
+
+
+def test_misaligned_entry_time_captured_as_row_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): entry_time/
+    exit_time must exactly match a bar timestamp -- a misaligned
+    timestamp risks look-ahead/measurement contamination if silently
+    tolerated."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+                "entry_time": "2026-07-21T00:30:00Z",  # not a bar timestamp
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0, "stop_price": 98.0,
+            }
+        ],
+    )
+
+    result = run(trades_path, bars_path)
+    assert result.results == []
+    assert len(result.row_errors) == 1
+
+
 def test_malformed_is_long_captured_as_row_error_not_crash(tmp_path):
     bars_path = tmp_path / "bars.csv"
     _write_bars(bars_path)

@@ -18,6 +18,27 @@ system's real ruin probability; it is only valid for a fixed-cash/
 fixed-lot reading of the same P/L history. A percentage-compounding
 variant is a reasonable future enhancement, not attempted here.
 
+**Individual trades are resampled WITH REPLACEMENT (an i.i.d. empirical
+bootstrap), reiterated here since it is easy to lose sight of (Codex
+review finding, 2026-07-22): this is not merely reordering the historical
+sequence -- it DESTROYS any streak/autocorrelation structure, day-level
+caps, and cooldown behavior the real trade sequence had. A real account
+subject to (for example) a three-loss cooldown (see TASK-034) cannot
+actually produce every resampled path this tool generates. Do not read
+this tool's ruin/drawdown probabilities as evidence about a system that
+has streak-dependent risk controls; it only characterizes what an i.i.d.
+reshuffling of the SAME historical P/L values would look like.**
+
+**``final_balance_ci_*``/``max_drawdown_pct_ci_*`` are PERCENTILE SCENARIO
+BOUNDS conditional on the empirical i.i.d. resampling model above, not a
+conventional statistical confidence interval for a future balance or
+drawdown (Codex review finding, 2026-07-22) -- they describe the spread
+of outcomes this specific reshuffling procedure produces from this
+specific historical sample, not an inference about the true underlying
+process. The ruin Wilson interval measures finite-simulation error (how
+precisely ``n_resamples`` estimates the resampling procedure's own ruin
+rate), not uncertainty in the small historical P/L distribution itself.
+
 **Balance, not equity** -- same distinction as analyse_baseline.py: this
 is built from closed-trade P/L only, no mark-to-market of open positions.
 
@@ -30,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,15 +61,32 @@ import numpy as np
 
 from analysis.csv_io import CsvSchemaError, assert_finite_columns, assert_unique_ids, read_csv_with_required_columns
 from analysis.metrics import InsufficientSampleError, compute_max_drawdown, wilson_confidence_interval
-from analysis.report_metadata import build_report_metadata
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.resampling import seeded_bootstrap_indices
 
 REQUIRED_COLUMNS = {"trade_id", "profit"}
-MIN_N_RESAMPLES = 100  # below this a percentile CI is not a defensible estimate
+MIN_N_RESAMPLES = 100  # below this a percentile scenario-bound estimate is not defensible
+MIN_N_TRADES = 20  # **Added, 2026-07-22 Codex review finding:** below this, resampling
+                   # manufactures apparent precision the underlying sample cannot support
+                   # -- a direct probe with a single historical trade previously returned
+                   # a suspiciously "precise" [1010.0, 1010.0] final-balance bound and a
+                   # [0.0, 0.0] drawdown bound; more simulations cannot create sample
+                   # information that was never there.
 
 
 @dataclass(frozen=True)
 class MonteCarloResult:
+    """**Field-naming note (Codex review finding, 2026-07-22):**
+    ``final_balance_ci_*`` and ``max_drawdown_pct_ci_*`` are PERCENTILE
+    SCENARIO BOUNDS from the i.i.d. empirical-bootstrap resampling
+    procedure described in the module docstring, not a conventional
+    statistical confidence interval for a future balance or drawdown --
+    every caller/notebook presenting these MUST use that framing (e.g.
+    "percentile scenario bounds"), not bare "95% CI" language, which
+    overstates what this tool can establish from a small, streak-
+    destroyed, i.i.d.-resampled trade history.
+    """
+
     n_trades: int
     n_resamples: int
     seed: int
@@ -79,22 +118,32 @@ def run_monte_carlo(
     resulting distribution of final balance and max drawdown. See the
     module docstring for the fixed-cash modelling scope.
 
-    Raises InsufficientSampleError if 'pnl' is empty or 'starting_balance'
-    is not strictly positive (percentage drawdown is undefined otherwise
-    -- see metrics.compute_max_drawdown). Raises ValueError if
-    n_resamples < MIN_N_RESAMPLES or confidence is out of (0, 1).
+    Raises InsufficientSampleError if 'pnl' has fewer than MIN_N_TRADES
+    observations (see that constant's own comment), or 'starting_balance'
+    is not strictly positive/finite (percentage drawdown is undefined
+    otherwise -- see metrics.compute_max_drawdown). Raises ValueError if
+    n_resamples < MIN_N_RESAMPLES, confidence is out of (0, 1), 'pnl'
+    contains a non-finite value, or 'ruin_threshold' is given and
+    non-finite.
     """
 
-    if not pnl:
-        raise InsufficientSampleError("run_monte_carlo: empty pnl sequence")
-    if starting_balance <= 0:
+    if len(pnl) < MIN_N_TRADES:
         raise InsufficientSampleError(
-            f"run_monte_carlo: starting_balance must be > 0, got {starting_balance}"
+            f"run_monte_carlo: need >= {MIN_N_TRADES} historical trades for a defensible "
+            f"resampling distribution, got {len(pnl)}"
+        )
+    if not math.isfinite(starting_balance) or starting_balance <= 0:
+        raise InsufficientSampleError(
+            f"run_monte_carlo: starting_balance must be a finite number > 0, got {starting_balance}"
         )
     if n_resamples < MIN_N_RESAMPLES:
         raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
     if not (0.0 < confidence < 1.0):
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if not all(math.isfinite(p) for p in pnl):
+        raise ValueError("run_monte_carlo: pnl contains a non-finite (NaN/inf) value")
+    if ruin_threshold is not None and not math.isfinite(ruin_threshold):
+        raise ValueError(f"run_monte_carlo: ruin_threshold must be finite, got {ruin_threshold}")
 
     n = len(pnl)
     pnl_arr = np.asarray(pnl, dtype=float)
@@ -181,7 +230,7 @@ def run(
             [trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
         )
         payload = {"metadata": metadata.to_dict(), "result": result.__dict__}
-        output_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result
 

@@ -39,12 +39,14 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_unique_ids,
+    assert_valid_stop_geometry,
     parse_is_long,
     read_csv_with_required_columns,
 )
-from analysis.metrics import InsufficientSampleError
-from analysis.report_metadata import build_report_metadata
+from analysis.metrics import InsufficientSampleError, wilson_diff_confidence_interval
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.resampling import seeded_bootstrap_indices
+from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
 NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
@@ -69,6 +71,15 @@ def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str])
 
     trades = trades.copy()
     trades["is_long"] = trades["is_long"].apply(parse_is_long)
+    # **Fixed, 2026-07-22 Codex review finding:** entry_time/exit_time were
+    # never parsed or validated at all in this script (unlike every other
+    # trades.csv consumer), so a naive/malformed timestamp passed through
+    # silently. Parsed here even though this script's own statistics don't
+    # currently use the parsed columns, so a schema problem is still a
+    # visible failure rather than a silent no-op.
+    trades["entry_time"] = parse_utc_series(trades["entry_time"])
+    trades["exit_time"] = parse_utc_series(trades["exit_time"])
+    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
             row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
@@ -165,19 +176,54 @@ def run(
     seed: int = 42,
     confidence: float = 0.95,
     symbol: Optional[str] = None,
+    broker: Optional[str] = None,
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
+    ea_version: Optional[str] = None,
+    data_source: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
+    """'broker'/'period_start'/'period_end' are recorded in the report's
+    provenance metadata and are the CALLER's responsibility to ensure are
+    actually identical between the two datasets -- this script can only
+    verify what is present IN the CSVs themselves (symbol, below), not
+    facts (broker, costs, modelling mode, set file) that live outside
+    them. Always state these explicitly when calling this comparison."""
+
     if output_json is not None and output_json.resolve() in (baseline_csv.resolve(), candidate_csv.resolve()):
         raise CsvSchemaError(f"output_json {output_json} must not be the same as an input path")
 
     baseline = _load_trades_with_r_multiple(baseline_csv, symbol)
     candidate = _load_trades_with_r_multiple(candidate_csv, symbol)
 
-    win_rate_diff = two_sample_bootstrap_diff(
-        (baseline["profit"] > 0).astype(float).tolist(),
-        (candidate["profit"] > 0).astype(float).tolist(),
-        n_resamples, seed, confidence,
+    # **Fixed, 2026-07-22 Codex review finding:** with no 'symbol' filter
+    # supplied, the two datasets' own symbol sets were never checked
+    # against EACH OTHER at all -- an EURUSD baseline vs. an XAUUSD
+    # candidate was accepted and compared as if they were the same
+    # instrument. A CI comparing two genuinely different symbols answers
+    # the wrong question regardless of its arithmetic correctness.
+    baseline_symbols = set(baseline["symbol"].unique())
+    candidate_symbols = set(candidate["symbol"].unique())
+    if baseline_symbols != candidate_symbols:
+        raise CsvSchemaError(
+            f"compare_releases: baseline and candidate cover different symbols -- "
+            f"baseline={sorted(baseline_symbols)}, candidate={sorted(candidate_symbols)}. "
+            "A release comparison requires both datasets to cover the same instrument(s)."
+        )
+
+    # Win-rate difference: a proper two-proportion interval (Newcombe-
+    # Wilson), not a bootstrap over raw 0/1 outcomes -- **fixed, 2026-07-22
+    # Codex review finding:** bootstrapping binary outcomes collapses to a
+    # degenerate [1.0, 1.0] or [0.0, 0.0] at boundary samples (e.g. all-win
+    # vs. all-loss groups), which is not a defensible sampling-uncertainty
+    # statement for a proportion.
+    baseline_wins = int((baseline["profit"] > 0).sum())
+    candidate_wins = int((candidate["profit"] > 0).sum())
+    win_rate_diff = wilson_diff_confidence_interval(
+        candidate_wins, len(candidate), baseline_wins, len(baseline), confidence
     )
+    # Continuous R-expectancy difference remains a bootstrap -- appropriate
+    # for a continuous statistic, unlike the binary win-rate case above.
     expectancy_r_diff = two_sample_bootstrap_diff(
         baseline["r_multiple"].tolist(), candidate["r_multiple"].tolist(), n_resamples, seed, confidence
     )
@@ -189,7 +235,16 @@ def run(
         "candidate_win_rate": float((candidate["profit"] > 0).mean()),
         "baseline_expectancy_r": float(baseline["r_multiple"].mean()),
         "candidate_expectancy_r": float(candidate["r_multiple"].mean()),
-        "win_rate_diff": win_rate_diff.__dict__,
+        "win_rate_diff": {
+            "observed_diff": win_rate_diff.diff,
+            "ci_lower": win_rate_diff.ci_lower,
+            "ci_upper": win_rate_diff.ci_upper,
+            "likely_significant": win_rate_diff.likely_significant,
+            "method": "newcombe_wilson",
+            "n_baseline": win_rate_diff.n_b,
+            "n_candidate": win_rate_diff.n_a,
+            "confidence": win_rate_diff.confidence,
+        },
         "expectancy_r_diff": expectancy_r_diff.__dict__,
         "n_resamples": n_resamples,
         "seed": seed,
@@ -199,10 +254,12 @@ def run(
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [baseline_csv, candidate_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [baseline_csv, candidate_csv], symbol=symbol, broker=broker,
+            period_start=period_start, period_end=period_end, random_seed=seed,
+            ea_version=ea_version, data_source=data_source, repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
-        output_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return summary
 
@@ -216,6 +273,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
+    parser.add_argument("--broker", default=None)
+    parser.add_argument("--period-start", default=None)
+    parser.add_argument("--period-end", default=None)
+    parser.add_argument("--ea-version", default=None)
+    parser.add_argument("--data-source", default=None)
     return parser
 
 
@@ -230,6 +292,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             seed=args.seed,
             confidence=args.confidence,
             symbol=args.symbol,
+            broker=args.broker,
+            period_start=args.period_start,
+            period_end=args.period_end,
+            ea_version=args.ea_version,
+            data_source=args.data_source,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

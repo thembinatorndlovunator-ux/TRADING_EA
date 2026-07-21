@@ -45,12 +45,14 @@ import pandas as pd
 from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
+    assert_output_paths_distinct,
     assert_unique_ids,
+    assert_valid_stop_geometry,
     parse_is_long,
     read_csv_with_required_columns,
 )
 from analysis.metrics import InsufficientSampleError, expectancy, win_rate
-from analysis.report_metadata import build_report_metadata
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
@@ -58,13 +60,21 @@ REQUIRED_COLUMNS = {
     "trade_id", "symbol", "is_long", "entry_time", "exit_time",
     "entry_price", "exit_price", "stop_price", "profit",
 }
-NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price")
+# **Fixed, 2026-07-22 Codex review finding:** 'profit' was missing from
+# this validated set. A missing/NaN profit reaches `profit > 0`, where
+# pandas returns False for NaN, silently counting an unknown-P/L row as
+# a LOSS rather than raising a visible schema failure -- reproduced via a
+# direct three-row probe that returned train_win_rate=0.0 with the
+# legitimate earliest trade discarded (see the window-anchor fix below)
+# and the remaining NaN-profit row counted as a loss.
+NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
 
 SUMMARY_COLUMNS = [
     "window_index", "train_start", "train_end", "test_start", "test_end",
-    "train_n", "train_win_rate", "train_expectancy_r",
+    "train_n", "train_win_rate", "train_win_rate_ci_lower", "train_win_rate_ci_upper",
+    "train_expectancy_r", "train_expectancy_r_ci_lower", "train_expectancy_r_ci_upper",
     "test_n", "test_win_rate", "test_win_rate_ci_lower", "test_win_rate_ci_upper",
-    "test_expectancy_r",
+    "test_expectancy_r", "test_expectancy_r_ci_lower", "test_expectancy_r_ci_upper",
 ]
 
 
@@ -103,12 +113,14 @@ class WindowMetrics:
     win_rate_ci_lower: Optional[float]
     win_rate_ci_upper: Optional[float]
     expectancy_r: Optional[float]
+    expectancy_r_ci_lower: Optional[float]
+    expectancy_r_ci_upper: Optional[float]
 
 
 def _slice_metrics(slice_df: pd.DataFrame) -> WindowMetrics:
     n = len(slice_df)
     if n == 0:
-        return WindowMetrics(0, None, None, None, None)
+        return WindowMetrics(0, None, None, None, None, None, None)
 
     wr = None
     try:
@@ -128,6 +140,11 @@ def _slice_metrics(slice_df: pd.DataFrame) -> WindowMetrics:
         win_rate_ci_lower=wr.ci_lower if wr else None,
         win_rate_ci_upper=wr.ci_upper if wr else None,
         expectancy_r=exp.expectancy if exp else None,
+        # exp.ci_lower/ci_upper are themselves None when exp.n < 2 (see
+        # metrics.expectancy's own docstring) -- propagated as-is, not
+        # coerced to a false-precision number.
+        expectancy_r_ci_lower=exp.ci_lower if exp else None,
+        expectancy_r_ci_upper=exp.ci_upper if exp else None,
     )
 
 
@@ -163,6 +180,7 @@ def run(
     for out_path in (output_csv, summary_json):
         if out_path is not None and out_path.resolve() == trades_csv.resolve():
             raise CsvSchemaError(f"output path {out_path} must not be the same as the input trades_csv")
+    assert_output_paths_distinct([output_csv, summary_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
@@ -174,6 +192,7 @@ def run(
     trades["is_long"] = trades["is_long"].apply(parse_is_long)
     trades["entry_time"] = parse_utc_series(trades["entry_time"])
     trades["exit_time"] = parse_utc_series(trades["exit_time"])
+    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
             row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
@@ -182,8 +201,18 @@ def run(
     )
     trades = trades.sort_values("exit_time")
 
+    # **Fixed, 2026-07-22 Codex review finding:** window 0 was previously
+    # anchored at the earliest EXIT time, while _slice_window requires
+    # BOTH entry_time and exit_time to be at or after the window start.
+    # Every positive-duration trade with the earliest exit necessarily
+    # ENTERED before that anchor, so it could never appear in any window
+    # -- the test suite had mislabelled this permanent exclusion as
+    # "correct purged behavior". The overall analysis period now starts
+    # at the earliest eligible ENTRY instead, so the earliest trade is at
+    # least reachable by window 0 (still subject to the normal purging
+    # rule if its exit falls outside that window).
     windows = generate_windows(
-        trades["exit_time"].iloc[0], trades["exit_time"].iloc[-1], train_days, test_days, step_days
+        trades["entry_time"].min(), trades["exit_time"].max(), train_days, test_days, step_days
     )
 
     rows = []
@@ -203,12 +232,18 @@ def run(
                 "test_end": test_end,
                 "train_n": train_m.n,
                 "train_win_rate": train_m.win_rate,
+                "train_win_rate_ci_lower": train_m.win_rate_ci_lower,
+                "train_win_rate_ci_upper": train_m.win_rate_ci_upper,
                 "train_expectancy_r": train_m.expectancy_r,
+                "train_expectancy_r_ci_lower": train_m.expectancy_r_ci_lower,
+                "train_expectancy_r_ci_upper": train_m.expectancy_r_ci_upper,
                 "test_n": test_m.n,
                 "test_win_rate": test_m.win_rate,
                 "test_win_rate_ci_lower": test_m.win_rate_ci_lower,
                 "test_win_rate_ci_upper": test_m.win_rate_ci_upper,
                 "test_expectancy_r": test_m.expectancy_r,
+                "test_expectancy_r_ci_lower": test_m.expectancy_r_ci_lower,
+                "test_expectancy_r_ci_upper": test_m.expectancy_r_ci_upper,
             }
         )
 
@@ -246,7 +281,7 @@ def run(
                 ),
             },
         }
-        summary_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result_df
 

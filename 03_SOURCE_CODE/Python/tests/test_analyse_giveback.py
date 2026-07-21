@@ -37,6 +37,67 @@ def test_missing_columns_raises(tmp_path):
         run(trades_path, bars_path)
 
 
+def test_header_only_trades_csv_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): a header-only
+    (zero-row) trades.csv previously produced a "successful" empty run
+    instead of a visible insufficient-sample failure."""
+
+    trades_path = tmp_path / "trades.csv"
+    pd.DataFrame(
+        columns=["trade_id", "symbol", "is_long", "entry_time", "exit_time", "entry_price", "stop_price"]
+    ).to_csv(trades_path, index=False)
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0])
+
+    with pytest.raises(CsvSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_malformed_stop_geometry_captured_as_row_error(tmp_path):
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T02:00:00Z",
+                "entry_price": 100.0, "stop_price": 101.0,  # wrong side for a long
+            }
+        ],
+    )
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 103.0])
+
+    result = run(trades_path, bars_path)
+    assert result.comparisons == []
+    assert len(result.row_errors) == 1
+
+
+def test_non_finite_exit_price_rejected_as_row_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): the optional
+    exit_price column was never checked for finiteness when populated --
+    `pd.notna(inf)` is True, so an infinite exit_price could reach
+    compute_r_multiple and produce an infinite actual_final_r."""
+
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T02:00:00Z",
+                "entry_price": 100.0, "stop_price": 98.0, "exit_price": float("inf"),
+            }
+        ],
+    )
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 103.0])
+
+    result = run(trades_path, bars_path)
+    assert result.comparisons == []
+    assert len(result.row_errors) == 1
+
+
 def test_guard_would_have_helped_hand_computed(tmp_path):
     # r_path (R = (close-100)/2 for a long, risk=2): 0.5, 1.0, 2.0, 0.7, 0.3
     # -> closes: 101, 102, 104, 101.4, 100.6

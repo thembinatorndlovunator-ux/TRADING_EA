@@ -63,12 +63,14 @@ def test_generate_windows_no_data_span_yields_at_least_zero_windows():
 # --- run() --------------------------------------------------------------------
 
 # Trades t1/t2/t4/t8 are offset +12h from the integer-day boundary grid
-# (which is anchored to t0's own exit time) SPECIFICALLY so they never
-# coincidentally land exactly on a window boundary -- t0 itself is
-# unavoidably excluded from every window (its entry necessarily precedes
-# the very first window, since no window exists before window 0), which
-# is correct "purged" behavior, not a test bug; every assertion below
-# only relies on t1/t2/t4/t8.
+# (which is anchored to t0's own ENTRY time, i.e. exactly _BASE - 1h --
+# see walk_forward.py's own fix, 2026-07-22: the overall analysis period
+# starts at the earliest ENTRY, not the earliest exit) SPECIFICALLY so
+# they never coincidentally land exactly on a window boundary. t0's own
+# entry now legitimately anchors window 0 itself (rather than being
+# purged, as it was under the old exit-time-anchored scheme) -- see
+# test_windows_hand_computed_with_purged_boundaries's own comment for the
+# full re-trace.
 _BASE = pd.Timestamp("2026-01-01", tz="UTC")
 
 
@@ -138,6 +140,46 @@ def test_naive_timestamp_rejected(tmp_path):
         run(path, train_days=3, test_days=2, step_days=2)
 
 
+def test_malformed_stop_geometry_rejected(tmp_path):
+    path = tmp_path / "trades.csv"
+    row = _row("t1", _BASE, 104.0, 10.0)
+    row["stop_price"] = 101.0  # wrong side for a long (entry_price=100.0)
+    pd.DataFrame([row]).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path, train_days=3, test_days=2, step_days=2)
+
+
+def test_missing_profit_not_silently_counted_as_loss(tmp_path):
+    """Regression for a Codex review finding (2026-07-22): 'profit' was
+    missing from NUMERIC_COLUMNS, so a missing/NaN profit reached
+    `profit > 0` (False for NaN in pandas), silently counting an
+    unknown-P/L row as a LOSS instead of raising a visible schema
+    failure."""
+
+    path = tmp_path / "trades.csv"
+    row = _row("t1", _BASE, 104.0, 10.0)
+    row["profit"] = ""  # becomes NaN once read back as numeric
+    pd.DataFrame([row]).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path, train_days=3, test_days=2, step_days=2)
+
+
+def test_train_and_expectancy_confidence_intervals_present(tmp_path):
+    """Regression for a Codex review finding: walk-forward omitted train
+    win-rate intervals and all expectancy intervals entirely."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    df = run(path, train_days=3, test_days=2, step_days=2)
+
+    w0 = df.iloc[0]
+    assert w0["train_win_rate_ci_lower"] is not None
+    assert w0["train_win_rate_ci_upper"] is not None
+    # train has 3 trades (n>=2) so an expectancy CI is estimable.
+    assert pd.notna(w0["train_expectancy_r_ci_lower"])
+    assert pd.notna(w0["train_expectancy_r_ci_upper"])
+
+
 def test_output_path_colliding_with_input_rejected(tmp_path):
     path = tmp_path / "trades.csv"
     _write_trades(path)
@@ -146,10 +188,13 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
 
 
 def test_windows_hand_computed_with_purged_boundaries(tmp_path):
-    # 3 windows result (test plan traced in this file's own history); t0
-    # is purged from every window (its entry necessarily precedes window
-    # 0's own start). See the module-level comment above for the full
-    # hand trace this reproduces.
+    # 3 windows result (test plan traced in this file's own history).
+    # **Re-traced, 2026-07-22 Codex review finding:** the overall analysis
+    # period is now anchored at the earliest ENTRY (not earliest exit --
+    # see walk_forward.py's own fix), so t0's entry (exactly at the new
+    # anchor) now legitimately falls inside window 0's train slice
+    # instead of being structurally excluded. See the module-level
+    # comment above for the rest of the hand trace this reproduces.
     path = tmp_path / "trades.csv"
     _write_trades(path)
 
@@ -157,9 +202,9 @@ def test_windows_hand_computed_with_purged_boundaries(tmp_path):
     assert len(df) == 3
 
     w0 = df.iloc[0]
-    assert w0["train_n"] == 2  # t1, t2 (t0 purged)
-    assert w0["train_win_rate"] == pytest.approx(0.5)
-    assert w0["train_expectancy_r"] == pytest.approx(0.5)  # mean(-0.5, 1.5)
+    assert w0["train_n"] == 3  # t0, t1, t2 (t0's entry now anchors window 0 itself)
+    assert w0["train_win_rate"] == pytest.approx(2.0 / 3.0)  # t0 win, t1 loss, t2 win
+    assert w0["train_expectancy_r"] == pytest.approx(1.0)  # mean(2.0, -0.5, 1.5)
     assert w0["test_n"] == 1  # t4
     assert w0["test_win_rate"] == pytest.approx(1.0)
     assert w0["test_expectancy_r"] == pytest.approx(2.5)
@@ -186,11 +231,15 @@ def test_trade_spanning_a_window_boundary_is_purged_from_both_sides(tmp_path):
     temporal-leakage route. Such a trade must now be excluded entirely."""
 
     path = tmp_path / "trades.csv"
-    # An early anchor at EXACTLY _BASE fixes first_time (and therefore
-    # window 0's train_start) at day0, exactly like t0 in the main
-    # fixture above -- its own entry is unavoidably excluded from every
-    # window (nothing precedes window 0), which is fine since this test
-    # makes no assertion about it.
+    # **Re-traced, 2026-07-22 Codex review finding:** the overall analysis
+    # period is now anchored at the earliest ENTRY (not earliest exit),
+    # so a zero-duration early anchor (entry == exit == _BASE) is used to
+    # fix first_time (and therefore window 0's train_start) at day0 --
+    # this trade now legitimately falls inside window 0's own train slice
+    # (it defines the anchor, so its entry trivially satisfies
+    # "entry >= train_start"), rather than being purged as it would be
+    # if it carried a separate, earlier entry_time (see the previous
+    # test's own re-trace for why that's no longer purged either).
     early_anchor_exit = _BASE
     spanning_entry = _BASE + pd.Timedelta(days=2, hours=23)  # just before day3 (train/test boundary)
     spanning_exit = _BASE + pd.Timedelta(days=3, hours=1)  # just after day3
@@ -205,7 +254,7 @@ def test_trade_spanning_a_window_boundary_is_purged_from_both_sides(tmp_path):
                 "trade_id": "early_anchor",
                 "symbol": "XAUUSD",
                 "is_long": "True",
-                "entry_time": (early_anchor_exit - pd.Timedelta(hours=1)).isoformat(),
+                "entry_time": early_anchor_exit.isoformat(),
                 "exit_time": early_anchor_exit.isoformat(),
                 "entry_price": 100.0,
                 "exit_price": 105.0,
@@ -240,8 +289,11 @@ def test_trade_spanning_a_window_boundary_is_purged_from_both_sides(tmp_path):
     df = run(path, train_days=3, test_days=2, step_days=2)
     # window0: train[day0,day3), test[day3,day5) -- "spanner" belongs to
     # NEITHER (entry is in train's range but exit is not; exit is in
-    # test's range but entry is not) -> purged from both.
-    assert df.iloc[0]["train_n"] == 0
+    # test's range but entry is not) -> purged from both. train_n==1 is
+    # "early_anchor" alone (it legitimately anchors the window, see the
+    # comment above), proving "spanner" specifically was excluded from
+    # train despite train_n being nonzero.
+    assert df.iloc[0]["train_n"] == 1
     assert df.iloc[0]["test_n"] == 0
 
 

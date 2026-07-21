@@ -60,6 +60,24 @@ def _reject_non_finite_json_constant(token: str) -> None:
     raise ValueError(f"non-standard JSON constant {token!r} (NaN/Infinity) is not permitted")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    """``json.loads``'s ``object_pairs_hook``: Python's json module, by
+    default, uses last-value-wins semantics for a JSON object containing
+    the same key twice (not valid per a strict reading of RFC 8259, and
+    never a legitimate DJ_SerializeDecision output). Reproduced Codex
+    review counterexample (2026-07-22): a record with two ``score`` keys
+    parsed as one valid record with zero parse errors, silently dropping
+    the first value. Raising here makes a duplicate key a visible parse
+    error instead."""
+
+    seen: dict[str, object] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        seen[key] = value
+    return seen
+
+
 @dataclass(frozen=True)
 class ParseError:
     source_file: str
@@ -87,16 +105,32 @@ class JournalReadResult:
         return len(self.valid_records) + len(self.parse_errors) + len(self.validation_errors)
 
 
-def _read_lines_from_file(path: Path) -> tuple[list[tuple[int, dict]], list[ParseError]]:
-    """Parses each non-blank line of 'path' as JSON. A line that fails to
-    parse (including a non-standard NaN/Infinity constant, or a decoding
-    failure for the whole file) is recorded as a ParseError and EXCLUDED
-    from the returned records -- never silently dropped without a trace,
-    and never allowed to abort reading the rest of the DIRECTORY (one bad
-    file must not hide every other file's valid lines)."""
+def _read_lines_from_file(
+    path: Path, source_label: str, remaining_budget: int
+) -> tuple[list[tuple[int, dict]], list[ParseError], int]:
+    """Parses each non-blank line of 'path' as JSON, STREAMING line-by-line
+    (never loading the whole file into memory at once) and raising
+    ``JournalReaderLimitError`` as soon as more than 'remaining_budget'
+    non-blank lines have been seen -- across this file alone; the caller
+    tracks the running total across the whole directory. A line that
+    fails to parse (including a non-standard NaN/Infinity constant, a
+    duplicate JSON key, or a decoding failure for the whole file) is
+    recorded as a ParseError and EXCLUDED from the returned records --
+    never silently dropped without a trace, and never allowed to abort
+    reading the rest of the DIRECTORY (one bad file must not hide every
+    other file's valid lines).
+
+    **Fixed, 2026-07-22 Codex review finding:** this previously called
+    ``readlines()`` (loading the entire file into memory) BEFORE the
+    caller ever checked the running total against ``max_records`` -- a
+    single huge file could exhaust process memory before the limit was
+    ever consulted. Returns the count of non-blank lines actually read so
+    the caller can maintain a running total without re-reading anything.
+    """
 
     parsed: list[tuple[int, dict]] = []
     errors: list[ParseError] = []
+    non_blank_count = 0
 
     try:
         # "utf-8-sig" tolerates a leading UTF-8 BOM (transparently
@@ -105,47 +139,57 @@ def _read_lines_from_file(path: Path) -> tuple[list[tuple[int, dict]], list[Pars
         # free; see the module docstring for the separate, NOT-yet-fixed
         # FILE_ANSI-vs-UTF-8 cross-language encoding caveat.
         with path.open("r", encoding="utf-8-sig") as fh:
-            lines = fh.readlines()
+            for line_number, raw_line in enumerate(fh, start=1):
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                non_blank_count += 1
+                if non_blank_count > remaining_budget:
+                    raise JournalReaderLimitError(
+                        f"{source_label}: more than the remaining max_records budget of "
+                        f"{remaining_budget} lines -- refusing to load the rest into memory"
+                    )
+                try:
+                    record = json.loads(
+                        stripped,
+                        parse_constant=_reject_non_finite_json_constant,
+                        object_pairs_hook=_reject_duplicate_keys,
+                    )
+                except ValueError as exc:  # json.JSONDecodeError is itself a ValueError
+                    # Cap the retained raw line so one hostile/huge line
+                    # cannot itself become an unbounded in-memory payload
+                    # inside the error record (Codex review finding).
+                    errors.append(
+                        ParseError(
+                            source_file=source_label,
+                            line_number=line_number,
+                            raw_line=stripped[:2000],
+                            error=str(exc),
+                        )
+                    )
+                    continue
+                if not isinstance(record, dict):
+                    errors.append(
+                        ParseError(
+                            source_file=source_label,
+                            line_number=line_number,
+                            raw_line=stripped[:2000],
+                            error=f"expected a JSON object, got {type(record).__name__}",
+                        )
+                    )
+                    continue
+                parsed.append((line_number, record))
     except UnicodeDecodeError as exc:
         errors.append(
             ParseError(
-                source_file=str(path),
+                source_file=source_label,
                 line_number=0,
                 raw_line="",
                 error=f"file-level decode failure (not valid UTF-8): {exc}",
             )
         )
-        return parsed, errors
 
-    for line_number, raw_line in enumerate(lines, start=1):
-        stripped = raw_line.strip()
-        if not stripped:
-            continue
-        try:
-            record = json.loads(stripped, parse_constant=_reject_non_finite_json_constant)
-        except ValueError as exc:  # json.JSONDecodeError is itself a ValueError
-            errors.append(
-                ParseError(
-                    source_file=str(path),
-                    line_number=line_number,
-                    raw_line=stripped,
-                    error=str(exc),
-                )
-            )
-            continue
-        if not isinstance(record, dict):
-            errors.append(
-                ParseError(
-                    source_file=str(path),
-                    line_number=line_number,
-                    raw_line=stripped,
-                    error=f"expected a JSON object, got {type(record).__name__}",
-                )
-            )
-            continue
-        parsed.append((line_number, record))
-
-    return parsed, errors
+    return parsed, errors, non_blank_count
 
 
 def read_journal_directory(
@@ -189,15 +233,16 @@ def read_journal_directory(
         if path.resolve().parent != resolved_directory:
             continue
 
-        parsed, parse_errors = _read_lines_from_file(path)
+        # Source labelled relative to 'directory', not an absolute path
+        # -- a Codex review finding: error artifacts previously retained
+        # the full absolute filesystem path (which can embed a username
+        # or private folder name) despite the rest of this project's
+        # portable-metadata discipline.
+        source_label = str(path.resolve().relative_to(resolved_directory))
+        remaining_budget = max_records - total_records_seen
+        parsed, parse_errors, non_blank_count = _read_lines_from_file(path, source_label, remaining_budget)
         all_parse_errors.extend(parse_errors)
-
-        total_records_seen += len(parsed) + len(parse_errors)
-        if total_records_seen > max_records:
-            raise JournalReaderLimitError(
-                f"{directory}: more than max_records={max_records} lines across matched files "
-                "-- refusing to load the rest into memory"
-            )
+        total_records_seen += non_blank_count
 
         for line_number, raw_record in parsed:
             try:
@@ -205,7 +250,7 @@ def read_journal_directory(
             except SchemaValidationError as exc:
                 all_validation_errors.append(
                     ValidationError(
-                        source_file=str(path),
+                        source_file=source_label,
                         line_number=line_number,
                         raw_record=raw_record,
                         error=str(exc),

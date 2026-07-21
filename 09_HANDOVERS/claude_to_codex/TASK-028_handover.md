@@ -121,11 +121,13 @@ the newer ones.
 `analyse_baseline.py`, `join_news_events.py`, `walk_forward.py`,
 `monte_carlo.py`, `pattern_validation.py`, `compare_releases.py` (all 9
 required scripts now exist), plus a bonus `regime_validation.py`
-(closes TASK-016's deferred confusion-matrix item), plus all 10 required
-notebooks (each executed for real via `jupyter execute`, not
-hand-simulated). 196 tests total, all passing. Full detail in
-`TASK-028_PYTHON_STATISTICAL_LAB.md`'s "Implementation notes (Claude,
-part 2 of N)" section.
+(**does NOT close TASK-016's deferred item** — only a partial,
+formula-level port; see the "UPDATE" section far below for the
+correction and the follow-up task this was split into), plus all 10
+required notebooks (each executed for real via `jupyter execute`, not
+hand-simulated). Test count at the time of this part-2 update was 196 —
+see the bottom-of-file update for the current, actual count; do not
+trust this number as current.
 
 ### Additional things to audit, be adversarial
 
@@ -170,5 +172,57 @@ part 2 of N)" section.
    `cd 03_SOURCE_CODE/Python && pytest -v` yourself and independently
    re-execute at least a few notebooks via
    `jupyter execute --kernel_name=<your kernel> notebooks/<NN>_*.ipynb`
-   to confirm Claude's claimed "196 passed" and "all 10 notebooks exit 0"
-   are real, not just asserted in the task file.
+   to confirm the pass count and notebook exit codes are real, not just
+   asserted in the task file. (This section's own "196 passed"/"all 10
+   notebooks exit 0" claims are now stale — see the UPDATE below for the
+   current state.)
+
+---
+
+## UPDATE — second independent review round resolved (2026-07-22)
+
+Everything below this line covers the remediation of your own second
+review pass (`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated
+in place, 16 findings: 2 P0/11 P1/3 P2). Full detail in
+`TASK-028_PYTHON_STATISTICAL_LAB.md`'s "Implementation notes (Claude,
+part 4 of N)" section — read that section for the complete list; it is
+not duplicated here.
+
+**Current, real state (verify independently, don't trust this line):**
+`pytest -q` → 340 passed. `ruff check .` → all checks passed. `mypy
+analysis data_collection --ignore-missing-imports` → success, no issues
+in 23 source files (first type-check pass this project has ever run).
+All 11 notebooks re-executed via `jupyter execute`, all exit 0.
+
+### What to specifically re-audit this round
+
+1. **The paired-pipeline fixes** — `analysis/performance_breakdown.py`
+   and `analysis/parameter_stability.py` are new. Confirm they are
+   actually real, general-purpose pipelines (not notebook logic merely
+   relocated with the same narrow shape) and that `parameter_stability`'s
+   full-path-set convention is correctly implemented, not just
+   correctly described in a comment.
+2. **The walk-forward window-anchor fix** — re-derive
+   `test_windows_hand_computed_with_purged_boundaries`'s hand trace
+   yourself; this is exactly the kind of off-by-one-in-spirit bug a
+   second reviewer should independently re-verify, not accept on faith.
+3. **The Newcombe-Wilson two-proportion interval**
+   (`metrics.wilson_diff_confidence_interval`) — re-derive the formula
+   independently and check it against a source you trust; this replaces
+   a bootstrap method your own review found degenerate, so it is worth
+   confirming the replacement is itself correct, not just different.
+4. **The bar-alignment requirement in `calculate_mfe_mae.py`** — confirm
+   `NoBarsInWindowError` really is now structurally unreachable (as
+   claimed in `trade_math.py`'s own updated docstring) given the new
+   alignment check, and that this was an intentional, disclosed
+   consequence, not an accidental dead branch.
+5. **Everywhere `sanitize_for_csv` was and was NOT applied** — confirm
+   every CSV export carrying caller-controlled journal strings is
+   covered (only `join_trade_journal.py` and `join_news_events.py` were
+   identified this round); check whether any other export site was
+   missed.
+6. **The residual, disclosed gaps** — `ea_version`/`data_source` are only
+   CLI-wired in `analyse_baseline.py`/`compare_releases.py`, not the
+   other 7 scripts; TASK-036/037/038 are registered but not started.
+   Confirm these are accurately disclosed as incomplete, not
+   overclaimed.

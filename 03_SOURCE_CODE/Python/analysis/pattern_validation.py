@@ -316,9 +316,18 @@ def run(ohlc_csv: Path, output_csv: Optional[Path] = None, *, trend_lookback: in
     (row 0 = oldest bar) and this function will reverse it first.
     """
 
+    # **Fixed, 2026-07-22 Codex review finding:** this script had no
+    # input/output collision guard at all -- unlike every other pipeline
+    # in this layer.
+    if output_csv is not None and output_csv.resolve() == ohlc_csv.resolve():
+        raise CsvSchemaError(f"output_csv {output_csv} must not be the same as the input ohlc_csv")
+
     ohlc = read_csv_with_required_columns(ohlc_csv, REQUIRED_OHLC_COLUMNS)
     assert_finite_columns(ohlc, ["open", "high", "low", "close"], ohlc_csv)
-    assert_high_low_geometry(ohlc, "high", "low", ohlc_csv)
+    # Full OHLC geometry (open/close must also fall within [low, high]),
+    # not just high >= low -- see assert_high_low_geometry's own
+    # docstring for the Codex review finding this closes.
+    assert_high_low_geometry(ohlc, "high", "low", ohlc_csv, open_column="open", close_column="close")
     if ascending_input:
         ohlc = ohlc.iloc[::-1].reset_index(drop=True)
 

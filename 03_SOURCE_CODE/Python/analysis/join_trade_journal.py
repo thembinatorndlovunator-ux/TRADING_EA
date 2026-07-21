@@ -25,9 +25,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from analysis.csv_io import sanitize_for_csv
 from analysis.report_metadata import (
     PIPELINE_VERSION,
     ReportMetadata,
+    atomic_write_text,
     build_report_metadata,
     capture_git_commit,
     default_repo_root,
@@ -81,13 +83,25 @@ def run(
         raise ValueError("output_csv, output_json, and errors_json must all be distinct paths")
     if any(p == input_dir.resolve() for p in resolved_outputs):
         raise ValueError("an output path must not be the same as input_dir")
+    # **Fixed, 2026-07-22 Codex review finding:** this previously checked
+    # output paths only against input_dir ITSELF, not against the actual
+    # decisions_*.jsonl files inside it -- a direct probe used a journal
+    # source file as output_csv and overwrote the source evidence. Any
+    # output written INSIDE input_dir (regardless of filename) is now
+    # rejected outright, both to prevent overwriting a real journal file
+    # and to prevent a derived output later being picked up by a
+    # SUBSEQUENT run's own journal glob.
+    resolved_input_dir = input_dir.resolve()
+    if any(p.parent == resolved_input_dir for p in resolved_outputs):
+        raise ValueError(f"an output path must not be written inside input_dir ({input_dir})")
 
-    read_result = read_journal_directory(input_dir)
-    df = to_dataframe(read_result.valid_records)
-
-    dup_signal_id = find_duplicate_signal_ids(df)
-    dup_timestamp_symbol = find_duplicate_timestamp_symbol(df)
-
+    # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
+    # previously computed AFTER read_journal_directory had already parsed
+    # every file -- a concurrent append or a torn final line completing
+    # between the two reads could make the reported hash describe
+    # different bytes than the ones actually analyzed. Hashing first
+    # narrows (does not perfectly eliminate, absent a single atomic read)
+    # that window.
     journal_files = sorted(input_dir.glob("decisions_*.jsonl"))
     root = repo_path if repo_path is not None else default_repo_root()
     if journal_files:
@@ -123,19 +137,34 @@ def run(
             pipeline_version=PIPELINE_VERSION,
         )
 
+    read_result = read_journal_directory(input_dir)
+    df = to_dataframe(read_result.valid_records)
+
+    dup_signal_id = find_duplicate_signal_ids(df)
+    dup_timestamp_symbol = find_duplicate_timestamp_symbol(df)
+
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(output_csv, index=False)
+        # **Fixed, 2026-07-22 Codex review finding:** caller-controlled
+        # journal strings (strategy/setup/pattern names, etc.) were
+        # written directly to CSV; a value like "=CMD(...)" could become
+        # a live spreadsheet formula the moment a reviewer opened the
+        # exported CSV. Every string (object-dtype) column is sanitized
+        # before export.
+        safe_df = df.copy()
+        for col in safe_df.select_dtypes(include=["object", "str"]).columns:
+            safe_df[col] = safe_df[col].map(sanitize_for_csv)
+        safe_df.to_csv(output_csv, index=False)
 
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_json.write_text(
+        atomic_write_text(
+            output_json,
             json.dumps(
                 [r.model_dump(mode="json") for r in read_result.valid_records],
                 indent=2,
                 allow_nan=False,
             ),
-            encoding="utf-8",
         )
 
     if errors_json is not None:
@@ -175,9 +204,7 @@ def run(
             "duplicate_signal_id_records": dup_signal_id.to_dict(orient="records"),
             "duplicate_timestamp_symbol_records": dup_timestamp_symbol.to_dict(orient="records"),
         }
-        errors_json.write_text(
-            json.dumps(error_report, indent=2, default=str, allow_nan=False), encoding="utf-8"
-        )
+        atomic_write_text(errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False))
 
     return JoinTradeJournalResult(
         read_result=read_result,

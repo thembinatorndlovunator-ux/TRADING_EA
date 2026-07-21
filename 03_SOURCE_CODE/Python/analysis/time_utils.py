@@ -16,6 +16,10 @@ here rather than re-derived, so the MQL5 and Python sides agree.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 # Matches MT5CalendarProvider.mqh's MTC_BOTSWANA_UTC_OFFSET_SECONDS (2*3600).
 BOTSWANA_UTC_OFFSET = timedelta(hours=2)
@@ -102,7 +106,7 @@ def is_duplicate_timestamp_symbol(seen: set[tuple[datetime, str]], value: dateti
     return (value, symbol) in seen
 
 
-def parse_utc_series(values: "pd.Series") -> "pd.Series":  # noqa: F821 -- pandas imported lazily below
+def parse_utc_series(values: "pd.Series") -> "pd.Series":
     """Strictly parses a pandas Series of ISO-8601 timestamp STRINGS as
     UTC, reusing ``parse_iso8601_utc``/``ensure_utc`` row-by-row.
 

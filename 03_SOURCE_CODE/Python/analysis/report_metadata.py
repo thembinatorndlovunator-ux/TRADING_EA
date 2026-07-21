@@ -20,10 +20,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
-PIPELINE_VERSION = "0.1.0"  # bump when a pipeline's OUTPUT SHAPE changes,
+PIPELINE_VERSION = "0.2.0"  # bump when a pipeline's OUTPUT SHAPE changes,
                             # not on every code edit -- matches this
                             # project's #property version discipline of
                             # marking meaningful revisions, not churn.
+                            # **Bumped, 2026-07-22 Codex review finding:**
+                            # this remained 0.1.0 through the entire prior
+                            # remediation round despite output-shape
+                            # changes (renamed fields, new CI columns,
+                            # new required checks) directly contrary to
+                            # this comment's own stated rule.
 
 
 class GitMetadataError(RuntimeError):
@@ -177,6 +183,12 @@ class ReportMetadata:
     timezone: str
     random_seed: Optional[int]
     pipeline_version: str
+    # **Added, 2026-07-22 Codex review finding:** the master requirement
+    # (00_MASTER_PROMPT_FOR_CLAUDE.md:45-58) names EA version and data
+    # source among the facts every result must record; neither field
+    # existed on this dataclass at all.
+    ea_version: Optional[str] = None
+    data_source: Optional[str] = None
     generated_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -199,12 +211,14 @@ def build_report_metadata(
     set_file: Optional[str] = None,
     timezone_label: str = "UTC",
     random_seed: Optional[int] = None,
+    ea_version: Optional[str] = None,
+    data_source: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> ReportMetadata:
     """Convenience constructor: captures git commit/dirty state and the
     dataset hash automatically; the caller supplies everything only it
     knows (symbol, currency, broker, period, timeframe, modelling mode,
-    costs, set file, seed).
+    costs, set file, seed, EA version, data source).
 
     'repo_path' defaults to ``default_repo_root()`` (this repo's own
     root), NOT the process's current working directory -- see
@@ -232,4 +246,6 @@ def build_report_metadata(
         timezone=timezone_label,
         random_seed=random_seed,
         pipeline_version=PIPELINE_VERSION,
+        ea_version=ea_version,
+        data_source=data_source,
     )

@@ -2,20 +2,48 @@
 
 ## Objective
 
-Complete `pattern_validation.py`'s candlestick coverage (currently 4 of
-18 patterns: bullish/bearish pin bar, bullish/bearish engulfing) and add
-the chart-pattern side (double top/bottom, head-and-shoulders/inverse)
-that TASK-028 never ported, then cross-check every pattern against real
-MQL5-exported detector results.
+Complete `pattern_validation.py`'s candlestick coverage and add the
+chart-pattern side (double top/bottom, head-and-shoulders/inverse) that
+TASK-028 never ported.
+
+**Exact counting convention (corrected, Codex review finding #2,
+2026-07-22 -- the original "14 of 18" claim was source-factually
+wrong):** `CandlestickPatternEngine.mqh` has **19** `CP_Is*Array` boolean
+pattern predicates PLUS one non-boolean helper, `CP_DetectHaramiArray`
+(returns `ENUM_HARAMI_DIRECTION`, used internally by
+`CP_IsHaramiConfirmedArray`) -- **20 detector/predicate functions total**.
+Four are currently ported: `CP_IsBullishPinBarArray`,
+`CP_IsBearishPinBarArray`, `CP_IsBullishEngulfingArray`,
+`CP_IsBearishEngulfingArray`. **Remaining: the other 15 `CP_Is*Array`
+predicates** (`CP_IsDragonflyRejectionArray`, `CP_IsGravestoneRejectionArray`,
+`CP_IsMarubozuArray`, `CP_IsDojiArray`, `CP_IsSpinningTopArray`,
+`CP_IsInsideBarArray`, `CP_IsOutsideBarArray`, `CP_IsTweezerTopArray`,
+`CP_IsTweezerBottomArray`, `CP_IsHaramiConfirmedArray`,
+`CP_IsMorningStarArray`, `CP_IsEveningStarArray`,
+`CP_IsThreeWhiteSoldiersArray`, `CP_IsThreeBlackCrowsArray`,
+`CP_IsThreeBarReversalArray`) **plus the `CP_DetectHaramiArray` helper
+`CP_IsHaramiConfirmedArray` depends on -- 16 functions in total** need
+porting to close this task's candlestick side.
+
+**This task's scope explicitly EXCLUDES the real-evidence MQL5-export
+cross-check** (Codex review finding #2: TASK-033's first draft let its
+own acceptance criteria pass with that step still PENDING, while its
+Objective simultaneously promised it -- the same closure loophole found
+in TASK-031). Producing a real MQL5-exported detector-results CSV is
+`TASK-037_MT5_EXPORT_BRIDGE.md`'s deliverable; running
+`compare_to_mql5_export` against it is tracked there.
 
 ## Reason
 
 TASK-028's own "genuinely NOT done" section and Codex's review (finding
-#1) both flag that only 4 of 18 candlestick patterns are ported and no
-chart patterns are ported at all, and that no cross-check against a real
+#1) both flag that candlestick coverage is incomplete and no chart
+patterns are ported at all, and that no cross-check against a real
 MQL5-exported detector-results CSV has ever run (none exists yet).
 Codex's review required this be split into its own numbered task rather
-than staying an undifferentiated backlog bullet under TASK-028.
+than staying an undifferentiated backlog bullet under TASK-028. A second
+review pass (finding #2, 2026-07-22) further found this task's own first
+draft had the wrong pattern count and the same PENDING-closure loophole
+as TASK-031 -- both fixed above.
 
 ## Baseline behaviour
 
@@ -43,25 +71,23 @@ change. `01_BASELINE/` must not be modified.
 
 ## Specification
 
-1. Port the remaining 14 candlestick pattern functions from
-   `CandlestickPatternEngine.mqh` to `pattern_validation.py`, each with
-   its own hand-verified synthetic OHLC fixture (matching the reference
-   cases from TASK-017 where applicable).
+1. Port the remaining 15 `CP_Is*Array` candlestick predicates plus the
+   `CP_DetectHaramiArray` helper (16 functions total -- see Objective's
+   exact counting convention) from `CandlestickPatternEngine.mqh` to
+   `pattern_validation.py`, each with its own hand-verified synthetic
+   OHLC fixture (matching the reference cases from TASK-017 where
+   applicable).
 2. Port the chart-pattern functions (double top/bottom,
    head-and-shoulders/inverse) from `ChartPatternEngine.mqh`, including
    the sloped-neckline interpolation TASK-018 hand-verified.
-3. Produce a real MQL5-exported detector-results CSV (via a small
-   `Test_*.mq5` script or an export hook) for at least one non-trivial
-   fixture set, and run `compare_to_mql5_export` against it for real —
-   closing the "Real-data run: PENDING" gap this specific area has had
-   since TASK-028 part 1.
+3. Do NOT attempt the real MQL5-export cross-check here -- that is
+   `TASK-037`'s deliverable once a real export exists. Keep the existing
+   "Real-data run: PENDING" convention in whatever this task produces.
 
 ## Files affected
 
 - `03_SOURCE_CODE/Python/analysis/pattern_validation.py` and its tests.
 - `03_SOURCE_CODE/Python/notebooks/09_pattern_detector_validation.ipynb`.
-- A new small MQL5 export script/test under the relevant task's test
-  directory, if needed to produce the real export.
 - `TASKS.md` and this task file.
 
 No file under `01_BASELINE/` may be modified.
@@ -71,15 +97,17 @@ No file under `01_BASELINE/` may be modified.
 - Modifying `CandlestickPatternEngine.mqh`/`ChartPatternEngine.mqh`
   themselves — this task validates, it does not change detector logic.
   Any bug found in the MQL5 side is a separate follow-up task.
+- The real MQL5-export cross-check itself -- owned by `TASK-037`, not a
+  deliverable of this task (see Objective).
 
 ## Risks
 
 - Python/MQL5 metric-definition drift if a ported pattern's formula is
   transcribed incorrectly — every port needs a hand-traceable fixture,
   not just a visual code read-through.
-- The real MQL5 export step depends on being able to actually run
-  MetaEditor/MT5 to generate it; if that's unavailable, this task must
-  say so explicitly rather than fabricate a CSV.
+- Miscounting the pattern surface again -- re-verify against the actual
+  `CandlestickPatternEngine.mqh` source at implementation time rather
+  than trusting this document's count if the source has since changed.
 
 ## Test plan
 
@@ -88,27 +116,27 @@ No file under `01_BASELINE/` may be modified.
 2. Run `pytest` and confirm all tests pass.
 3. Re-execute `09_pattern_detector_validation.ipynb` from a clean
    kernel.
-4. If a real MQL5 export was produced, run `compare_to_mql5_export`
-   against it and report the result; otherwise mark that step
-   explicitly PENDING, not fabricated.
 
 ## Acceptance criteria
 
-- [ ] All 18 candlestick patterns ported and hand-verified.
+- [ ] All 16 remaining candlestick detector/predicate functions (15
+      `CP_Is*Array` predicates + `CP_DetectHaramiArray`) ported and
+      hand-verified.
 - [ ] All chart patterns (double top/bottom, head-and-shoulders/inverse)
       ported and hand-verified.
-- [ ] `compare_to_mql5_export` run against at least one real MQL5
-      export, or the absence of one explicitly stated as PENDING.
+- [ ] No claim of a real MQL5-export cross-check is made here -- that
+      remains explicitly owned by TASK-037.
 - [ ] Independent review completed and findings resolved.
 
 ## Rejection criteria
 
-Reject if a pattern port has no hand-traceable fixture, if a "real
-MQL5 export" comparison is actually run against synthetic data
-presented as real, or if MQL5 detector logic is modified under cover of
-this validation task.
+Reject if a pattern port has no hand-traceable fixture, if the pattern
+count is misstated again without re-verifying against the actual source,
+or if MQL5 detector logic is modified under cover of this validation
+task.
 
 ## Status
 
 Not started. Registered as a formal follow-up per Codex's TASK-028
-review finding #1.
+review finding #1 (2026-07-21); scope and count corrected per finding #2
+of the second review round (2026-07-22).
