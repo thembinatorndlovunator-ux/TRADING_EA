@@ -26,6 +26,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-016 | Phase 4 detection engines: MarketRegimeEngine (nine-state classifier, corrected confidence formula) | `claude/task-016-market-regime-engine` | In progress — compiled clean (real evidence); array-based core hand-verifiable (reproduces spec's own extreme-value checks), live-symbol wrapper batched | 2026-07-21 | `TASK-016_MARKET_REGIME_ENGINE.md` |
 | TASK-017 | Candlestick reference cross-check against EA Files/Candlestick Bible.pdf + SMC PDF | `claude/task-017-candlestick-reference-crosscheck` | Done — real PDF cross-check performed, one gap fixed (pin-bar wick-to-body), one design fork flagged (order block definition) | 2026-07-21 | `TASK-017_CANDLESTICK_REFERENCE_CROSSCHECK.md` |
 | TASK-018 | Phase 4 detection engines: ChartPatternEngine (double/bottom top, head-and-shoulders/inverse) | `claude/task-018-chart-pattern-engine` | In progress — compiled clean (real evidence); array-based core hand-verified incl. sloped-neckline interpolation; cross-checked against EA Files during build; live-symbol wrapper batched | 2026-07-21 | `TASK-018_CHART_PATTERN_ENGINE.md` |
+| TASK-019 | Phase 5 strategy modules: SRBounceStrategy (first strategy family) — begins Phase 5 | `claude/task-019-sr-bounce-strategy` | In progress — compiled clean (real evidence), first end-to-end composition of regime+structure+SR+candlesticks; array-based core hand-verified, live-symbol wrapper batched | 2026-07-21 | `TASK-019_SR_BOUNCE_STRATEGY.md` |
 
 ## Status legend
 
