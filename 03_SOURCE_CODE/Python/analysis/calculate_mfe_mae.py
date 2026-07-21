@@ -30,8 +30,16 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, parse_is_long, read_csv_with_required_columns
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_high_low_geometry,
+    assert_unique_ids,
+    parse_is_long,
+    read_csv_with_required_columns,
+)
 from analysis.report_metadata import build_report_metadata
+from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import MfeMaeResult, NoBarsInWindowError, compute_mfe_mae
 
 TradesSchemaError = CsvSchemaError  # kept as a local alias for readability
@@ -73,11 +81,19 @@ def run(
     bad trade never hides every other trade's valid result.
     """
 
+    for out_path in (output_csv, errors_json):
+        if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
+            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
     bars = read_csv_with_required_columns(bars_csv, REQUIRED_BAR_COLUMNS)
+    assert_unique_ids(trades, "trade_id", trades_csv)
+    assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
+    assert_finite_columns(bars, ["high", "low"], bars_csv)
+    assert_high_low_geometry(bars, "high", "low", bars_csv)
 
     bars = bars.copy()
-    bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True, errors="raise")
+    bars["timestamp"] = parse_utc_series(bars["timestamp"])
 
     results: list[MfeMaeResult] = []
     row_errors: list[dict] = []
@@ -86,8 +102,8 @@ def run(
         trade_id = str(row["trade_id"])
         try:
             is_long = parse_is_long(row["is_long"])
-            entry_time = pd.to_datetime(row["entry_time"], utc=True, errors="raise")
-            exit_time = pd.to_datetime(row["exit_time"], utc=True, errors="raise")
+            entry_time = parse_iso8601_utc(str(row["entry_time"]))
+            exit_time = parse_iso8601_utc(str(row["exit_time"]))
             entry_price = float(row["entry_price"])
             stop_price = float(row["stop_price"])
             symbol_bars = bars[bars["symbol"] == row["symbol"]]
@@ -136,7 +152,7 @@ def run(
             },
             "row_errors": row_errors,
         }
-        errors_json.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        errors_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
 
     return MfeMaeRunResult(results=results, row_errors=row_errors)
 
@@ -168,7 +184,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     print(f"calculate_mfe_mae: {len(result.results)} computed, {len(result.row_errors)} row errors.")
-    return 0
+    return 1 if result.row_errors else 0
 
 
 if __name__ == "__main__":

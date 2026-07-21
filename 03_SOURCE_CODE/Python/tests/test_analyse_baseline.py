@@ -13,9 +13,10 @@ from analysis.metrics import InsufficientSampleError
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _write_trades(path: Path) -> None:
+def _write_trades(path: Path, rows: list[dict] | None = None) -> None:
     pd.DataFrame(
-        [
+        rows
+        or [
             {
                 "trade_id": "t1",
                 "symbol": "XAUUSD",
@@ -83,11 +84,70 @@ def test_empty_trades_raises(tmp_path):
         run(path)
 
 
+def test_non_positive_starting_balance_rejected(tmp_path):
+    """Regression for a Codex review finding: a non-positive starting
+    balance made percentage drawdown silently meaningless (0.0 default)."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    with pytest.raises(InsufficientSampleError):
+        run(path, starting_balance=0.0)
+    with pytest.raises(InsufficientSampleError):
+        run(path, starting_balance=-500.0)
+
+
+def test_duplicate_trade_id_rejected(tmp_path):
+    """Regression for a Codex review finding: duplicate trade_id values
+    were never checked, silently double-counting a trade."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(
+        path,
+        [
+            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T01:00:00Z",
+             "entry_price": 100.0, "exit_price": 102.0, "stop_price": 98.0, "profit": 40.0},
+            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T02:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+             "entry_price": 100.0, "exit_price": 99.0, "stop_price": 98.0, "profit": -20.0},
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(path)
+
+
+def test_non_finite_value_rejected(tmp_path):
+    """Regression for a Codex review finding: NaN/non-numeric values in
+    numeric columns were never checked before being fed into arithmetic."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(
+        path,
+        [
+            {"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T01:00:00Z",
+             "entry_price": 100.0, "exit_price": 102.0, "stop_price": 98.0, "profit": float("nan")},
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(path)
+
+
+def test_output_path_colliding_with_input_rejected(tmp_path):
+    """Regression for a Codex review finding: an output path equal to the
+    input path would overwrite the source before/while reading it."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    with pytest.raises(CsvSchemaError):
+        run(path, output_json=path)
+
+
 def test_summary_hand_computed(tmp_path):
     path = tmp_path / "trades.csv"
     _write_trades(path)
 
-    summary = run(path, starting_equity=0.0)
+    summary = run(path, starting_balance=1000.0)
 
     assert summary["n_trades"] == 4
     assert summary["win_rate"]["value"] == pytest.approx(0.5)
@@ -97,9 +157,13 @@ def test_summary_hand_computed(tmp_path):
     assert summary["profit_factor"] == pytest.approx(2.25)  # 90 / 40
     assert summary["gross_profit"] == pytest.approx(90.0)
     assert summary["gross_loss"] == pytest.approx(-40.0)
-    assert summary["max_drawdown_abs"] == pytest.approx(20.0)
-    assert summary["max_drawdown_pct"] == pytest.approx(0.5)  # 20 / 40
-    assert summary["final_equity"] == pytest.approx(50.0)
+
+    # balance_curve = [1000, 1040, 1020, 1070, 1050]
+    # largest abs/pct decline both at peak=1040(idx1) -> trough=1020(idx2): 20, ~1.923%
+    assert summary["max_balance_drawdown_abs"] == pytest.approx(20.0)
+    assert summary["max_balance_drawdown_pct"] == pytest.approx(20.0 / 1040.0)
+    assert summary["final_balance"] == pytest.approx(1050.0)
+    assert summary["max_equity_drawdown"] is None
 
 
 def test_r_multiples_hand_computed_per_trade(tmp_path):

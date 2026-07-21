@@ -214,3 +214,108 @@ def test_cli_main_missing_file_returns_error_exit_code(tmp_path, capsys):
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_duplicate_trade_id_rejected(tmp_path):
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+             "entry_price": 100.0, "stop_price": 98.0},
+            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+             "entry_price": 100.0, "stop_price": 98.0},
+        ],
+    )
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_non_finite_entry_price_rejected(tmp_path):
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+             "entry_price": float("nan"), "stop_price": 98.0},
+        ],
+    )
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_high_below_low_bar_rejected(tmp_path):
+    bars_path = tmp_path / "bad_bars.csv"
+    pd.DataFrame(
+        {"symbol": ["XAUUSD"], "timestamp": ["2026-07-21T00:00:00Z"], "high": [90.0], "low": [100.0]}
+    ).to_csv(bars_path, index=False)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T00:00:00Z",
+             "entry_price": 100.0, "stop_price": 98.0},
+        ],
+    )
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_naive_trade_timestamp_captured_as_row_error(tmp_path):
+    """Regression for a Codex review finding: a naive timestamp string was
+    previously silently accepted as UTC via pd.to_datetime(utc=True)."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {"trade_id": "naive-1", "symbol": "XAUUSD", "is_long": "True",
+             "entry_time": "2026-07-21T00:00:00", "exit_time": "2026-07-21T03:00:00Z",
+             "entry_price": 100.0, "stop_price": 98.0},
+        ],
+    )
+    result = run(trades_path, bars_path)
+    assert result.results == []
+    assert len(result.row_errors) == 1
+    assert result.row_errors[0]["trade_id"] == "naive-1"
+
+
+def test_output_path_colliding_with_input_rejected(tmp_path):
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [{"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
+          "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+          "entry_price": 100.0, "stop_price": 98.0}],
+    )
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path, output_csv=trades_path)
+
+
+def test_cli_main_returns_nonzero_when_row_errors_present(tmp_path, capsys):
+    """Regression for a Codex review finding: the CLI always returned 0
+    even when every row failed."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [{"trade_id": "bad-1", "symbol": "XAUUSD", "is_long": "sideways",
+          "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T03:00:00Z",
+          "entry_price": 100.0, "stop_price": 98.0}],
+    )
+    exit_code = main(["--trades-csv", str(trades_path), "--bars-csv", str(bars_path)])
+    assert exit_code == 1

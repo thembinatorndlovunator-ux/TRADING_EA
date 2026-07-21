@@ -148,6 +148,7 @@ def test_bootstrap_ci_zero_variance_data_collapses_exactly():
     assert result.ci_upper == pytest.approx(10.0)
     assert result.n_resamples == 50
     assert result.seed == 7
+    assert result.n == 5
 
 
 def test_bootstrap_ci_deterministic_given_same_seed():
@@ -183,13 +184,48 @@ def test_max_drawdown_empty_raises():
 
 def test_max_drawdown_hand_computed():
     # peak 120 (idx1) -> trough 90 (idx2): dd=30, 25%
-    # peak 130 (idx3) -> trough 80 (idx4): dd=50, 38.46% <- the larger one
+    # peak 130 (idx3) -> trough 80 (idx4): dd=50, 38.46% <- larger on BOTH axes here
     curve = [100.0, 120.0, 90.0, 130.0, 80.0]
     result = compute_max_drawdown(curve)
     assert result.max_drawdown_abs == pytest.approx(50.0)
+    assert result.max_drawdown_abs_peak_index == 3
+    assert result.max_drawdown_abs_trough_index == 4
     assert result.max_drawdown_pct == pytest.approx(50.0 / 130.0)
-    assert result.peak_index == 3
-    assert result.trough_index == 4
+    assert result.max_drawdown_pct_peak_index == 3
+    assert result.max_drawdown_pct_trough_index == 4
+
+
+def test_max_drawdown_abs_and_pct_maxima_can_be_different_points():
+    """Regression for a Codex review finding (2026-07-21): the largest
+    ABSOLUTE decline and the largest PERCENTAGE decline are not always the
+    same pair of points. On [100, 10, 60, 200, 100]: the 100->10 fall is
+    only 90 in absolute terms but a 90% decline; the later 200->100 fall
+    is a larger 100 in absolute terms but only a 50% decline. The old
+    (buggy) implementation selected whichever point had the larger
+    ABSOLUTE decline and reported THAT point's percentage (wrongly
+    reporting 50% as "the" drawdown here, hiding the real 90% one)."""
+
+    curve = [100.0, 10.0, 60.0, 200.0, 100.0]
+    result = compute_max_drawdown(curve)
+
+    assert result.max_drawdown_abs == pytest.approx(100.0)  # the 200 -> 100 fall
+    assert result.max_drawdown_abs_peak_index == 3
+    assert result.max_drawdown_abs_trough_index == 4
+
+    assert result.max_drawdown_pct == pytest.approx(0.9)  # the 100 -> 10 fall
+    assert result.max_drawdown_pct_peak_index == 0
+    assert result.max_drawdown_pct_trough_index == 1
+
+
+def test_max_drawdown_rejects_non_positive_first_value():
+    """Regression for a Codex review finding: a non-positive starting
+    value made percentage drawdown silently report 0% (a special case in
+    the old code) instead of being flagged as undefined."""
+
+    with pytest.raises(ValueError):
+        compute_max_drawdown([0.0, -100.0, -50.0])
+    with pytest.raises(ValueError):
+        compute_max_drawdown([-10.0, 5.0])
 
 
 def test_max_drawdown_monotonically_rising_is_zero():
@@ -201,5 +237,14 @@ def test_max_drawdown_monotonically_rising_is_zero():
 def test_max_drawdown_single_point():
     result = compute_max_drawdown([100.0])
     assert result.max_drawdown_abs == 0.0
-    assert result.peak_index == 0
-    assert result.trough_index == 0
+    assert result.max_drawdown_abs_peak_index == 0
+
+
+def test_max_drawdown_pct_can_exceed_one_when_balance_goes_negative():
+    """Regression for a Codex review finding: max_drawdown_pct is NOT
+    bounded to [0, 1] -- a balance falling below zero (e.g. a margin-call
+    scenario) is a real drawdown greater than 100%, not an error."""
+
+    result = compute_max_drawdown([100.0, -50.0])
+    assert result.max_drawdown_pct == pytest.approx(1.5)
+    assert result.max_drawdown_pct_trough_index == 1

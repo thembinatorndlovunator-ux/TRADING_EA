@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 # Matches MT5CalendarProvider.mqh's MTC_BOTSWANA_UTC_OFFSET_SECONDS (2*3600).
 BOTSWANA_UTC_OFFSET = timedelta(hours=2)
+BOTSWANA_TZ = timezone(BOTSWANA_UTC_OFFSET)
 
 
 class TimezoneValidationError(ValueError):
@@ -60,10 +61,22 @@ def parse_iso8601_utc(text: str) -> datetime:
 def to_botswana_time(utc_value: datetime) -> datetime:
     """Converts a UTC datetime to this project's stated Botswana-time
     reference (UTC+2, no DST) -- see module docstring for the assumption
-    this reuses from MT5CalendarProvider.mqh."""
+    this reuses from MT5CalendarProvider.mqh.
+
+    **Fixed, 2026-07-21 Codex review finding:** this previously ADDED the
+    offset to the datetime's wall-clock value while leaving ``tzinfo`` set
+    to UTC, which silently changed which INSTANT the datetime represented
+    (e.g. "2026-01-01 12:00 UTC" became "2026-01-01 14:00 UTC" -- two
+    hours LATER in absolute time, not the same moment relabelled). A
+    correct timezone conversion changes only the REPRESENTATION, not the
+    instant: this now uses ``astimezone``, so the wall-clock hour still
+    reads +2 but the result is provably the identical moment in time
+    (``to_botswana_time(x) == x`` holds for aware datetime equality, which
+    compares instants, not wall-clock fields).
+    """
 
     ensure_utc(utc_value)
-    return utc_value + BOTSWANA_UTC_OFFSET
+    return utc_value.astimezone(BOTSWANA_TZ)
 
 
 def to_server_time(utc_value: datetime, server_utc_offset_hours: float) -> datetime:
@@ -71,10 +84,13 @@ def to_server_time(utc_value: datetime, server_utc_offset_hours: float) -> datet
     OWN UTC offset in hours (never assumed fixed across brokers, unlike
     Botswana time above -- a caller must supply the real value, e.g.
     measured the same way MT5CalendarProvider.mqh's MTC_FetchEvents does:
-    TimeTradeServer() - TimeGMT() at the moment of interest)."""
+    TimeTradeServer() - TimeGMT() at the moment of interest).
+
+    Same instant-preserving fix as ``to_botswana_time`` above (uses
+    ``astimezone``, not offset-addition-with-stale-tzinfo)."""
 
     ensure_utc(utc_value)
-    return utc_value + timedelta(hours=server_utc_offset_hours)
+    return utc_value.astimezone(timezone(timedelta(hours=server_utc_offset_hours)))
 
 
 def is_duplicate_timestamp_symbol(seen: set[tuple[datetime, str]], value: datetime, symbol: str) -> bool:
@@ -84,3 +100,41 @@ def is_duplicate_timestamp_symbol(seen: set[tuple[datetime, str]], value: dateti
     unpopulated by the live EA (see that module's own docstring for why)."""
 
     return (value, symbol) in seen
+
+
+def parse_utc_series(values: "pd.Series") -> "pd.Series":  # noqa: F821 -- pandas imported lazily below
+    """Strictly parses a pandas Series of ISO-8601 timestamp STRINGS as
+    UTC, reusing ``parse_iso8601_utc``/``ensure_utc`` row-by-row.
+
+    **Fixed, 2026-07-21 Codex review finding:** every CSV-consuming
+    pipeline in this project previously called
+    ``pd.to_datetime(column, utc=True, errors="raise")`` directly. Pandas'
+    own ``utc=True`` SILENTLY treats a naive string (no "Z"/offset, e.g.
+    "2026-01-01T01:00:00") as if it were already UTC -- exactly the
+    "guess a timezone" behavior ``ensure_utc`` exists to refuse. This
+    function raises ``TimezoneValidationError`` for any naive or
+    non-UTC-offset value instead, with the offending row indices named,
+    per the reproducibility contract's "visible failures" rule.
+    """
+
+    import pandas as pd
+
+    parsed: list = []
+    bad_rows: list[tuple[object, object]] = []
+    for index, raw in values.items():
+        try:
+            parsed.append(parse_iso8601_utc(str(raw)))
+        except (TimezoneValidationError, ValueError) as exc:
+            bad_rows.append((index, raw))
+            parsed.append(pd.NaT)
+
+    if bad_rows:
+        raise TimezoneValidationError(
+            f"non-UTC, naive, or unparseable timestamps at rows (index, raw value): {bad_rows}"
+        )
+
+    # Every element has already been individually validated as aware UTC
+    # above -- this second pd.to_datetime pass only normalizes dtype
+    # (object list of datetimes -> proper datetime64[ns, UTC] column), it
+    # does not re-introduce any naive-as-UTC guessing risk.
+    return pd.Series(pd.to_datetime(parsed, utc=True), index=values.index)

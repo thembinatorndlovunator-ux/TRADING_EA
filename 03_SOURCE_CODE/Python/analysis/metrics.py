@@ -56,14 +56,30 @@ class BootstrapCiResult:
     confidence: float
     n_resamples: int
     seed: int
+    n: int  # original sample size the bootstrap was drawn from
 
 
 @dataclass(frozen=True)
 class MaxDrawdownResult:
+    """The largest ABSOLUTE decline and the largest PERCENTAGE decline are
+    tracked and reported INDEPENDENTLY, each with its own peak/trough index
+    -- they are not always the same pair of points (e.g. a later, larger
+    -in-dollars decline from a higher peak can have a SMALLER percentage
+    than an earlier, smaller-in-dollars decline from a lower peak). A
+    caller that needs "the" single drawdown figure must pick which of the
+    two it means; this module does not privilege one over the other.
+
+    ``max_drawdown_pct`` is NOT bounded to [0, 1] -- a balance that falls
+    below zero (e.g. a margin-call scenario) produces a percentage greater
+    than 1.0, which is correct, not an error.
+    """
+
     max_drawdown_abs: float  # peak-to-trough decline, always >= 0
-    max_drawdown_pct: float  # relative to the peak at that point, in [0, 1]
-    peak_index: int
-    trough_index: int
+    max_drawdown_abs_peak_index: int
+    max_drawdown_abs_trough_index: int
+    max_drawdown_pct: float  # >= 0, NOT capped at 1.0 -- see class docstring
+    max_drawdown_pct_peak_index: int
+    max_drawdown_pct_trough_index: int
 
 
 def wilson_confidence_interval(successes: int, n: int, confidence: float = 0.95) -> tuple[float, float]:
@@ -210,44 +226,69 @@ def bootstrap_confidence_interval(
         confidence=confidence,
         n_resamples=n_resamples,
         seed=seed,
+        n=n,
     )
 
 
-def compute_max_drawdown(equity_curve: Sequence[float]) -> MaxDrawdownResult:
+def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
     """Maximum peak-to-trough decline over a chronologically-ordered
-    equity curve (the caller's responsibility to order correctly -- this
-    function does not know about timestamps). Tracks the running peak and,
-    at every point, the decline from that peak; the MAXIMUM such decline
-    (not merely the final one) is what's returned, per the standard
-    max-drawdown definition. Raises InsufficientSampleError if empty.
+    balance curve (the caller's responsibility to order correctly -- this
+    function does not know about timestamps; also the caller's
+    responsibility to supply an actual BALANCE or EQUITY series -- this
+    function has no way to tell the two apart). Tracks the running peak
+    and, at every point, both the absolute and percentage decline from
+    that peak; the two MAXIMA are tracked independently (see
+    ``MaxDrawdownResult``'s own docstring for why they are not always the
+    same point).
+
+    Raises InsufficientSampleError if empty. Raises ValueError if the
+    first value is not strictly positive -- percentage drawdown is
+    undefined relative to a non-positive starting balance, so this must
+    be rejected rather than silently reported as 0%.
     """
 
-    if not equity_curve:
-        raise InsufficientSampleError("compute_max_drawdown: empty equity curve")
+    if not balance_curve:
+        raise InsufficientSampleError("compute_max_drawdown: empty balance curve")
+    if balance_curve[0] <= 0:
+        raise ValueError(
+            f"compute_max_drawdown: the first value ({balance_curve[0]!r}) must be > 0 -- "
+            "percentage drawdown is undefined relative to a non-positive starting balance"
+        )
 
-    peak = equity_curve[0]
+    peak = balance_curve[0]
     peak_index = 0
-    max_dd_abs = 0.0
-    max_dd_pct = 0.0
-    best_peak_index = 0
-    best_trough_index = 0
 
-    for i, value in enumerate(equity_curve):
+    max_dd_abs = 0.0
+    max_dd_abs_peak_index = 0
+    max_dd_abs_trough_index = 0
+
+    max_dd_pct = 0.0
+    max_dd_pct_peak_index = 0
+    max_dd_pct_trough_index = 0
+
+    for i, value in enumerate(balance_curve):
         if value > peak:
             peak = value
             peak_index = i
 
         dd_abs = peak - value
-        dd_pct = (dd_abs / peak) if peak != 0 else 0.0
+        dd_pct = dd_abs / peak  # peak is always > 0: starts > 0, only ever increases
+
         if dd_abs > max_dd_abs:
             max_dd_abs = dd_abs
+            max_dd_abs_peak_index = peak_index
+            max_dd_abs_trough_index = i
+
+        if dd_pct > max_dd_pct:
             max_dd_pct = dd_pct
-            best_peak_index = peak_index
-            best_trough_index = i
+            max_dd_pct_peak_index = peak_index
+            max_dd_pct_trough_index = i
 
     return MaxDrawdownResult(
         max_drawdown_abs=max_dd_abs,
+        max_drawdown_abs_peak_index=max_dd_abs_peak_index,
+        max_drawdown_abs_trough_index=max_dd_abs_trough_index,
         max_drawdown_pct=max_dd_pct,
-        peak_index=best_peak_index,
-        trough_index=best_trough_index,
+        max_drawdown_pct_peak_index=max_dd_pct_peak_index,
+        max_drawdown_pct_trough_index=max_dd_pct_trough_index,
     )
