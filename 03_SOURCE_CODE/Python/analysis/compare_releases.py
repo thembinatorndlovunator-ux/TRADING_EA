@@ -1,16 +1,25 @@
 """compare_releases.py -- statistically compares two trade datasets (e.g.
 a baseline release vs. a candidate release) using the SAME normalized
 trade-export schema as analyse_baseline.py, reusing that script's own
-summary computation directly (not re-derived) for each dataset, plus a
-two-sample bootstrap confidence interval on the DIFFERENCE in win rate and
-R-expectancy between them.
+schema (not re-derived) for each dataset, plus a two-sample bootstrap
+confidence interval on the DIFFERENCE in win rate and R-expectancy between
+them.
 
 Per the reproducibility contract's "tiny samples cannot drive automatic
 live parameter changes" rule: this script never declares a release
-"better" -- it reports a difference and its bootstrap CI; a CI that
-excludes zero is flagged as ``likely_significant``, but the actual
-go/no-go judgment remains a human decision informed by this, not an
+"better" -- it reports the OBSERVED difference and a bootstrap CI around
+it; a CI that excludes zero is flagged as ``likely_significant``, but the
+actual go/no-go judgment remains a human decision informed by this, not an
 automatic one.
+
+**Assumes INDEPENDENT (unpaired) samples.** The two datasets are treated
+as two independent collections of trades -- there is no assumption that
+row *i* of the baseline corresponds to row *i* of the candidate (e.g. "the
+same market period, replayed twice"). If a future caller has genuinely
+PAIRED data (the same underlying market periods/trades re-evaluated under
+two configurations), a paired-difference test would be more powerful and
+is NOT implemented here -- using this unpaired test on paired data would
+discard the pairing and understate the true precision.
 """
 
 from __future__ import annotations
@@ -26,17 +35,37 @@ import numpy as np
 import pandas as pd
 
 from analysis.analyse_baseline import REQUIRED_COLUMNS
-from analysis.csv_io import CsvSchemaError, parse_is_long, read_csv_with_required_columns
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_unique_ids,
+    parse_is_long,
+    read_csv_with_required_columns,
+)
 from analysis.metrics import InsufficientSampleError
 from analysis.report_metadata import build_report_metadata
 from analysis.resampling import seeded_bootstrap_indices
 from analysis.trade_math import compute_r_multiple
 
+NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
+MIN_N_PER_GROUP = 10  # below this, a bootstrap CI cannot represent real uncertainty
+MIN_N_RESAMPLES = 100
 
-def _load_trades_with_r_multiple(trades_csv: Path) -> pd.DataFrame:
+
+def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str]) -> pd.DataFrame:
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
+    assert_unique_ids(trades, "trade_id", trades_csv)
+    assert_finite_columns(trades, NUMERIC_COLUMNS, trades_csv)
+
+    if symbol_filter is not None:
+        mismatched = trades[trades["symbol"] != symbol_filter]
+        if not mismatched.empty:
+            raise CsvSchemaError(
+                f"{trades_csv}: {len(mismatched)} row(s) have symbol != {symbol_filter!r} "
+                f"(found: {sorted(mismatched['symbol'].unique())})"
+            )
 
     trades = trades.copy()
     trades["is_long"] = trades["is_long"].apply(parse_is_long)
@@ -51,30 +80,60 @@ def _load_trades_with_r_multiple(trades_csv: Path) -> pd.DataFrame:
 
 @dataclass(frozen=True)
 class DiffCiResult:
-    diff_mean: float  # candidate - baseline, mean across resamples
+    observed_diff: float  # mean(candidate) - mean(baseline) on the ACTUAL data
     ci_lower: float
     ci_upper: float
     likely_significant: bool  # True iff the CI excludes 0.0
+    n_baseline: int
+    n_candidate: int
+    n_resamples: int
+    seed: int
 
 
 def two_sample_bootstrap_diff(
     baseline_values: list[float], candidate_values: list[float], n_resamples: int, seed: int,
     confidence: float = 0.95,
 ) -> DiffCiResult:
-    """Bootstrap CI for (mean(candidate_resample) - mean(baseline_resample)),
-    resampling each dataset independently. The candidate stream uses
-    'seed + 1' (deterministically derived from 'seed', not a second
-    independent random choice) so the two streams never share draws while
-    the whole result stays fully reproducible given one seed value.
+    """Reports the OBSERVED difference (mean(candidate) - mean(baseline)
+    on the actual, un-resampled data) with a bootstrap confidence interval
+    around it, resampling each dataset independently.
 
-    Raises InsufficientSampleError if either input has fewer than 2 values.
+    **Fixed, 2026-07-21 Codex review finding:** the point estimate
+    previously returned was ``mean(diffs across resamples)`` -- i.e. a
+    RANDOM quantity that moves with the seed -- rather than the actual
+    observed difference on the real data. A reproduced counterexample:
+    identical observed samples [0,1] and [0,1] (a TRUE difference of
+    exactly 0) with n_resamples=1 and seed=42 previously returned +0.5 as
+    "the" difference, with a degenerate CI of [0.5, 0.5], and
+    ``likely_significant=True`` -- while the real, observed difference
+    was exactly zero.
+
+    The candidate stream uses 'seed + 1' (deterministically derived from
+    'seed', not a second independent random choice) so the two streams
+    never share draws while the whole result stays fully reproducible
+    given one seed value.
+
+    Raises InsufficientSampleError if either input has fewer than
+    MIN_N_PER_GROUP values -- below that, a bootstrap CI cannot represent
+    real uncertainty (a degenerate 2-observation-per-group sample can
+    only ever resample to that same tiny set of possible means). Raises
+    ValueError if n_resamples < MIN_N_RESAMPLES or confidence is out of
+    (0, 1).
     """
 
-    if len(baseline_values) < 2 or len(candidate_values) < 2:
-        raise InsufficientSampleError("two_sample_bootstrap_diff: need >=2 values in both samples")
+    if len(baseline_values) < MIN_N_PER_GROUP or len(candidate_values) < MIN_N_PER_GROUP:
+        raise InsufficientSampleError(
+            f"two_sample_bootstrap_diff: need >= {MIN_N_PER_GROUP} values in both samples, "
+            f"got baseline={len(baseline_values)} candidate={len(candidate_values)}"
+        )
+    if n_resamples < MIN_N_RESAMPLES:
+        raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
     baseline_arr = np.asarray(baseline_values, dtype=float)
     candidate_arr = np.asarray(candidate_values, dtype=float)
+    observed_diff = float(candidate_arr.mean() - baseline_arr.mean())
 
     diffs = np.empty(n_resamples, dtype=float)
     baseline_iter = seeded_bootstrap_indices(len(baseline_arr), n_resamples, seed)
@@ -86,8 +145,14 @@ def two_sample_bootstrap_diff(
     lower = float(np.quantile(diffs, alpha / 2))
     upper = float(np.quantile(diffs, 1.0 - alpha / 2))
     return DiffCiResult(
-        diff_mean=float(np.mean(diffs)), ci_lower=lower, ci_upper=upper,
+        observed_diff=observed_diff,
+        ci_lower=lower,
+        ci_upper=upper,
         likely_significant=(lower > 0.0 or upper < 0.0),
+        n_baseline=len(baseline_values),
+        n_candidate=len(candidate_values),
+        n_resamples=n_resamples,
+        seed=seed,
     )
 
 
@@ -102,8 +167,11 @@ def run(
     symbol: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
-    baseline = _load_trades_with_r_multiple(baseline_csv)
-    candidate = _load_trades_with_r_multiple(candidate_csv)
+    if output_json is not None and output_json.resolve() in (baseline_csv.resolve(), candidate_csv.resolve()):
+        raise CsvSchemaError(f"output_json {output_json} must not be the same as an input path")
+
+    baseline = _load_trades_with_r_multiple(baseline_csv, symbol)
+    candidate = _load_trades_with_r_multiple(candidate_csv, symbol)
 
     win_rate_diff = two_sample_bootstrap_diff(
         (baseline["profit"] > 0).astype(float).tolist(),
@@ -134,7 +202,7 @@ def run(
             [baseline_csv, candidate_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
-        output_json.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        output_json.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
 
     return summary
 
@@ -163,14 +231,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             confidence=args.confidence,
             symbol=args.symbol,
         )
-    except (FileNotFoundError, CsvSchemaError, InsufficientSampleError) as exc:
+    except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     print(
         f"compare_releases: baseline_n={summary['n_baseline_trades']} "
         f"candidate_n={summary['n_candidate_trades']} "
-        f"win_rate_diff={summary['win_rate_diff']['diff_mean']:.4f} "
+        f"win_rate_diff={summary['win_rate_diff']['observed_diff']:.4f} "
         f"(significant={summary['win_rate_diff']['likely_significant']})"
     )
     return 0
