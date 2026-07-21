@@ -62,29 +62,38 @@ def test_generate_windows_no_data_span_yields_at_least_zero_windows():
 
 # --- run() --------------------------------------------------------------------
 
+# Trades t1/t2/t4/t8 are offset +12h from the integer-day boundary grid
+# (which is anchored to t0's own exit time) SPECIFICALLY so they never
+# coincidentally land exactly on a window boundary -- t0 itself is
+# unavoidably excluded from every window (its entry necessarily precedes
+# the very first window, since no window exists before window 0), which
+# is correct "purged" behavior, not a test bug; every assertion below
+# only relies on t1/t2/t4/t8.
+_BASE = pd.Timestamp("2026-01-01", tz="UTC")
+
+
+def _row(trade_id, exit_time, exit_price, profit):
+    return {
+        "trade_id": trade_id,
+        "symbol": "XAUUSD",
+        "is_long": "True",
+        "entry_time": (exit_time - pd.Timedelta(hours=1)).isoformat(),
+        "exit_time": exit_time.isoformat(),
+        "entry_price": 100.0,
+        "exit_price": exit_price,
+        "stop_price": 98.0,
+        "profit": profit,
+    }
+
 
 def _write_trades(path: Path) -> None:
-    def row(trade_id, day_offset, exit_price, profit):
-        exit_time = pd.Timestamp("2026-01-01", tz="UTC") + pd.Timedelta(days=day_offset)
-        return {
-            "trade_id": trade_id,
-            "symbol": "XAUUSD",
-            "is_long": "True",
-            "entry_time": (exit_time - pd.Timedelta(hours=1)).isoformat(),
-            "exit_time": exit_time.isoformat(),
-            "entry_price": 100.0,
-            "exit_price": exit_price,
-            "stop_price": 98.0,
-            "profit": profit,
-        }
-
     pd.DataFrame(
         [
-            row("t0", 0, 104.0, 10.0),  # r=2.0, win
-            row("t1", 1, 99.0, -5.0),  # r=-0.5, loss
-            row("t2", 2, 103.0, 10.0),  # r=1.5, win
-            row("t4", 4, 105.0, 20.0),  # r=2.5, win
-            row("t8", 8, 99.0, -5.0),  # r=-0.5, loss
+            _row("t0", _BASE, 104.0, 10.0),  # r=2.0, win -- always purged (see above)
+            _row("t1", _BASE + pd.Timedelta(days=1, hours=12), 99.0, -5.0),  # r=-0.5, loss
+            _row("t2", _BASE + pd.Timedelta(days=2, hours=12), 103.0, 10.0),  # r=1.5, win
+            _row("t4", _BASE + pd.Timedelta(days=4, hours=12), 105.0, 20.0),  # r=2.5, win
+            _row("t8", _BASE + pd.Timedelta(days=8, hours=12), 99.0, -5.0),  # r=-0.5, loss
         ]
     ).to_csv(path, index=False)
 
@@ -108,10 +117,39 @@ def test_empty_trades_raises(tmp_path):
         run(path, train_days=3, test_days=2, step_days=2)
 
 
-def test_windows_hand_computed(tmp_path):
-    # Data spans day0..day8 -> windows: train[0,3)/test[3,5),
-    # train[2,5)/test[5,7), train[4,7)/test[7,9); a 4th window's
-    # test_start (day9) would exceed last_time (day8), so only 3 windows.
+def test_duplicate_trade_id_rejected(tmp_path):
+    path = tmp_path / "trades.csv"
+    pd.DataFrame(
+        [_row("dup", _BASE, 104.0, 10.0), _row("dup", _BASE + pd.Timedelta(days=1), 99.0, -5.0)]
+    ).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path, train_days=3, test_days=2, step_days=2)
+
+
+def test_naive_timestamp_rejected(tmp_path):
+    """Regression for a Codex review finding: pd.to_datetime(utc=True)
+    silently accepted naive entry/exit timestamps as UTC."""
+
+    path = tmp_path / "trades.csv"
+    row = _row("t1", _BASE, 104.0, 10.0)
+    row["exit_time"] = "2026-01-01T00:00:00"  # naive -- no "Z"
+    pd.DataFrame([row]).to_csv(path, index=False)
+    with pytest.raises(ValueError):
+        run(path, train_days=3, test_days=2, step_days=2)
+
+
+def test_output_path_colliding_with_input_rejected(tmp_path):
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    with pytest.raises(CsvSchemaError):
+        run(path, train_days=3, test_days=2, step_days=2, output_csv=path)
+
+
+def test_windows_hand_computed_with_purged_boundaries(tmp_path):
+    # 3 windows result (test plan traced in this file's own history); t0
+    # is purged from every window (its entry necessarily precedes window
+    # 0's own start). See the module-level comment above for the full
+    # hand trace this reproduces.
     path = tmp_path / "trades.csv"
     _write_trades(path)
 
@@ -119,21 +157,130 @@ def test_windows_hand_computed(tmp_path):
     assert len(df) == 3
 
     w0 = df.iloc[0]
-    assert w0["train_n"] == 3  # days 0, 1, 2
-    assert w0["train_win_rate"] == pytest.approx(2.0 / 3.0)
-    assert w0["train_expectancy_r"] == pytest.approx((2.0 - 0.5 + 1.5) / 3.0)
-    assert w0["test_n"] == 1  # day 4
+    assert w0["train_n"] == 2  # t1, t2 (t0 purged)
+    assert w0["train_win_rate"] == pytest.approx(0.5)
+    assert w0["train_expectancy_r"] == pytest.approx(0.5)  # mean(-0.5, 1.5)
+    assert w0["test_n"] == 1  # t4
     assert w0["test_win_rate"] == pytest.approx(1.0)
     assert w0["test_expectancy_r"] == pytest.approx(2.5)
 
     w1 = df.iloc[1]
-    assert w1["train_n"] == 2  # days 2, 4
-    assert w1["test_n"] == 0  # nothing in [day5, day7)
-    assert pd.isna(w1["test_win_rate"]) or w1["test_win_rate"] is None
+    assert w1["train_n"] == 2  # t2, t4 (rolling windows legitimately overlap)
+    assert w1["train_win_rate"] == pytest.approx(1.0)
+    assert w1["train_expectancy_r"] == pytest.approx(2.0)  # mean(1.5, 2.5)
+    assert w1["test_n"] == 0  # nothing falls in [day5, day7)
+    assert pd.isna(w1["test_win_rate"])
+    assert pd.isna(w1["test_expectancy_r"])
 
     w2 = df.iloc[2]
-    assert w2["train_n"] == 1  # day 4 only
-    assert w2["test_n"] == 1  # day 8
+    assert w2["train_n"] == 1  # t4
+    assert w2["test_n"] == 1  # t8
+    assert w2["test_win_rate"] == pytest.approx(0.0)
+    assert w2["test_expectancy_r"] == pytest.approx(-0.5)
+
+
+def test_trade_spanning_a_window_boundary_is_purged_from_both_sides(tmp_path):
+    """Regression for a Codex review finding: partitioning by exit_time
+    alone let a trade whose ENTRY preceded a test window's start (but
+    whose exit fell inside it) count as a test-period observation -- a
+    temporal-leakage route. Such a trade must now be excluded entirely."""
+
+    path = tmp_path / "trades.csv"
+    # An early anchor at EXACTLY _BASE fixes first_time (and therefore
+    # window 0's train_start) at day0, exactly like t0 in the main
+    # fixture above -- its own entry is unavoidably excluded from every
+    # window (nothing precedes window 0), which is fine since this test
+    # makes no assertion about it.
+    early_anchor_exit = _BASE
+    spanning_entry = _BASE + pd.Timedelta(days=2, hours=23)  # just before day3 (train/test boundary)
+    spanning_exit = _BASE + pd.Timedelta(days=3, hours=1)  # just after day3
+    # A far-future trade purely to extend the data span so
+    # generate_windows actually produces window 0 -- it lands nowhere
+    # near window 0's train/test ranges, so it does not affect this
+    # test's assertions about the spanning trade.
+    late_anchor_exit = _BASE + pd.Timedelta(days=20)
+    pd.DataFrame(
+        [
+            {
+                "trade_id": "early_anchor",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": (early_anchor_exit - pd.Timedelta(hours=1)).isoformat(),
+                "exit_time": early_anchor_exit.isoformat(),
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 50.0,
+            },
+            {
+                "trade_id": "spanner",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": spanning_entry.isoformat(),
+                "exit_time": spanning_exit.isoformat(),
+                "entry_price": 100.0,
+                "exit_price": 110.0,
+                "stop_price": 98.0,
+                "profit": 100.0,
+            },
+            {
+                "trade_id": "late_anchor",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": (late_anchor_exit - pd.Timedelta(hours=1)).isoformat(),
+                "exit_time": late_anchor_exit.isoformat(),
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 50.0,
+            },
+        ]
+    ).to_csv(path, index=False)
+
+    df = run(path, train_days=3, test_days=2, step_days=2)
+    # window0: train[day0,day3), test[day3,day5) -- "spanner" belongs to
+    # NEITHER (entry is in train's range but exit is not; exit is in
+    # test's range but entry is not) -> purged from both.
+    assert df.iloc[0]["train_n"] == 0
+    assert df.iloc[0]["test_n"] == 0
+
+
+def test_zero_windows_does_not_crash(tmp_path):
+    """Regression for a Codex review finding: when generate_windows
+    legitimately returns zero windows (data span shorter than
+    train+test), the summary_json block previously raised a bare
+    KeyError trying to access a column on a columnless empty DataFrame."""
+
+    path = tmp_path / "trades.csv"
+    _row_single = _row("t1", _BASE, 104.0, 10.0)
+    pd.DataFrame([_row_single]).to_csv(path, index=False)
+
+    summary_json = tmp_path / "out" / "summary.json"
+    df = run(path, train_days=365, test_days=365, step_days=365, summary_json=summary_json)
+
+    assert len(df) == 0
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["n_windows"] == 0
+    assert payload["summary"]["mean_test_expectancy_r"] is None
+
+
+def test_mean_test_expectancy_ignores_nan_windows_not_just_none(tmp_path):
+    """Regression for a Codex review finding: `r is not None` does not
+    filter out pandas' NaN (the empty-window sentinel a DataFrame column
+    actually holds), so this project's own 5-trade fixture previously
+    wrote `mean_test_expectancy_r: NaN` -- a non-standard JSON token --
+    instead of the mean over the genuinely-valid windows."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    summary_json = tmp_path / "out" / "summary.json"
+
+    run(path, train_days=3, test_days=2, step_days=2, summary_json=summary_json)
+
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    # window1's test_expectancy_r is NaN (no test trades); only windows 0
+    # and 2 have real values: mean(2.5, -0.5) = 1.0
+    assert payload["summary"]["mean_test_expectancy_r"] == pytest.approx(1.0)
 
 
 def test_writes_output_csv_and_summary_json(tmp_path):
