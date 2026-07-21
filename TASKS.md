@@ -28,6 +28,7 @@ review per `PROJECT_RULES.md` and the release gates in
 | TASK-018 | Phase 4 detection engines: ChartPatternEngine (double/bottom top, head-and-shoulders/inverse) | `claude/task-018-chart-pattern-engine` | In progress — compiled clean (real evidence); array-based core hand-verified incl. sloped-neckline interpolation; cross-checked against EA Files during build; live-symbol wrapper batched | 2026-07-21 | `TASK-018_CHART_PATTERN_ENGINE.md` |
 | TASK-019 | Phase 5 strategy modules: SRBounceStrategy (first strategy family) — begins Phase 5 | `claude/task-019-sr-bounce-strategy` | In progress — compiled clean (real evidence), first end-to-end composition of regime+structure+SR+candlesticks; array-based core hand-verified, live-symbol wrapper batched | 2026-07-21 | `TASK-019_SR_BOUNCE_STRATEGY.md` |
 | TASK-020 | Phase 5 strategy modules: SMCStrategy (order-block retest, sweep reversal, FVG return) | `claude/task-020-smc-ict-strategy` | In progress — compiled clean (real evidence); three regime-gated setups hand-verified incl. wrong-regime negatives; live-symbol wrapper batched | 2026-07-21 | `TASK-020_SMC_STRATEGY.md` |
+| TASK-021 | Phase 5 strategy modules: ChartPatternStrategy (trend-breakout-retest, range-boundary) | `claude/task-021-chart-pattern-strategy` | In progress — compiled clean (real evidence, 1 warning found+fixed); two setups hand-verified; live-symbol wrapper batched | 2026-07-21 | `TASK-021_CHART_PATTERN_STRATEGY.md` |
 
 ## Status legend
 
