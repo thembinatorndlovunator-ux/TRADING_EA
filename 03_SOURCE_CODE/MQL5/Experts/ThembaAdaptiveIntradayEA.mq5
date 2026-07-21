@@ -3,31 +3,48 @@
 //| Themba Adaptive Intraday Engine                                    |
 //|                                                                    |
 //| The first real Expert Advisor entry point in this project — wires    |
-//| every module built across TASK-003 through TASK-024 into one          |
+//| every module built across TASK-003 through TASK-026 into one          |
 //| once-per-completed-bar decision pipeline: classify regime, evaluate    |
 //| every strategy against the same shared data, route, resolve             |
-//| conflicts, and journal the result.                                       |
+//| conflicts, journal the result, and — as of TASK-027, ONLY when           |
+//| InpEnableOrderSubmission is explicitly set true — submit a real,          |
+//| fully-risk-gated order for the winning candidate.                          |
 //|                                                                    |
-//| **DELIBERATELY JOURNAL-ONLY — NEVER SUBMITS A REAL ORDER.** This is     |
-//| a stated, hard scope boundary for this task, not a configurable          |
-//| option: order submission (position sizing via RiskManager.mqh,           |
-//| OrderManager.mqh, real risk-cap enforcement before submission) is a       |
-//| separate, higher-stakes task that has not been attempted here. Running    |
-//| this EA on a real or demo account is safe in the sense that it never      |
-//| places, modifies, or closes any position it did not itself open — the     |
-//| ONE exception is IntradayCloseManager.mqh's own boundary close, which      |
-//| only ever acts on positions carrying this EA's own magic number, and       |
-//| since this EA never opens any, that close path is a safe no-op in          |
-//| practice until order submission exists.                                     |
+//| **MASTER SAFETY TOGGLE: InpEnableOrderSubmission (default FALSE).**      |
+//| With the default, this EA behaves EXACTLY as TASK-025 shipped it —        |
+//| journal-only, never submits an order, regardless of any decision.          |
+//| Setting it true makes this build capable of real order submission,          |
+//| gated by every risk control built through TASK-026: no-add-on/no-           |
+//| concurrent-position rule, daily/weekly loss caps (DailyWeeklyLimits),        |
+//| drawdown-based risk reduction (EquityPeakManager/DrawdownController),         |
+//| stop floor/cap preflight, broker-minimum-volume-vs-cap rejection, and          |
+//| the OrderCalcProfit cross-check — every one of section 8's binding              |
+//| blanket rules from TASK-002_PHASE2_SPECIFICATION.md. See                          |
+//| TASK-027_WIRE_ORDER_MANAGER.md for the full gating sequence and the                |
+//| gaps this task explicitly does NOT close (three-loss cooldown,                     |
+//| durable-intent/idempotency persistence, forced close-all on a loss-cap               |
+//| breach — that remains ExitManager/IntradayCloseManager territory).                    |
+//|                                                                    |
+//| The one place this EA touches live trading state outside               |
+//| AttemptOrderSubmission is IntradayCloseManager.mqh's boundary close,      |
+//| scoped strictly to this EA's own magic number — with                       |
+//| InpEnableOrderSubmission false that remains a no-op in practice, exactly     |
+//| as TASK-025 documented; with it true, that close now has real positions       |
+//| (this EA's own) to close at the daily boundary, which is its intended          |
+//| purpose.                                                                        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
-#property description "Themba Adaptive Intraday Engine — decision pipeline only, no order submission (TASK-025)."
+#property version   "1.01"
+#property description "Themba Adaptive Intraday Engine — decision pipeline; order submission is OFF by default (TASK-027, InpEnableOrderSubmission)."
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
 #include "../Include/ThembaEA/Risk/BrokerValidator.mqh"
+#include "../Include/ThembaEA/Risk/DailyWeeklyLimits.mqh"
+#include "../Include/ThembaEA/Risk/EquityPeakManager.mqh"
+#include "../Include/ThembaEA/Risk/DrawdownController.mqh"
 #include "../Include/ThembaEA/Journal/DecisionJournal.mqh"
 #include "../Include/ThembaEA/Execution/IntradayCloseManager.mqh"
+#include "../Include/ThembaEA/Execution/OrderManager.mqh"
 
 input string InpTradeSymbol      = "";       // empty = use the chart's own symbol
 input ENUM_TIMEFRAMES InpRegimeTimeframe = PERIOD_M15;
@@ -35,6 +52,19 @@ input long   InpMagicNumber      = 990001;
 input int    InpSwingDepth       = 3;
 input int    InpMaxLookback      = 50;
 input int    InpSharedWindowBars = 250;      // shared OHLC/ATR window for all strategy evaluations
+
+input bool   InpEnableOrderSubmission     = false; // MASTER SAFETY TOGGLE — see file header
+input double InpRiskPercentTarget         = 0.3;   // per-trade target risk %, within section 8's
+                                                    // stated 0.25-0.50% metals/synthetics range
+input double InpRiskCapPercent            = 1.0;   // hard per-trade/total-open-risk cap (section 8)
+input double InpDailyLossCapPercent       = 2.0;   // section 8 hard limit
+input double InpWeeklyLossCapPercent      = 4.0;   // section 8 hard limit
+input double InpDrawdownMaxReductionPercent = 10.0; // DrawdownController default
+input double InpDrawdownMinMultiplier     = 0.25;   // DrawdownController default
+input double InpStopFloorAtrMultiple      = 0.5;    // RiskManager default
+input double InpStopCapPricePercent       = 3.0;    // RiskManager default
+input double InpStopCapAtrMultiple        = 4.0;    // RiskManager default
+input double InpRiskCrossCheckTolerancePercent = 5.0; // section 8 default
 
 CMarketData     g_md;
 CSymbolProfile  g_profile;
@@ -66,9 +96,14 @@ int OnInit()
       return INIT_FAILED;
      }
 
-   PrintFormat("ThembaEA: initialized for '%s' on %s. JOURNAL-ONLY MODE — no order will "
-               "ever be submitted by this build (TASK-025 scope).", g_symbol,
-               EnumToString(InpRegimeTimeframe));
+   if(InpEnableOrderSubmission)
+      PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
+                  "(InpEnableOrderSubmission=true) — this build WILL place real orders when a "
+                  "decision clears every risk gate.", g_symbol, EnumToString(InpRegimeTimeframe));
+   else
+      PrintFormat("ThembaEA: initialized for '%s' on %s. JOURNAL-ONLY MODE — no order will "
+                  "be submitted (InpEnableOrderSubmission=false).", g_symbol,
+                  EnumToString(InpRegimeTimeframe));
    return INIT_SUCCEEDED;
   }
 
@@ -88,9 +123,10 @@ void OnTick()
 
    EvaluateAndJournal();
 
-   // Safe by construction: only ever acts on this EA's own magic number,
-   // and this build never opens a position under that magic — a no-op
-   // in practice until a future task adds order submission.
+   // Scoped strictly to this EA's own magic number. With
+   // InpEnableOrderSubmission=false this remains a no-op in practice
+   // (nothing is ever opened under this magic); with it true, this is
+   // now this EA's real end-of-day exposure close.
    if(ICM_ShouldExecuteIntradayClose())
      {
       string closeReasons[];
@@ -98,14 +134,215 @@ void OnTick()
      }
   }
 
+//--- Appends one string to a dynamic string[] array (local helper —
+//--- mirrors the ICM_AppendReason/BV_AppendReason pattern used
+//--- throughout this project for machine-readable reason lists).
+void AppendReason(string &arr[], const string value)
+  {
+   int n = ArraySize(arr);
+   ArrayResize(arr, n + 1);
+   arr[n] = value;
+  }
+
+//--- Serializes a string[] array of machine-readable reason tokens to a
+//--- JSON array, reusing DecisionJournal's own escaping so this stays
+//--- consistent with every other string field the journal writes.
+string BuildJsonStringArray(const string &arr[])
+  {
+   string json = "[";
+   for(int i = 0; i < ArraySize(arr); i++)
+     {
+      if(i > 0)
+         json += ",";
+      json += "\"" + DJ_JsonEscapeString(arr[i]) + "\"";
+     }
+   json += "]";
+   return json;
+  }
+
+//+------------------------------------------------------------------+
+//| Gates and, if every check passes, submits a real order for the       |
+//| resolved winning candidate. Only ever called when                     |
+//| InpEnableOrderSubmission is true (see AttemptOrderSubmission's own      |
+//| caller). Every rejection path appends a machine-readable reason to      |
+//| 'rejected' and returns without submitting — a caller must treat           |
+//| decision.risk_percent staying 0.0 as "no order was placed", never          |
+//| infer success from decision.direction alone (that field reflects the        |
+//| strategy's PROPOSED direction regardless of whether an order followed).      |
+//|                                                                    |
+//| Gating sequence, in order (matches TASK-027_WIRE_ORDER_MANAGER.md's   |
+//| Specification section):                                               |
+//|  1. No-add-on/no-concurrent-position rule (section 8).                  |
+//|  2. Daily/weekly loss caps, account-wide measurement (section 8).         |
+//|  3. Drawdown-based risk reduction, never increase (section 8).             |
+//|  4. Stop-distance floor/cap preflight (section 8, RiskManager.mqh).          |
+//|  5. Position sizing incl. broker-minimum-vs-cap rejection (OrderManager).     |
+//|  6. OrderCalcProfit cross-check (RISK_POLICY.md blanket rule).                 |
+//|  7. Real order submission (OrderManager.mqh).                                   |
+//+------------------------------------------------------------------+
+void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &resolution,
+                             const double atr_current)
+  {
+   string passed[];
+   string rejected[];
+
+   //--- 1. No-add-on / no-concurrent-position rule -----------------------
+   bool already_open = false;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != g_symbol)
+         continue;
+      already_open = true;
+      break;
+     }
+   if(already_open)
+     {
+      AppendReason(rejected, "position_already_open_no_add_on");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+
+   //--- 2. Daily/weekly loss caps (account-wide measurement) -------------
+   double daily_change;
+   if(DWL_IsDailyLossBreached(InpDailyLossCapPercent, daily_change))
+     {
+      AppendReason(rejected, StringFormat("daily_loss_cap_breached_change_%.4fpct", daily_change));
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   double weekly_change;
+   if(DWL_IsWeeklyLossBreached(InpWeeklyLossCapPercent, weekly_change))
+     {
+      AppendReason(rejected, StringFormat("weekly_loss_cap_breached_change_%.4fpct", weekly_change));
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   AppendReason(passed, "daily_weekly_loss_caps_clear");
+
+   //--- 3. Drawdown-based risk reduction (never increase) ----------------
+   double current_drawdown = EPM_GetCurrentDrawdownPercent();
+   double risk_multiplier = DC_ComputeRiskMultiplier(current_drawdown,
+                                                       InpDrawdownMaxReductionPercent,
+                                                       InpDrawdownMinMultiplier);
+   double effective_risk_percent = InpRiskPercentTarget * risk_multiplier;
+   AppendReason(passed, StringFormat("risk_multiplier_%.4f_drawdown_%.4fpct",
+                                       risk_multiplier, current_drawdown));
+
+   //--- 4. Stop-distance floor/cap preflight ------------------------------
+   bool is_long = (resolution.winning_direction == CAND_LONG);
+   double entry = resolution.winner.entry_price;
+   double proposed_stop = resolution.winner.stop_price;
+   double loss_distance = RM_ComputeLossDistance(is_long, entry, proposed_stop);
+
+   double min_stop = RM_ComputeMinStopDistance(atr_current, InpStopFloorAtrMultiple);
+   double max_stop = RM_ComputeMaxStopDistance(entry, atr_current, InpStopCapPricePercent,
+                                                 InpStopCapAtrMultiple);
+   double adjusted_loss_distance;
+   string stop_reason;
+   if(!RM_ValidateStopDistance(loss_distance, min_stop, max_stop, adjusted_loss_distance,
+                                stop_reason))
+     {
+      AppendReason(rejected, "stop_" + stop_reason);
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   if(stop_reason == "widened_to_floor")
+      AppendReason(passed, "stop_widened_to_floor");
+
+   double final_stop = is_long ? entry - adjusted_loss_distance : entry + adjusted_loss_distance;
+
+   //--- 5. Position sizing -------------------------------------------------
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   SOrderSizingResult sizing;
+   if(!OM_CalculateVolume(g_profile, equity, effective_risk_percent, adjusted_loss_distance,
+                            InpRiskCapPercent, sizing))
+     {
+      AppendReason(rejected, "sizing_" + sizing.rejection_reason);
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   if(sizing.widened_to_minimum)
+      AppendReason(passed, "volume_widened_to_broker_minimum");
+
+   //--- 6. OrderCalcProfit cross-check --------------------------------------
+   double broker_risk_cash;
+   bool cross_ok = RM_CrossCheckRiskCash(g_symbol, is_long, sizing.volume, entry, final_stop,
+                                          sizing.risk_cash_actual, broker_risk_cash,
+                                          InpRiskCrossCheckTolerancePercent);
+   if(!cross_ok)
+     {
+      AppendReason(rejected, StringFormat(
+         "risk_cross_check_failed_computed_%.4f_broker_%.4f",
+         sizing.risk_cash_actual, broker_risk_cash));
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   AppendReason(passed, "risk_cross_check_passed");
+
+   //--- 7. Submit the real order --------------------------------------------
+   string comment = StringFormat("Themba_%s", decision.strategy);
+   if(StringLen(comment) > 31)
+      comment = StringSubstr(comment, 0, 31); // MT5 order-comment length limit
+
+   SOrderOpenResult open_result;
+   bool opened = OM_OpenPosition(g_symbol, is_long, sizing.volume, final_stop,
+                                   resolution.winner.target_price, InpMagicNumber, comment,
+                                   open_result);
+   if(!opened)
+     {
+      AppendReason(rejected, "order_" + open_result.rejection_reason);
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+
+   // Success — reflect the ACTUAL submitted stop back into the journal
+   // record (a floor widening in step 4 may have moved it from the
+   // strategy's originally proposed stop).
+   decision.stop = final_stop;
+   decision.risk_percent = 100.0 * sizing.risk_cash_actual / equity;
+   AppendReason(passed, StringFormat("order_submitted_ticket_%I64u_volume_%.2f_fill_%.5f",
+                                       open_result.position_ticket, sizing.volume,
+                                       open_result.fill_price));
+   PrintFormat("ThembaEA: *** ORDER SUBMITTED *** %s %s volume=%.2f ticket=%I64u fill=%.5f "
+               "stop=%.5f risk_pct=%.4f", decision.direction, g_symbol, sizing.volume,
+               open_result.position_ticket, open_result.fill_price, final_stop,
+               decision.risk_percent);
+
+   decision.reasons_passed_json = BuildJsonStringArray(passed);
+   decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+  }
+
 //+------------------------------------------------------------------+
 //| Classifies the regime once, reads the shared OHLC/ATR window once,   |
 //| computes structure once, evaluates all five strategies against that   |
-//| SAME data, routes, resolves, and journals the outcome — no order       |
-//| is ever submitted (see file header).                                   |
+//| SAME data, routes, resolves, journals the outcome, and — only when     |
+//| InpEnableOrderSubmission is true — attempts a fully risk-gated real     |
+//| order submission for the winning candidate (see file header).          |
 //+------------------------------------------------------------------+
 void EvaluateAndJournal()
   {
+   // Account-wide bookkeeping runs every bar regardless of this bar's
+   // decision outcome, per section 8 — equity tracking must not skip a
+   // bar just because regime classification later fails or no strategy
+   // fires.
+   DWL_EnsureDailyBaseline();
+   DWL_EnsureWeeklyBaseline();
+   DWL_ApplyCashFlowAdjustments();
+   EPM_UpdateDailyPeak();
+   EPM_UpdateAccountPeak();
+
    const int    atr_percentile_window = 100;
    const int    efficiency_window     = 20;
    const int    ema_period            = 21;
@@ -216,7 +453,7 @@ void EvaluateAndJournal()
    decision.symbol = g_symbol;
    decision.regime = EnumToString(regime_read.regime);
    decision.regime_confidence = regime_read.confidence * 100.0;
-   decision.ea_version = "0.1-task025-journal-only";
+   decision.ea_version = "1.01-task027-order-submission-optional";
 
    if(has_decision)
      {
@@ -230,9 +467,18 @@ void EvaluateAndJournal()
       decision.has_stop = true;
       decision.targets_json = StringFormat("[%.5f]", resolution.winner.target_price);
       decision.score = resolution.winner_score;
-      PrintFormat("ThembaEA: decision = %s %s via %s (%s), score=%.2f — JOURNAL ONLY, "
-                  "no order submitted.", decision.direction, g_symbol, decision.strategy,
-                  decision.setup, decision.score);
+      PrintFormat("ThembaEA: decision = %s %s via %s (%s), score=%.2f", decision.direction,
+                  g_symbol, decision.strategy, decision.setup, decision.score);
+
+      if(InpEnableOrderSubmission)
+         AttemptOrderSubmission(decision, resolution, atr_values[0]);
+      else
+        {
+         string skip_reasons[];
+         AppendReason(skip_reasons, "order_submission_disabled_InpEnableOrderSubmission_false");
+         decision.reasons_rejected_json = BuildJsonStringArray(skip_reasons);
+         Print("ThembaEA: JOURNAL ONLY — no order submitted (InpEnableOrderSubmission=false).");
+        }
      }
    else
      {
