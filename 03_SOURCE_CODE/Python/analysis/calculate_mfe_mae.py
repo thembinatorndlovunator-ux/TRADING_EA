@@ -30,7 +30,7 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, read_csv_with_required_columns
+from analysis.csv_io import CsvSchemaError, parse_is_long, read_csv_with_required_columns
 from analysis.report_metadata import build_report_metadata
 from analysis.trade_math import MfeMaeResult, NoBarsInWindowError, compute_mfe_mae
 
@@ -47,15 +47,6 @@ REQUIRED_TRADE_COLUMNS = {
     "stop_price",
 }
 REQUIRED_BAR_COLUMNS = {"symbol", "timestamp", "high", "low"}
-
-
-def _parse_is_long(value: object) -> bool:
-    text = str(value).strip().lower()
-    if text in ("true", "1", "yes", "long"):
-        return True
-    if text in ("false", "0", "no", "short"):
-        return False
-    raise ValueError(f"cannot parse is_long value: {value!r}")
 
 
 @dataclass(frozen=True)
@@ -94,7 +85,7 @@ def run(
     for _, row in trades.iterrows():
         trade_id = str(row["trade_id"])
         try:
-            is_long = _parse_is_long(row["is_long"])
+            is_long = parse_is_long(row["is_long"])
             entry_time = pd.to_datetime(row["entry_time"], utc=True, errors="raise")
             exit_time = pd.to_datetime(row["exit_time"], utc=True, errors="raise")
             entry_price = float(row["entry_price"])

@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, read_csv_with_required_columns
+from analysis.csv_io import CsvSchemaError, parse_is_long, read_csv_with_required_columns
 from analysis.metrics import InsufficientSampleError, expectancy, win_rate
 from analysis.report_metadata import build_report_metadata
 from analysis.trade_math import compute_r_multiple
@@ -31,15 +31,6 @@ REQUIRED_COLUMNS = {
     "trade_id", "symbol", "is_long", "entry_time", "exit_time",
     "entry_price", "exit_price", "stop_price", "profit",
 }
-
-
-def _parse_is_long(value: object) -> bool:
-    text = str(value).strip().lower()
-    if text in ("true", "1", "yes", "long"):
-        return True
-    if text in ("false", "0", "no", "short"):
-        return False
-    raise ValueError(f"cannot parse is_long value: {value!r}")
 
 
 def generate_windows(
@@ -125,7 +116,7 @@ def run(
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
 
     trades = trades.copy()
-    trades["is_long"] = trades["is_long"].apply(_parse_is_long)
+    trades["is_long"] = trades["is_long"].apply(parse_is_long)
     trades["exit_time"] = pd.to_datetime(trades["exit_time"], utc=True, errors="raise")
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
