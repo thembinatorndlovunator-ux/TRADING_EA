@@ -33,10 +33,17 @@ from typing import Optional
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, parse_is_long, read_csv_with_required_columns
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_unique_ids,
+    parse_is_long,
+    read_csv_with_required_columns,
+)
 from analysis.exit_simulation import simulate_giveback_path
 from analysis.metrics import InsufficientSampleError, win_rate
 from analysis.report_metadata import build_report_metadata
+from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
 REQUIRED_TRADE_COLUMNS = {"trade_id", "symbol", "is_long", "entry_time", "exit_time", "entry_price", "stop_price"}
@@ -80,10 +87,18 @@ def run(
     seed: Optional[int] = None,
     repo_path: Optional[Path] = None,
 ) -> GivebackRunResult:
+    for out_path in (output_csv, summary_json):
+        if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
+            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
     bars = read_csv_with_required_columns(bars_csv, REQUIRED_BAR_COLUMNS)
+    assert_unique_ids(trades, "trade_id", trades_csv)
+    assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
+    assert_finite_columns(bars, ["close"], bars_csv)
+
     bars = bars.copy()
-    bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True, errors="raise")
+    bars["timestamp"] = parse_utc_series(bars["timestamp"])
 
     comparisons: list[TradeGivebackComparison] = []
     row_errors: list[dict] = []
@@ -92,8 +107,8 @@ def run(
         trade_id = str(row["trade_id"])
         try:
             is_long = parse_is_long(row["is_long"])
-            entry_time = pd.to_datetime(row["entry_time"], utc=True, errors="raise")
-            exit_time = pd.to_datetime(row["exit_time"], utc=True, errors="raise")
+            entry_time = parse_iso8601_utc(str(row["entry_time"]))
+            exit_time = parse_iso8601_utc(str(row["exit_time"]))
             entry_price = float(row["entry_price"])
             stop_price = float(row["stop_price"])
 
@@ -158,6 +173,7 @@ def run(
             "metadata": metadata.to_dict(),
             "n_trades_compared": len(comparisons),
             "n_row_errors": len(row_errors),
+            "row_errors": row_errors,
         }
         for model in ("v637", "v811"):
             triggered = [c for c in comparisons if getattr(c, f"{model}_trigger_r") is not None]
@@ -179,7 +195,7 @@ def run(
                     summary[model]["guard_helped_rate_n"] = wr.n
                 except InsufficientSampleError:
                     pass
-        summary_json.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        summary_json.write_text(json.dumps(summary, indent=2, default=str, allow_nan=False), encoding="utf-8")
 
     return GivebackRunResult(comparisons=comparisons, row_errors=row_errors)
 
@@ -221,7 +237,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     print(f"analyse_giveback: {len(result.comparisons)} compared, {len(result.row_errors)} row errors.")
-    return 0
+    return 1 if result.row_errors else 0
 
 
 if __name__ == "__main__":

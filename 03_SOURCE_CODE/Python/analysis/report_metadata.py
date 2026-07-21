@@ -12,7 +12,9 @@ pipeline's caller knows that.
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,13 +33,33 @@ class GitMetadataError(RuntimeError):
     were a normal value."""
 
 
+def default_repo_root() -> Path:
+    """The Themba_EA_Improvement_Lab repo root, computed from THIS file's
+    own on-disk location (``analysis/report_metadata.py`` is always
+    exactly 4 levels below the repo root) rather than from the process's
+    current working directory.
+
+    **Fixed, 2026-07-21 Codex review finding:** ``build_report_metadata``
+    previously defaulted ``repo_path`` to ``None``, which made
+    ``capture_git_commit`` fall back to the process cwd -- invoking any
+    script from a different working directory (or from another
+    repository entirely) could silently record an unrelated commit, or
+    fail outright. Every caller in this project now gets a correct
+    default without having to pass ``repo_path`` explicitly (tests that
+    intentionally exercise a *different* repo, or none, still may).
+    """
+
+    return Path(__file__).resolve().parents[3]
+
+
 def capture_git_commit(repo_path: Optional[Path] = None) -> tuple[str, bool]:
     """Returns (commit_hash, is_dirty) for the repository at 'repo_path'
-    (defaults to the current working directory). Raises GitMetadataError if
-    git is unavailable or the path is not inside a git repository -- never
-    silently returns a placeholder string."""
+    (defaults to ``default_repo_root()``, NOT the current working
+    directory -- see that function's docstring). Raises GitMetadataError
+    if git is unavailable or the path is not inside a git repository --
+    never silently returns a placeholder string."""
 
-    cwd = str(repo_path) if repo_path is not None else None
+    cwd = str(repo_path) if repo_path is not None else str(default_repo_root())
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -72,23 +94,69 @@ def compute_file_sha256(path: Path, chunk_size: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
-def compute_dataset_hash(paths: Sequence[Path]) -> str:
+def _portable_label(path: Path, repo_root: Optional[Path]) -> str:
+    """A stable identifier for 'path' that does not depend on the
+    absolute filesystem location it happens to be read from on this
+    particular machine -- path relative to 'repo_root' when the file is
+    inside the repo, else just the filename (e.g. a test's tmp_path
+    fixture, which is never portable across machines/runs anyway)."""
+
+    resolved = path.resolve()
+    if repo_root is not None:
+        try:
+            return str(resolved.relative_to(repo_root.resolve())).replace("\\", "/")
+        except ValueError:
+            pass
+    return resolved.name
+
+
+def compute_dataset_hash(paths: Sequence[Path], repo_root: Optional[Path] = None) -> str:
     """Combined dataset identity for a MULTI-file input (e.g. a whole
     journal directory of daily .jsonl files): hashes each file
-    independently, sorts the (relative-path, hash) pairs for order-
+    independently, sorts the (portable-label, hash) pairs for order-
     independence, then hashes that sorted manifest -- so the same set of
     files always produces the same combined hash regardless of directory
-    listing order, and any single byte changing anywhere is detected."""
+    listing order, and any single byte changing anywhere is detected.
+
+    **Fixed, 2026-07-21 Codex review finding:** previously used
+    ``str(p)`` (the full, often-absolute path) as the per-file label
+    baked into the hash, which (a) meant identical file bytes addressed
+    by a relative vs. absolute path, or moved to another machine, hashed
+    differently, and (b) could leak a username or private folder name
+    into a committed report. Now uses a path relative to 'repo_root'
+    (falling back to the bare filename for anything outside the repo,
+    e.g. a test's temp directory).
+    """
 
     if not paths:
         raise ValueError("compute_dataset_hash: no input paths given")
 
-    manifest = sorted((str(p), compute_file_sha256(p)) for p in paths)
+    manifest = sorted((_portable_label(p, repo_root), compute_file_sha256(p)) for p in paths)
     combined = hashlib.sha256()
     for name, file_hash in manifest:
         combined.update(name.encode("utf-8"))
         combined.update(file_hash.encode("utf-8"))
     return combined.hexdigest()
+
+
+def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Writes 'content' to 'path' via write-to-temp-then-rename, so an
+    interrupted write (crash, kill, disk full) never leaves a partially-
+    written file at 'path' -- either the old contents remain untouched or
+    the new contents are complete, never a truncated mix of both."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass(frozen=True)
@@ -98,9 +166,14 @@ class ReportMetadata:
     dataset_paths: tuple[str, ...]
     dataset_hash: str
     symbol: Optional[str]
+    currency: Optional[str]
     broker: Optional[str]
     period_start: Optional[str]
     period_end: Optional[str]
+    timeframe: Optional[str]
+    modelling_mode: Optional[str]
+    costs_note: Optional[str]
+    set_file: Optional[str]
     timezone: str
     random_seed: Optional[int]
     pipeline_version: str
@@ -116,29 +189,46 @@ def build_report_metadata(
     dataset_paths: Sequence[Path],
     *,
     symbol: Optional[str] = None,
+    currency: Optional[str] = None,
     broker: Optional[str] = None,
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
+    timeframe: Optional[str] = None,
+    modelling_mode: Optional[str] = None,
+    costs_note: Optional[str] = None,
+    set_file: Optional[str] = None,
     timezone_label: str = "UTC",
     random_seed: Optional[int] = None,
     repo_path: Optional[Path] = None,
 ) -> ReportMetadata:
     """Convenience constructor: captures git commit/dirty state and the
     dataset hash automatically; the caller supplies everything only it
-    knows (symbol, broker, period, seed)."""
+    knows (symbol, currency, broker, period, timeframe, modelling mode,
+    costs, set file, seed).
 
-    commit, dirty = capture_git_commit(repo_path)
-    dataset_hash = compute_dataset_hash(list(dataset_paths))
+    'repo_path' defaults to ``default_repo_root()`` (this repo's own
+    root), NOT the process's current working directory -- see
+    ``capture_git_commit``'s docstring.
+    """
+
+    root = repo_path if repo_path is not None else default_repo_root()
+    commit, dirty = capture_git_commit(root)
+    dataset_hash = compute_dataset_hash(list(dataset_paths), repo_root=root)
 
     return ReportMetadata(
         git_commit=commit,
         git_dirty=dirty,
-        dataset_paths=tuple(str(p) for p in dataset_paths),
+        dataset_paths=tuple(_portable_label(p, root) for p in dataset_paths),
         dataset_hash=dataset_hash,
         symbol=symbol,
+        currency=currency,
         broker=broker,
         period_start=period_start,
         period_end=period_end,
+        timeframe=timeframe,
+        modelling_mode=modelling_mode,
+        costs_note=costs_note,
+        set_file=set_file,
         timezone=timezone_label,
         random_seed=random_seed,
         pipeline_version=PIPELINE_VERSION,

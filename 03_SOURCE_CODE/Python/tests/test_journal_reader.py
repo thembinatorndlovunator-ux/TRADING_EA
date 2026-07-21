@@ -124,3 +124,67 @@ def test_find_duplicate_timestamp_symbol():
     df = to_dataframe(records)
     duplicates = find_duplicate_timestamp_symbol(df)
     assert len(duplicates) == 2  # only the two XAUUSD rows collide
+
+
+def test_glob_traversal_outside_directory_is_ignored(tmp_path):
+    """Regression for a Codex review finding: a caller-supplied glob
+    pattern like "../*.jsonl" could previously escape the intended
+    directory and read a parent file."""
+
+    from data_collection.journal_reader import read_journal_directory
+
+    parent_file = tmp_path / "outside.jsonl"
+    parent_file.write_text(json.dumps(make_valid_record(signal_id="escaped")) + "\n", encoding="utf-8")
+
+    subdir = tmp_path / "journal"
+    subdir.mkdir()
+    (subdir / "decisions_20260721.jsonl").write_text(
+        json.dumps(make_valid_record(signal_id="inside")) + "\n", encoding="utf-8"
+    )
+
+    result = read_journal_directory(subdir, pattern="../*.jsonl")
+    assert result.valid_records == []  # the parent file must NOT be read
+
+
+def test_nan_json_constant_is_a_parse_error_not_silently_accepted(tmp_path):
+    """Regression for a Codex review finding: Python's json module
+    silently accepts the non-standard NaN/Infinity tokens by default."""
+
+    from data_collection.journal_reader import read_journal_directory
+
+    record = make_valid_record()
+    raw = json.dumps(record).replace('"risk_percent": 0.3', '"risk_percent": NaN')
+    (tmp_path / "decisions_20260721.jsonl").write_text(raw + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert result.valid_records == []
+    assert len(result.parse_errors) == 1
+    assert "NaN" in result.parse_errors[0].error
+
+
+def test_utf8_bom_is_handled_transparently(tmp_path):
+    """A leading UTF-8 BOM must not be mistaken for a malformed first
+    line (a real, benign case some editors/exports produce)."""
+
+    from data_collection.journal_reader import read_journal_directory
+
+    path = tmp_path / "decisions_20260721.jsonl"
+    with path.open("w", encoding="utf-8-sig") as fh:
+        fh.write(json.dumps(make_valid_record()) + "\n")
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.valid_records) == 1
+    assert result.parse_errors == []
+
+
+def test_max_records_limit_raises(tmp_path):
+    """Regression for a Codex review finding: no cap existed on the
+    number of lines a journal directory read would load into memory."""
+
+    from data_collection.journal_reader import JournalReaderLimitError, read_journal_directory
+
+    lines = [json.dumps(make_valid_record(signal_id=f"s{i}")) for i in range(5)]
+    (tmp_path / "decisions_20260721.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_records=3)

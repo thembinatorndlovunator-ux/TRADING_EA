@@ -11,9 +11,9 @@ subprocess/argv at all.
 
 This script does ONE job: clean and validate the trade journal. Joining
 against news events is a SEPARATE required script (``join_news_events.py``,
-not yet built -- see TASK-028_PYTHON_STATISTICAL_LAB.md's own backlog
-list) precisely so this script's output is independently useful and
-independently testable without a news-event dependency.
+now built -- see that module) precisely so this script's output is
+independently useful and independently testable without a news-event
+dependency.
 """
 
 from __future__ import annotations
@@ -22,11 +22,16 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from analysis.report_metadata import PIPELINE_VERSION, ReportMetadata, build_report_metadata
+from analysis.report_metadata import (
+    PIPELINE_VERSION,
+    ReportMetadata,
+    build_report_metadata,
+    capture_git_commit,
+    default_repo_root,
+)
 from data_collection.journal_reader import (
     JournalReadResult,
     find_duplicate_signal_ids,
@@ -66,8 +71,16 @@ def run(
 
     Raises FileNotFoundError if 'input_dir' does not exist (propagated
     from read_journal_directory) -- never silently returns an empty
-    result for a typo'd path.
+    result for a typo'd path. Raises ValueError if any output path
+    coincides with 'input_dir' or with another output path.
     """
+
+    output_paths = [p for p in (output_csv, output_json, errors_json) if p is not None]
+    resolved_outputs = [p.resolve() for p in output_paths]
+    if len(set(resolved_outputs)) != len(resolved_outputs):
+        raise ValueError("output_csv, output_json, and errors_json must all be distinct paths")
+    if any(p == input_dir.resolve() for p in resolved_outputs):
+        raise ValueError("an output path must not be the same as input_dir")
 
     read_result = read_journal_directory(input_dir)
     df = to_dataframe(read_result.valid_records)
@@ -76,28 +89,38 @@ def run(
     dup_timestamp_symbol = find_duplicate_timestamp_symbol(df)
 
     journal_files = sorted(input_dir.glob("decisions_*.jsonl"))
+    root = repo_path if repo_path is not None else default_repo_root()
     if journal_files:
         metadata = build_report_metadata(
-            journal_files, symbol=symbol, broker=broker, random_seed=seed, repo_path=repo_path
+            journal_files, symbol=symbol, broker=broker, random_seed=seed, repo_path=root
         )
     else:
         # No journal files at all is a legitimate (if unusual) input state
         # -- e.g. a brand-new EA that has not run yet -- not a script
-        # failure, but there is no dataset to hash, so metadata is built
-        # with an empty dataset reference rather than crashing.
+        # failure. There is no DATASET to hash, but the CODE provenance
+        # (git commit) is always determinable regardless of whether any
+        # input data exists, so it is captured for real here too rather
+        # than special-cased to an empty string (a Codex review finding:
+        # the previous code silently reported an empty commit/hash pair
+        # here instead of the still-knowable commit).
+        commit, dirty = capture_git_commit(root)
         metadata = ReportMetadata(
-            git_commit="",
-            git_dirty=False,
+            git_commit=commit,
+            git_dirty=dirty,
             dataset_paths=(),
             dataset_hash="",
             symbol=symbol,
+            currency=None,
             broker=broker,
             period_start=None,
             period_end=None,
+            timeframe=None,
+            modelling_mode=None,
+            costs_note=None,
+            set_file=None,
             timezone="UTC",
             random_seed=seed,
             pipeline_version=PIPELINE_VERSION,
-            generated_at_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
 
     if output_csv is not None:
@@ -107,7 +130,11 @@ def run(
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(
-            json.dumps([r.model_dump(mode="json") for r in read_result.valid_records], indent=2),
+            json.dumps(
+                [r.model_dump(mode="json") for r in read_result.valid_records],
+                indent=2,
+                allow_nan=False,
+            ),
             encoding="utf-8",
         )
 
@@ -141,8 +168,16 @@ def run(
                 }
                 for e in read_result.validation_errors
             ],
+            # Duplicate rows are identified explicitly (not just counted)
+            # -- a Codex review finding: this report previously promised
+            # duplicate detection but wrote only the COUNT, losing which
+            # records were actually affected.
+            "duplicate_signal_id_records": dup_signal_id.to_dict(orient="records"),
+            "duplicate_timestamp_symbol_records": dup_timestamp_symbol.to_dict(orient="records"),
         }
-        errors_json.write_text(json.dumps(error_report, indent=2, default=str), encoding="utf-8")
+        errors_json.write_text(
+            json.dumps(error_report, indent=2, default=str, allow_nan=False), encoding="utf-8"
+        )
 
     return JoinTradeJournalResult(
         read_result=read_result,
@@ -177,7 +212,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             broker=args.broker,
             seed=args.seed,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
@@ -188,7 +223,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         f"{result.n_duplicate_signal_id_rows} duplicate-signal-id rows, "
         f"{result.n_duplicate_timestamp_symbol_rows} duplicate-timestamp-symbol rows."
     )
-    return 0
+    has_problems = (
+        result.read_result.parse_errors
+        or result.read_result.validation_errors
+        or result.n_duplicate_signal_id_rows
+        or result.n_duplicate_timestamp_symbol_rows
+    )
+    return 1 if has_problems else 0
 
 
 if __name__ == "__main__":

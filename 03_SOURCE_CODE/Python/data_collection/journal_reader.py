@@ -17,6 +17,18 @@ timestamp should never both exist (``OnTick``'s own once-per-completed-bar
 guard, TASK-025, should prevent this on the MQL5 side; if this module ever
 finds one, that is a genuine finding worth investigating, not a schema
 quirk to filter out).
+
+**Known, stated encoding caveat:** ``DJ_AppendDecision`` opens its file
+with MQL5's ``FILE_ANSI`` flag while this reader decodes as UTF-8 (with a
+tolerant BOM check). For pure-ASCII content (the only kind any current
+strategy/setup name in this project actually produces) the two encodings
+are byte-identical, so this has not caused a real failure yet -- but it is
+not a matching, tested contract, and a future non-ASCII value (e.g. a
+symbol or comment containing an accented character) could decode
+incorrectly or raise. Fixing this properly needs an MQL5-side change
+(write UTF-8, not ANSI) -- registered as part of a future numbered
+follow-up (see TASK-028_PYTHON_STATISTICAL_LAB.md), not silently patched
+around here by ignoring decode errors.
 """
 
 from __future__ import annotations
@@ -29,6 +41,24 @@ from typing import Optional
 import pandas as pd
 
 from analysis.schema import SchemaValidationError, TradeDecision, validate_record
+
+DEFAULT_MAX_RECORDS_PER_DIRECTORY = 1_000_000
+
+
+class JournalReaderLimitError(RuntimeError):
+    """Raised when a journal directory contains more raw lines than
+    'max_records' -- a caller-controlled or corrupted journal directory
+    must not be allowed to exhaust process memory silently."""
+
+
+def _reject_non_finite_json_constant(token: str) -> None:
+    """``json.loads``'s ``parse_constant`` hook: Python's json module, by
+    default, silently accepts the non-standard tokens ``NaN``,
+    ``Infinity``, and ``-Infinity`` (not valid per RFC 8259). Raising here
+    turns that into a normal, reported parse error instead of a silently
+    admitted non-finite value that could poison downstream arithmetic."""
+
+    raise ValueError(f"non-standard JSON constant {token!r} (NaN/Infinity) is not permitted")
 
 
 @dataclass(frozen=True)
@@ -60,47 +90,70 @@ class JournalReadResult:
 
 def _read_lines_from_file(path: Path) -> tuple[list[tuple[int, dict]], list[ParseError]]:
     """Parses each non-blank line of 'path' as JSON. A line that fails to
-    parse is recorded as a ParseError and EXCLUDED from the returned
-    records -- never silently dropped without a trace, and never allowed
-    to abort reading the rest of the file (one malformed line must not
-    hide every other valid line in the same file)."""
+    parse (including a non-standard NaN/Infinity constant, or a decoding
+    failure for the whole file) is recorded as a ParseError and EXCLUDED
+    from the returned records -- never silently dropped without a trace,
+    and never allowed to abort reading the rest of the DIRECTORY (one bad
+    file must not hide every other file's valid lines)."""
 
     parsed: list[tuple[int, dict]] = []
     errors: list[ParseError] = []
 
-    with path.open("r", encoding="utf-8") as fh:
-        for line_number, raw_line in enumerate(fh, start=1):
-            stripped = raw_line.strip()
-            if not stripped:
-                continue
-            try:
-                record = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                errors.append(
-                    ParseError(
-                        source_file=str(path),
-                        line_number=line_number,
-                        raw_line=stripped,
-                        error=str(exc),
-                    )
+    try:
+        # "utf-8-sig" tolerates a leading UTF-8 BOM (transparently
+        # stripped) while behaving identically to plain "utf-8" for any
+        # file without one -- a real, benign case worth handling for
+        # free; see the module docstring for the separate, NOT-yet-fixed
+        # FILE_ANSI-vs-UTF-8 cross-language encoding caveat.
+        with path.open("r", encoding="utf-8-sig") as fh:
+            lines = fh.readlines()
+    except UnicodeDecodeError as exc:
+        errors.append(
+            ParseError(
+                source_file=str(path),
+                line_number=0,
+                raw_line="",
+                error=f"file-level decode failure (not valid UTF-8): {exc}",
+            )
+        )
+        return parsed, errors
+
+    for line_number, raw_line in enumerate(lines, start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped, parse_constant=_reject_non_finite_json_constant)
+        except ValueError as exc:  # json.JSONDecodeError is itself a ValueError
+            errors.append(
+                ParseError(
+                    source_file=str(path),
+                    line_number=line_number,
+                    raw_line=stripped,
+                    error=str(exc),
                 )
-                continue
-            if not isinstance(record, dict):
-                errors.append(
-                    ParseError(
-                        source_file=str(path),
-                        line_number=line_number,
-                        raw_line=stripped,
-                        error=f"expected a JSON object, got {type(record).__name__}",
-                    )
+            )
+            continue
+        if not isinstance(record, dict):
+            errors.append(
+                ParseError(
+                    source_file=str(path),
+                    line_number=line_number,
+                    raw_line=stripped,
+                    error=f"expected a JSON object, got {type(record).__name__}",
                 )
-                continue
-            parsed.append((line_number, record))
+            )
+            continue
+        parsed.append((line_number, record))
 
     return parsed, errors
 
 
-def read_journal_directory(directory: Path, pattern: str = "decisions_*.jsonl") -> JournalReadResult:
+def read_journal_directory(
+    directory: Path,
+    pattern: str = "decisions_*.jsonl",
+    max_records: int = DEFAULT_MAX_RECORDS_PER_DIRECTORY,
+) -> JournalReadResult:
     """Reads every file matching 'pattern' in 'directory' (non-recursive,
     matching DJ_JournalFilePath's own flat one-file-per-day layout),
     parses, and schema-validates every line. Files are processed in sorted
@@ -111,19 +164,41 @@ def read_journal_directory(directory: Path, pattern: str = "decisions_*.jsonl") 
     Raises FileNotFoundError if 'directory' does not exist -- an empty
     result would otherwise be indistinguishable from "directory exists but
     has no journal files yet", which are different, worth-distinguishing
-    situations for a caller.
+    situations for a caller. Raises JournalReaderLimitError if the total
+    number of raw (non-blank) lines across every matched file exceeds
+    'max_records' -- an unbounded read of a caller-controlled directory
+    must not be allowed to exhaust process memory.
     """
 
     if not directory.is_dir():
         raise FileNotFoundError(f"journal directory not found: {directory}")
 
+    resolved_directory = directory.resolve()
+
     all_valid: list[TradeDecision] = []
     all_parse_errors: list[ParseError] = []
     all_validation_errors: list[ValidationError] = []
+    total_records_seen = 0
 
     for path in sorted(directory.glob(pattern)):
+        # Defensive: 'pattern' is normally a fixed literal
+        # ("decisions_*.jsonl"), but a caller-supplied pattern containing
+        # ".." components (e.g. "../*.jsonl") must not be allowed to
+        # escape 'directory' -- Path.glob itself does not prevent this.
+        # Every legitimate match's immediate parent is 'directory' itself
+        # (glob's default is non-recursive); anything else is rejected.
+        if path.resolve().parent != resolved_directory:
+            continue
+
         parsed, parse_errors = _read_lines_from_file(path)
         all_parse_errors.extend(parse_errors)
+
+        total_records_seen += len(parsed) + len(parse_errors)
+        if total_records_seen > max_records:
+            raise JournalReaderLimitError(
+                f"{directory}: more than max_records={max_records} lines across matched files "
+                "-- refusing to load the rest into memory"
+            )
 
         for line_number, raw_record in parsed:
             try:
