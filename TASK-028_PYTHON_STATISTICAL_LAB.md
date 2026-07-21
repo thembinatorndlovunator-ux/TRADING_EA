@@ -195,33 +195,142 @@ place unrestricted live trades; code or parameters rewrite automatically;
 sensitive data is committed; or claims cannot be traced to a named dataset,
 commit, and pipeline version.
 
-## Implementation notes
+## Implementation notes (Claude, part 1 of N)
 
-This registers backlog work only. No Python implementation, dependency
-installation, data download, or result generation is claimed here. TASK-027's
-number and active branch remain reserved for the order-manager-wiring work.
+Codex's backlog registration above is reproduced unmodified. What follows
+documents the first real implementation increment, built by Claude Code per
+the project's established "build standalone + test, then hand to Codex as
+strict auditor" workflow (the user's own stated preference for this task).
+
+**Scope of this increment:** the shared foundation every later notebook/
+script will import, plus the FIRST of the nine required scripts
+(`join_trade_journal.py`) end to end, real and complete — not a stub. The
+remaining eight scripts and all ten notebooks are explicitly NOT built yet
+(see "Remaining backlog" below), split out per this task's own acceptance
+criterion allowing deferred work to be "completed or split into
+independently numbered follow-ups."
+
+### What was built
+
+- **Environment:** `.venv/` (already `.gitignore`d) with `pandas`, `numpy`,
+  `scipy`, `pydantic`, `pytest` installed for real, plus `nbformat`/
+  `nbclient`/`ipykernel` (added to `requirements.txt`) to actually execute
+  the paired notebook from a clean kernel rather than hand-authoring it
+  unverified.
+- **`03_SOURCE_CODE/Python/analysis/schema.py`** — `TradeDecision` pydantic
+  model, field-for-field matching `TRADE_DECISION_SCHEMA.json` and
+  `DecisionJournal.mqh`'s actual serialization, `extra="forbid"`, strict
+  UTC-only timestamps, a known-regime allowlist, NaN/inf rejection on
+  `entry`/`stop`.
+- **`03_SOURCE_CODE/Python/analysis/time_utils.py`** — UTC/server/Botswana
+  (UTC+2, no DST, reusing `MT5CalendarProvider.mqh`'s TASK-029 stated
+  assumption) conversions; `ensure_utc` never guesses a timezone for a
+  naive datetime.
+- **`03_SOURCE_CODE/Python/analysis/metrics.py`** — Wilson confidence
+  interval, win rate, expectancy, profit factor (returns `None`, not
+  `float('inf')`, when there are zero losing trades), and a seeded
+  bootstrap confidence interval. Every function raises
+  `InsufficientSampleError` on an empty sample rather than returning a
+  silently-meaningless number.
+- **`03_SOURCE_CODE/Python/analysis/resampling.py`** — `seeded_bootstrap_indices`,
+  built on `numpy.random.default_rng` (not the legacy global RNG state),
+  so results are reproducible given the same seed regardless of what else
+  in the process touched `numpy.random` first.
+- **`03_SOURCE_CODE/Python/analysis/report_metadata.py`** — git
+  commit/dirty-state capture, per-file and combined-dataset SHA-256
+  hashing (order-independent), and a `ReportMetadata` container covering
+  every field the reproducibility contract requires.
+- **`03_SOURCE_CODE/Python/data_collection/journal_reader.py`** — reads
+  `decisions_*.jsonl` (matching `DJ_JournalFilePath`'s exact naming/layout),
+  separates parse errors from schema-validation errors (neither silently
+  dropped), and duplicate-detection on both `signal_id` and the practical
+  interim `(timestamp_utc, symbol)` key.
+- **`03_SOURCE_CODE/Python/analysis/join_trade_journal.py`** — the first of
+  the nine required scripts, complete: CLI + a plain `run()` function for
+  notebook/test use, writes CSV/JSON of valid records and a separate error
+  report carrying full provenance metadata.
+- **`03_SOURCE_CODE/Python/notebooks/00_journal_pipeline_demo.ipynb`** — NOT
+  one of the ten required notebooks; a minimal, thin, actually-executed
+  (via `jupyter execute` against a real registered kernel, real output
+  captured, not hand-simulated) demonstration of the paired-notebook
+  convention, using synthetic fixtures.
+- **`03_SOURCE_CODE/Python/tests/`** — 70 tests, all synthetic-fixture-based,
+  covering every module above including explicit edge cases (empty
+  samples, zero-variance bootstrap, duplicate detection, malformed JSON
+  lines, non-UTC timestamps, unknown regimes).
+
+### A real, concrete cross-layer finding this increment surfaced
+
+Running the real CLI against a journal line shaped EXACTLY like what
+`ThembaAdaptiveIntradayEA.mq5` (TASK-025/027) actually emits today — via
+an actual `python -m analysis.join_trade_journal` invocation, not a
+hypothetical — confirms every real journal line the current EA build
+produces will FAIL schema validation on `market_family`/`intraday_mode`
+(both always empty strings; the live EA never sets either field). This
+Python task cannot fix that — it is an MQL5-side gap — but it now has a
+concrete, automated way to detect and quantify it once real journal data
+exists. Flagged as a needed future MQL5 task, not silently worked around.
+
+### Remaining backlog (explicitly NOT built this increment)
+
+- 8 of 9 required scripts: `analyse_baseline.py`, `analyse_giveback.py`,
+  `join_news_events.py`, `calculate_mfe_mae.py`, `walk_forward.py`,
+  `monte_carlo.py`, `pattern_validation.py`, `compare_releases.py`.
+- All 10 required notebooks.
+- Deferred validation: regime confusion matrix (TASK-016), score-
+  correlation analysis (TASK-024), candlestick/chart-pattern validation
+  against MQL5 fixtures, MFE/MAE fixtures.
+- `03_SOURCE_CODE/Python/news_connectors/` — empty, no adapter built yet
+  (needs `join_news_events.py` first, which needs an agreed news-event
+  export format from the MQL5 side — `NewsManager.mqh`, TASK-029, has no
+  CSV/export path yet either).
+- `08_RESULTS/python_reports/` — not created; nothing has been run against
+  real data yet (no real journal exists, per the batched runtime-
+  verification backlog every prior MQL5 task has also flagged).
 
 ## Commands run
 
-Read-only repository status, task-number, roadmap, folder-scaffold,
-dependency, and Python-reference checks.
+```
+git checkout -b claude/task-028-python-statistical-lab
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install pandas numpy scipy pydantic pytest nbformat nbclient ipykernel
+cd 03_SOURCE_CODE/Python
+../../.venv/Scripts/python.exe -m pytest -v
+../../.venv/Scripts/python.exe -m ipykernel install --user --name themba-python-lab
+../../.venv/Scripts/python.exe -m jupyter execute --kernel_name=themba-python-lab notebooks/00_journal_pipeline_demo.ipynb
+```
 
 ## Compiler result
 
-Not applicable to backlog registration.
+Not applicable (Python, not MQL5) — see Test results for the equivalent
+real-execution evidence this project requires in its place.
 
 ## Test results
 
-Not run - no Python code was implemented.
+**Real, verified.** `70 passed` via `pytest -v` against the actual
+installed `.venv` (`pandas 3.0.3`, `numpy 2.5.1`, `pydantic 2.13.4`,
+`scipy 1.18.0`, `pytest 9.1.1`). The paired notebook was executed for
+real via `jupyter execute` against a registered kernel (not hand-
+simulated) and produced the exact expected counts (1 valid record, 1
+parse error, 1 validation error) with its own in-notebook assertions
+passing. A real CLI smoke-test run (`python -m analysis.join_trade_journal`)
+against a current-EA-shaped record independently confirmed the
+market_family/intraday_mode finding above.
 
 ## Commit
 
-Pending. Codex did not create a commit.
+Pending — see `git log` on `claude/task-028-python-statistical-lab`.
 
 ## Reviewer
 
-Pending implementation and independent review.
+**Not available this phase for a full review, but this task is explicitly
+built for Codex's strict-auditor role per the user's own stated hybrid
+workflow** — see `09_HANDOVERS/claude_to_codex/TASK-028_handover.md` for
+exactly what to stress-test (edge cases, security, leakage risks).
 
 ## Final decision
 
-**NOT STARTED - BACKLOG REGISTERED.**
+**IN PROGRESS — foundation + 1 of 9 scripts complete and tested with real
+evidence; 0 of 10 notebooks (1 non-required demo notebook built and
+executed for real); remaining 8 scripts and 10 notebooks explicitly
+backlogged as follow-up work, not silently claimed done.**

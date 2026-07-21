@@ -14,3 +14,13 @@ openpyxl
 onnx
 onnxruntime
 skl2onnx
+
+# Testing (TASK-028)
+pytest
+
+# Lightweight notebook execution -- used to actually run paired notebooks
+# from a clean kernel (reproducibility contract test plan item 4) without
+# requiring the full jupyterlab UI stack in an automated/CI context.
+nbformat
+nbclient
+ipykernel
