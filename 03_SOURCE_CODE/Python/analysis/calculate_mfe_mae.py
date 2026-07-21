@@ -35,16 +35,25 @@ from analysis.csv_io import (
     assert_finite_columns,
     assert_high_low_geometry,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
+    assert_unique_composite_key,
     assert_unique_ids,
+    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
+    sanitize_dataframe_for_csv,
 )
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
-from analysis.trade_math import BarAlignmentError, MfeMaeResult, NoBarsInWindowError, compute_mfe_mae
+from analysis.trade_math import (
+    BarAlignmentError,
+    MfeMaeResult,
+    NoBarsInWindowError,
+    compute_mfe_mae,
+)
 
 TradesSchemaError = CsvSchemaError  # kept as a local alias for readability
-                                     # at this script's own call sites
+# at this script's own call sites
 
 REQUIRED_TRADE_COLUMNS = {
     "trade_id",
@@ -82,9 +91,11 @@ def run(
     bad trade never hides every other trade's valid result.
     """
 
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, errors_json):
-        if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
-            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+        assert_path_not_same_file(out_path, trades_csv, "output path")
+        assert_path_not_same_file(out_path, bars_csv, "output path")
     assert_output_paths_distinct([output_csv, errors_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
@@ -99,6 +110,7 @@ def run(
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["high", "low"], bars_csv)
     assert_high_low_geometry(bars, "high", "low", bars_csv)
+    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
     bars = bars.copy()
     bars["timestamp"] = parse_utc_series(bars["timestamp"])
@@ -158,7 +170,10 @@ def run(
                 for r in results
             ]
         )
-        out_df.to_csv(output_csv, index=False)
+        # trade_id is a caller-controlled string -- sanitized against
+        # spreadsheet-formula injection (Codex review finding,
+        # 2026-07-22, third round).
+        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(out_df), output_csv)
 
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +220,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"calculate_mfe_mae: {len(result.results)} computed, {len(result.row_errors)} row errors.")
+    print(
+        f"calculate_mfe_mae: {len(result.results)} computed, {len(result.row_errors)} row errors."
+    )
     return 1 if result.row_errors else 0
 
 

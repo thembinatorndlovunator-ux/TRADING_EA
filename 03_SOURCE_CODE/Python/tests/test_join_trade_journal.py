@@ -38,6 +38,35 @@ def test_run_empty_directory_no_journal_files(tmp_path):
     assert result.metadata.dataset_paths == ()
 
 
+def test_race_between_hash_and_parse_is_detected(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    hashing before parsing narrows, but does not eliminate, the race a
+    concurrent writer creates -- a probe changed a journal file AFTER
+    metadata hashing but BEFORE parsing, and the result analyzed the NEW
+    record while retaining the OLD hash. Simulated here by mutating the
+    journal file inside a monkeypatched read_journal_directory, i.e.
+    exactly the window between this module's hash call and its parse
+    call."""
+
+    import analysis.join_trade_journal as jtj_module
+    from data_collection.journal_reader import read_journal_directory as real_read
+
+    journal_path = tmp_path / "decisions_20260721.jsonl"
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a")])
+
+    def mutating_read(directory, *args, **kwargs):
+        # Simulate a concurrent writer appending AFTER this module already
+        # hashed the file but BEFORE it parses -- mutate then delegate.
+        with journal_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(make_valid_record(signal_id="b")) + "\n")
+        return real_read(directory, *args, **kwargs)
+
+    monkeypatch.setattr(jtj_module, "read_journal_directory", mutating_read)
+
+    with pytest.raises(RuntimeError):
+        jtj_module.run(input_dir=tmp_path, repo_path=REPO_ROOT)
+
+
 def test_output_csv_inside_input_dir_rejected(tmp_path):
     """Regression for a Codex review finding (2026-07-22): output paths
     were previously checked only against input_dir ITSELF, not against
@@ -76,6 +105,24 @@ def test_output_csv_sanitizes_formula_injection(tmp_path):
     raw = out_csv.read_text(encoding="utf-8")
     assert "'=CMD" in raw  # neutralized with a leading single-quote
     assert "\n=CMD" not in raw  # never appears as a live formula prefix
+
+
+def test_provenance_auto_written_even_without_explicit_errors_json(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    provenance was previously written ONLY into the optional errors_json
+    report -- a caller who requested output_csv but never asked for
+    errors_json got a data file with zero provenance record anywhere."""
+
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record()])
+    out_dir = tmp_path / "out"
+    output_csv = out_dir / "journal.csv"
+
+    run(input_dir=tmp_path, output_csv=output_csv, repo_path=REPO_ROOT)
+
+    provenance_path = out_dir / "journal.provenance.json"
+    assert provenance_path.exists()
+    payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"] != ""
 
 
 def test_run_writes_csv_json_and_errors(tmp_path):

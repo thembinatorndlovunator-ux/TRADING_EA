@@ -44,21 +44,38 @@ import pandas as pd
 from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
+    assert_path_not_same_file,
     assert_unique_ids,
+    atomic_write_dataframe_csv,
     read_csv_with_required_columns,
     sanitize_for_csv,
 )
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import (
+    atomic_write_text,
+    build_report_metadata,
+    compute_dataset_hash,
+    default_repo_root,
+)
 from analysis.time_utils import TimezoneValidationError, parse_utc_series
-from data_collection.journal_reader import read_journal_directory, to_dataframe
+from data_collection.journal_reader import (
+    find_duplicate_signal_ids,
+    find_duplicate_timestamp_symbol,
+    read_journal_directory,
+    to_dataframe,
+)
 
 REQUIRED_NEWS_COLUMNS = {"event_id", "event_name", "currency", "importance", "scheduled_utc"}
-# MT5CalendarProvider.mqh casts ENUM_CALENDAR_EVENT_IMPORTANCE directly to
-# int (0=none/low .. 3=high) -- see NewsManager.mqh's own SNewsEvent
-# docstring. A value outside this range cannot be a real MQL-sourced
-# importance and must be a visible schema failure, not silently accepted
-# as an unusually large/small ordinal.
-VALID_IMPORTANCE_VALUES = {0, 1, 2, 3}
+# **Fixed, 2026-07-22 Codex review finding (third round): hard-limiting to
+# {0,1,2,3} assumed an MT5-only source (MT5CalendarProvider.mqh casts
+# ENUM_CALENDAR_EVENT_IMPORTANCE to that exact range), but NewsManager.mqh's
+# own SNewsEvent docstring states 'importance' is a PROVIDER-NEUTRAL ordinal
+# -- "whatever scale the provider uses" (e.g. the FairEconomy feed chosen
+# for TASK-034 may use a different scale entirely). The genuine
+# provider-neutral contract is simply: a non-negative INTEGER (not a bool,
+# which Python's own type hierarchy makes a subtype of int and would
+# otherwise be silently admitted as 0/1; not a float with a fractional
+# part).**
+MIN_IMPORTANCE_VALUE = 0
 
 
 @dataclass(frozen=True)
@@ -122,8 +139,11 @@ def run(
     for out_path in (output_csv, summary_json, errors_json):
         if out_path is None:
             continue
-        if out_path.resolve() in (resolved_journal_dir, news_events_csv.resolve()):
-            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+        if out_path.resolve() == resolved_journal_dir:
+            raise CsvSchemaError(f"output path {out_path} must not be the same as journal_dir")
+        # Uses OS-level file-identity (not just Path.resolve()) so a hard
+        # link to news_events_csv is also caught -- Codex review finding, third round.
+        assert_path_not_same_file(out_path, news_events_csv, "output path")
         # **Fixed, 2026-07-22 Codex review finding:** an output written
         # INSIDE journal_dir (even under a different name) could later be
         # picked up by a SUBSEQUENT run's "decisions_*.jsonl" glob as if
@@ -135,7 +155,9 @@ def run(
                 f"output path {out_path} must not be written inside journal_dir "
                 f"({journal_dir}) -- it could be picked up as a journal input by a future run"
             )
-    output_resolved = [p.resolve() for p in (output_csv, summary_json, errors_json) if p is not None]
+    output_resolved = [
+        p.resolve() for p in (output_csv, summary_json, errors_json) if p is not None
+    ]
     if len(set(output_resolved)) != len(output_resolved):
         raise CsvSchemaError("output_csv, summary_json, and errors_json must all be distinct paths")
 
@@ -154,19 +176,60 @@ def run(
     )
 
     read_result = read_journal_directory(journal_dir)
+
+    # **Fixed, 2026-07-22 Codex review finding (third round): hashing
+    # before parsing narrows, but does NOT eliminate, the race a
+    # concurrent writer creates -- re-hashing after parsing and comparing
+    # catches a change that occurred in between (a detection, not a full
+    # transactional guarantee).**
+    if journal_files:
+        hash_root = repo_path if repo_path is not None else default_repo_root()
+        post_parse_hash = compute_dataset_hash(dataset_paths, repo_root=hash_root)
+        if post_parse_hash != metadata.dataset_hash:
+            raise RuntimeError(
+                f"{journal_dir}: input files changed between hashing and parsing -- "
+                "the analyzed content and the reported dataset_hash would not match. "
+                "Re-run against a stable snapshot."
+            )
+
     decisions_df = to_dataframe(read_result.valid_records)
+
+    # **Fixed, 2026-07-22 Codex review finding (third round): this script
+    # never ran the journal duplicate detectors that join_trade_journal.py
+    # already has -- two identical valid decisions were counted TWICE,
+    # silently biasing the blackout count (the CLI returned 0 despite the
+    # underlying duplication).**
+    dup_signal_id = find_duplicate_signal_ids(decisions_df)
+    dup_timestamp_symbol = find_duplicate_timestamp_symbol(decisions_df)
+    if not dup_signal_id.empty or not dup_timestamp_symbol.empty:
+        raise CsvSchemaError(
+            f"{journal_dir}: duplicate journal decisions found "
+            f"({len(dup_signal_id)} duplicate signal_id row(s), "
+            f"{len(dup_timestamp_symbol)} duplicate (timestamp_utc, symbol) row(s)) -- "
+            "would silently double-count decisions in the blackout analysis"
+        )
 
     news = read_csv_with_required_columns(news_events_csv, REQUIRED_NEWS_COLUMNS)
     assert_unique_ids(news, "event_id", news_events_csv)
     assert_finite_columns(news, ["importance"], news_events_csv)
-    # **Fixed, 2026-07-22 Codex review finding:** 'importance' was only
-    # checked for finiteness, not for matching the MQL integer enum's
-    # actual [0, 3] range.
-    bad_importance = news[~news["importance"].isin(VALID_IMPORTANCE_VALUES)]
+    # **Fixed, 2026-07-22 Codex review finding (third round): the
+    # provider-neutral contract is a non-negative INTEGER, not a hard
+    # {0,1,2,3} range (see the MIN_IMPORTANCE_VALUE comment above) --
+    # AND Python bools (a subtype of int) were previously admitted
+    # silently as 0/1 rather than rejected as the wrong type entirely.
+    if pd.api.types.is_bool_dtype(news["importance"]):
+        raise CsvSchemaError(
+            f"{news_events_csv}: 'importance' must be an integer ordinal, not boolean"
+        )
+    importance_numeric = pd.to_numeric(news["importance"], errors="coerce")
+    bad_importance = news[
+        (importance_numeric < MIN_IMPORTANCE_VALUE)
+        | (importance_numeric != importance_numeric.round())
+    ]
     if not bad_importance.empty:
         raise CsvSchemaError(
-            f"{news_events_csv}: {len(bad_importance)} row(s) have an importance value outside "
-            f"{sorted(VALID_IMPORTANCE_VALUES)}: rows {bad_importance.index.tolist()}"
+            f"{news_events_csv}: {len(bad_importance)} row(s) have a non-integer or negative "
+            f"'importance' value (must be a non-negative integer ordinal): rows {bad_importance.index.tolist()}"
         )
     news = news.copy()
     news["scheduled_utc"] = parse_utc_series(news["scheduled_utc"])
@@ -194,7 +257,7 @@ def run(
         safe_joined = joined.copy()
         for col in safe_joined.select_dtypes(include=["object", "str"]).columns:
             safe_joined[col] = safe_joined[col].map(sanitize_for_csv)
-        safe_joined.to_csv(output_csv, index=False)
+        atomic_write_dataframe_csv(safe_joined, output_csv)
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +277,18 @@ def run(
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
+    # **Fixed, 2026-07-22 Codex review finding (third round): row-level
+    # invalid-journal details were previously persisted ONLY if the
+    # caller happened to request errors_json explicitly -- otherwise an
+    # all-invalid run could write an empty output_csv, exit nonzero, and
+    # retain no reviewable error artifact anywhere on disk. Auto-derive
+    # a path whenever any other output is requested, matching
+    # join_trade_journal.py's own fix for the identical gap.**
+    if errors_json is None:
+        base = output_csv if output_csv is not None else summary_json
+        if base is not None:
+            errors_json = base.parent / f"{base.stem}.errors.json"
+
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
         error_payload = {
@@ -225,20 +300,26 @@ def run(
             },
             "parse_errors": [
                 {
-                    "source_file": e.source_file, "line_number": e.line_number,
-                    "raw_line": e.raw_line, "error": e.error,
+                    "source_file": e.source_file,
+                    "line_number": e.line_number,
+                    "raw_line": e.raw_line,
+                    "error": e.error,
                 }
                 for e in read_result.parse_errors
             ],
             "validation_errors": [
                 {
-                    "source_file": e.source_file, "line_number": e.line_number,
-                    "raw_record": e.raw_record, "error": e.error,
+                    "source_file": e.source_file,
+                    "line_number": e.line_number,
+                    "raw_record": e.raw_record,
+                    "error": e.error,
                 }
                 for e in read_result.validation_errors
             ],
         }
-        atomic_write_text(errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False))
+        atomic_write_text(
+            errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False)
+        )
 
     return NewsJoinResult(
         joined=joined,

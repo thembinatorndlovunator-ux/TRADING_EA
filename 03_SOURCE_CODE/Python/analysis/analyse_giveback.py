@@ -20,6 +20,18 @@ CLOSE-price-based (a documented simplification: the live guard would check
 current bid/ask every tick; a bar-close proxy is what offline analysis at
 bar granularity can reasonably provide) -- distinct from
 calculate_mfe_mae.py's high/low-based bars.csv.
+
+**Bar-timestamp convention, declared explicitly (Codex review finding,
+2026-07-22, third round): 'timestamp' is the bar's CLOSE time** -- the
+natural convention here since the R-path is built by walking bar CLOSE
+prices one at a time (each close represents "the R multiple as of this
+bar closing"), unlike calculate_mfe_mae.py's bar-OPEN convention (which
+walks high/low RANGES, not point-in-time closes). entry_time/exit_time
+must each exactly match a bar timestamp for that trade's symbol --
+without this, a trade like 00:30-01:30 with only a 01:00 bar previously
+completed with ZERO row errors despite neither endpoint being covered by
+any real bar, silently treating an arbitrary sub-bar-resolution timestamp
+as if it aligned with actual price data.
 """
 
 from __future__ import annotations
@@ -38,9 +50,13 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
+    assert_unique_composite_key,
     assert_unique_ids,
+    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
+    sanitize_dataframe_for_csv,
 )
 from analysis.exit_simulation import simulate_giveback_path
 from analysis.metrics import InsufficientSampleError, bootstrap_confidence_interval, win_rate
@@ -48,7 +64,15 @@ from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
-REQUIRED_TRADE_COLUMNS = {"trade_id", "symbol", "is_long", "entry_time", "exit_time", "entry_price", "stop_price"}
+REQUIRED_TRADE_COLUMNS = {
+    "trade_id",
+    "symbol",
+    "is_long",
+    "entry_time",
+    "exit_time",
+    "entry_price",
+    "stop_price",
+}
 REQUIRED_BAR_COLUMNS = {"symbol", "timestamp", "close"}
 
 
@@ -59,10 +83,10 @@ class TradeGivebackComparison:
     v637_trigger_bar: Optional[int]
     v637_trigger_r: Optional[float]
     v637_r_diff: float  # trigger_r - actual_final_r: positive means the
-                         # guard would have closed at a BETTER R than the
-                         # trade actually ended with (guard would have
-                         # helped); negative means it would have closed
-                         # early and hurt. 0.0 if the guard never triggered.
+    # guard would have closed at a BETTER R than the
+    # trade actually ended with (guard would have
+    # helped); negative means it would have closed
+    # early and hurt. 0.0 if the guard never triggered.
     v811_trigger_bar: Optional[int]
     v811_trigger_r: Optional[float]
     v811_r_diff: float
@@ -86,12 +110,20 @@ def run(
     v811_arm_r: float = 0.8,
     v811_floor_r: float = 0.1,
     symbol: Optional[str] = None,
-    seed: Optional[int] = None,
+    # **Fixed, 2026-07-22 Codex review finding (third round): this was
+    # 'Optional[int] = None', combined with a call site using
+    # 'seed or 42' -- an explicit seed=0 is falsy in Python, so it was
+    # silently replaced by 42 while metadata still reported the caller's
+    # real seed of 0, a real reproducibility-breaking mismatch. Always an
+    # explicit int now, matching monte_carlo.py/compare_releases.py.**
+    seed: int = 42,
     repo_path: Optional[Path] = None,
 ) -> GivebackRunResult:
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, summary_json):
-        if out_path is not None and out_path.resolve() in (trades_csv.resolve(), bars_csv.resolve()):
-            raise CsvSchemaError(f"output path {out_path} must not be the same as an input path")
+        assert_path_not_same_file(out_path, trades_csv, "output path")
+        assert_path_not_same_file(out_path, bars_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
@@ -104,6 +136,7 @@ def run(
     assert_unique_ids(trades, "trade_id", trades_csv)
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["close"], bars_csv)
+    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
     bars = bars.copy()
     bars["timestamp"] = parse_utc_series(bars["timestamp"])
@@ -130,10 +163,30 @@ def run(
                     f"entry_price ({entry_price})"
                 )
 
-            symbol_bars = bars[
-                (bars["symbol"] == row["symbol"])
-                & (bars["timestamp"] >= entry_time)
-                & (bars["timestamp"] <= exit_time)
+            symbol_all_bars = bars[bars["symbol"] == row["symbol"]]
+            symbol_bar_timestamps = set(symbol_all_bars["timestamp"])
+            if entry_time not in symbol_bar_timestamps:
+                row_errors.append(
+                    {
+                        "trade_id": trade_id,
+                        "error": f"entry_time ({entry_time}) does not match any bar timestamp for "
+                        f"symbol {row['symbol']!r} (bar timestamps are bar-CLOSE times)",
+                    }
+                )
+                continue
+            if exit_time not in symbol_bar_timestamps:
+                row_errors.append(
+                    {
+                        "trade_id": trade_id,
+                        "error": f"exit_time ({exit_time}) does not match any bar timestamp for "
+                        f"symbol {row['symbol']!r} (bar timestamps are bar-CLOSE times)",
+                    }
+                )
+                continue
+
+            symbol_bars = symbol_all_bars[
+                (symbol_all_bars["timestamp"] >= entry_time)
+                & (symbol_all_bars["timestamp"] <= exit_time)
             ].sort_values("timestamp")
 
             if symbol_bars.empty:
@@ -154,8 +207,12 @@ def run(
                 # infinite actual_final_r.
                 exit_price_val = float(row["exit_price"])
                 if not math.isfinite(exit_price_val):
-                    raise ValueError(f"trade_id={trade_id}: exit_price ({exit_price_val}) is not finite")
-                actual_final_r = compute_r_multiple(is_long, entry_price, stop_price, exit_price_val)
+                    raise ValueError(
+                        f"trade_id={trade_id}: exit_price ({exit_price_val}) is not finite"
+                    )
+                actual_final_r = compute_r_multiple(
+                    is_long, entry_price, stop_price, exit_price_val
+                )
             else:
                 actual_final_r = r_path[-1]
 
@@ -166,7 +223,9 @@ def run(
                 giveback_percent=v637_giveback_percent,
                 close_trigger_floor_r=v637_floor_r,
             )
-            v811_result = simulate_giveback_path(r_path, "v811", arm_r=v811_arm_r, floor_r=v811_floor_r)
+            v811_result = simulate_giveback_path(
+                r_path, "v811", arm_r=v811_arm_r, floor_r=v811_floor_r
+            )
 
             v637_bar, v637_r = v637_result if v637_result else (None, None)
             v811_bar, v811_r = v811_result if v811_result else (None, None)
@@ -187,8 +246,12 @@ def run(
             row_errors.append({"trade_id": trade_id, "error": str(exc)})
 
     if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame([c.__dict__ for c in comparisons]).to_csv(output_csv, index=False)
+        # trade_id is a caller-controlled string -- sanitized against
+        # spreadsheet-formula injection (Codex review finding,
+        # 2026-07-22, third round). Written atomically (temp-then-rename).
+        atomic_write_dataframe_csv(
+            sanitize_dataframe_for_csv(pd.DataFrame([c.__dict__ for c in comparisons])), output_csv
+        )
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
@@ -219,7 +282,7 @@ def run(
                 # finding: this mean previously had NO interval at all).
                 if len(triggered) >= 2:
                     r_diffs = [getattr(c, f"{model}_r_diff") for c in triggered]
-                    boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed or 42)
+                    boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed)
                     r_diff_ci_lower = boot.ci_lower
                     r_diff_ci_upper = boot.ci_upper
             model_summary: dict = {
@@ -228,15 +291,49 @@ def run(
                 "mean_r_diff_when_triggered": mean_r_diff,
                 "mean_r_diff_when_triggered_ci_lower": r_diff_ci_lower,
                 "mean_r_diff_when_triggered_ci_upper": r_diff_ci_upper,
+                # **Added, 2026-07-22 Codex review finding (third round):**
+                # confidence/resample count were previously omitted from
+                # the persisted output entirely.
+                "mean_r_diff_confidence": 0.95 if len(triggered) >= 2 else None,
+                "mean_r_diff_n_resamples": 2000 if len(triggered) >= 2 else None,
+                "mean_r_diff_seed": seed if len(triggered) >= 2 else None,
             }
             if triggered:
+                # **Renamed, 2026-07-22 Codex review finding (third
+                # round):** the old name "guard_helped_rate" read as a
+                # full-cohort policy rate but was silently conditional on
+                # this model's own triggered subset -- one helpful trigger
+                # among 100 total trades would be reported as 100%, not
+                # 1%. The `_when_triggered` suffix makes that scope
+                # explicit, and a full-cohort rate is now also reported
+                # alongside it so both questions ("how often does the
+                # guard help when it fires?" vs. "how often does the
+                # guard help across every trade?") are answerable.
                 try:
                     wr = win_rate([getattr(c, f"{model}_r_diff") > 0.0 for c in triggered])
-                    model_summary["guard_helped_rate"] = wr.win_rate
-                    model_summary["guard_helped_rate_ci"] = [wr.ci_lower, wr.ci_upper]
-                    model_summary["guard_helped_rate_n"] = wr.n
+                    model_summary["guard_helped_rate_when_triggered"] = wr.win_rate
+                    model_summary["guard_helped_rate_when_triggered_ci"] = [
+                        wr.ci_lower,
+                        wr.ci_upper,
+                    ]
+                    model_summary["guard_helped_rate_when_triggered_n"] = wr.n
                 except InsufficientSampleError:
                     pass
+            try:
+                full_cohort_outcomes = [
+                    getattr(c, f"{model}_trigger_r") is not None
+                    and getattr(c, f"{model}_r_diff") > 0.0
+                    for c in comparisons
+                ]
+                wr_full = win_rate(full_cohort_outcomes)
+                model_summary["guard_helped_rate_full_cohort"] = wr_full.win_rate
+                model_summary["guard_helped_rate_full_cohort_ci"] = [
+                    wr_full.ci_lower,
+                    wr_full.ci_upper,
+                ]
+                model_summary["guard_helped_rate_full_cohort_n"] = wr_full.n
+            except InsufficientSampleError:
+                pass
             summary[model] = model_summary
         atomic_write_text(summary_json, json.dumps(summary, indent=2, default=str, allow_nan=False))
 
@@ -255,7 +352,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v811-arm-r", type=float, default=0.8)
     parser.add_argument("--v811-floor-r", type=float, default=0.1)
     parser.add_argument("--symbol", default=None)
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     return parser
 
 
@@ -279,7 +376,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"analyse_giveback: {len(result.comparisons)} compared, {len(result.row_errors)} row errors.")
+    print(
+        f"analyse_giveback: {len(result.comparisons)} compared, {len(result.row_errors)} row errors."
+    )
     return 1 if result.row_errors else 0
 
 

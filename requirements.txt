@@ -9,6 +9,17 @@
 # `03_SOURCE_CODE/Python/requirements-lock.txt`. Re-pin deliberately
 # when a dependency is intentionally upgraded; don't let it drift
 # silently.
+#
+# **Clean-install command, actually using the lock file (Codex review
+# finding, 2026-07-22, third round: no documented install command used
+# requirements-lock.txt at all, defeating its purpose as a reproducible-
+# environment artifact):**
+#   python -m venv .venv
+#   .venv\Scripts\python.exe -m pip install -r 03_SOURCE_CODE\Python\requirements-lock.txt
+# This installs the EXACT tested transitive closure (this file,
+# requirements.txt, is the direct-dependency intent/rationale record --
+# regenerate requirements-lock.txt via a real `pip freeze` after any
+# deliberate upgrade here, don't hand-edit it).
 pandas==3.0.3
 numpy==2.5.1
 scipy==1.18.0

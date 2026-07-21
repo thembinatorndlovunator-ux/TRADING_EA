@@ -41,8 +41,12 @@ modified.
    purged-boundary window generation -- do not re-derive window
    mechanics that are already correct and tested.
 2. Accept a pluggable "parameter space" and "objective function" (e.g.
-   maximize test-window expectancy, or a risk-adjusted variant) --
-   exact interface is this task's own design decision.
+   maximize TRAIN-window expectancy, or a risk-adjusted variant --
+   **corrected, 2026-07-22 Codex review finding, third round: this
+   previously said "test-window expectancy," which is exactly the
+   leakage this task's own rejection criteria (below) and step 3 prohibit
+   -- parameter selection must never use the test slice**) -- exact
+   interface is this task's own design decision.
 3. For each window: evaluate every candidate parameter value against
    the TRAIN slice only, select the winner by the objective function,
    then evaluate ONLY that frozen winner against the TEST slice.

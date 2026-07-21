@@ -25,13 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from analysis.csv_io import sanitize_for_csv
+from analysis.csv_io import atomic_write_dataframe_csv, sanitize_for_csv
 from analysis.report_metadata import (
     PIPELINE_VERSION,
     ReportMetadata,
     atomic_write_text,
     build_report_metadata,
     capture_git_commit,
+    compute_dataset_hash,
     default_repo_root,
 )
 from data_collection.journal_reader import (
@@ -138,6 +139,25 @@ def run(
         )
 
     read_result = read_journal_directory(input_dir)
+
+    # **Fixed, 2026-07-22 Codex review finding (third round): hashing
+    # before parsing narrows, but does NOT eliminate, the race a
+    # concurrent writer creates -- a probe changed a journal file AFTER
+    # metadata hashing but BEFORE parsing, and the result analyzed the
+    # NEW record while retaining the OLD hash. Re-hashing after parsing
+    # and comparing catches exactly that case (this is a detection, not
+    # a full transactional guarantee -- a change occurring in the tiny
+    # window during this second hash computation itself remains
+    # possible, though vanishingly unlikely for local files).**
+    if journal_files:
+        post_parse_hash = compute_dataset_hash(journal_files, repo_root=root)
+        if post_parse_hash != metadata.dataset_hash:
+            raise RuntimeError(
+                f"{input_dir}: journal files changed between hashing and parsing -- "
+                "the analyzed content and the reported dataset_hash would not match. "
+                "Re-run against a stable snapshot."
+            )
+
     df = to_dataframe(read_result.valid_records)
 
     dup_signal_id = find_duplicate_signal_ids(df)
@@ -154,7 +174,7 @@ def run(
         safe_df = df.copy()
         for col in safe_df.select_dtypes(include=["object", "str"]).columns:
             safe_df[col] = safe_df[col].map(sanitize_for_csv)
-        safe_df.to_csv(output_csv, index=False)
+        atomic_write_dataframe_csv(safe_df, output_csv)
 
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -166,6 +186,18 @@ def run(
                 allow_nan=False,
             ),
         )
+
+    # **Fixed, 2026-07-22 Codex review finding (third round): provenance
+    # was previously written ONLY into the optional errors_json report --
+    # a caller who requested output_csv/output_json but not errors_json
+    # got a data file with zero provenance record anywhere. A provenance
+    # sidecar is now auto-derived and always written whenever ANY output
+    # is requested, even if the caller never asks for errors_json
+    # explicitly.**
+    if errors_json is None:
+        base = output_csv if output_csv is not None else output_json
+        if base is not None:
+            errors_json = base.parent / f"{base.stem}.provenance.json"
 
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
@@ -204,7 +236,9 @@ def run(
             "duplicate_signal_id_records": dup_signal_id.to_dict(orient="records"),
             "duplicate_timestamp_symbol_records": dup_timestamp_symbol.to_dict(orient="records"),
         }
-        atomic_write_text(errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False))
+        atomic_write_text(
+            errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False)
+        )
 
     return JoinTradeJournalResult(
         read_result=read_result,

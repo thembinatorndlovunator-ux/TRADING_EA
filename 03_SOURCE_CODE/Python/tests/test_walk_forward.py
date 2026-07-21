@@ -111,8 +111,15 @@ def test_empty_trades_raises(tmp_path):
     path = tmp_path / "trades.csv"
     pd.DataFrame(
         columns=[
-            "trade_id", "symbol", "is_long", "entry_time", "exit_time",
-            "entry_price", "exit_price", "stop_price", "profit",
+            "trade_id",
+            "symbol",
+            "is_long",
+            "entry_time",
+            "exit_time",
+            "entry_price",
+            "exit_price",
+            "stop_price",
+            "profit",
         ]
     ).to_csv(path, index=False)
     with pytest.raises(InsufficientSampleError):
@@ -140,6 +147,15 @@ def test_naive_timestamp_rejected(tmp_path):
         run(path, train_days=3, test_days=2, step_days=2)
 
 
+def test_impossible_chronology_rejected(tmp_path):
+    path = tmp_path / "trades.csv"
+    row = _row("t1", _BASE, 104.0, 10.0)
+    row["entry_time"] = (_BASE + pd.Timedelta(days=1)).isoformat()  # after exit_time (_BASE)
+    pd.DataFrame([row]).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path, train_days=3, test_days=2, step_days=2)
+
+
 def test_malformed_stop_geometry_rejected(tmp_path):
     path = tmp_path / "trades.csv"
     row = _row("t1", _BASE, 104.0, 10.0)
@@ -162,6 +178,21 @@ def test_missing_profit_not_silently_counted_as_loss(tmp_path):
     pd.DataFrame([row]).to_csv(path, index=False)
     with pytest.raises(CsvSchemaError):
         run(path, train_days=3, test_days=2, step_days=2)
+
+
+def test_seed_is_exposed_and_actually_used(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    this module's own docstring claimed "no seed is needed or accepted",
+    which became false once per-window expectancy started bootstrapping
+    internally -- the seed must be an explicit, exposed parameter, not a
+    hidden default."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    summary_json_a = tmp_path / "out_a" / "summary.json"
+    run(path, train_days=3, test_days=2, step_days=2, seed=7, summary_json=summary_json_a)
+    payload_a = json.loads(summary_json_a.read_text(encoding="utf-8"))
+    assert payload_a["summary"]["seed"] == 7
 
 
 def test_train_and_expectancy_confidence_intervals_present(tmp_path):
@@ -241,7 +272,9 @@ def test_trade_spanning_a_window_boundary_is_purged_from_both_sides(tmp_path):
     # if it carried a separate, earlier entry_time (see the previous
     # test's own re-trace for why that's no longer purged either).
     early_anchor_exit = _BASE
-    spanning_entry = _BASE + pd.Timedelta(days=2, hours=23)  # just before day3 (train/test boundary)
+    spanning_entry = _BASE + pd.Timedelta(
+        days=2, hours=23
+    )  # just before day3 (train/test boundary)
     spanning_exit = _BASE + pd.Timedelta(days=3, hours=1)  # just after day3
     # A far-future trade purely to extend the data span so
     # generate_windows actually produces window 0 -- it lands nowhere
@@ -342,8 +375,14 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     summary_json = tmp_path / "out" / "summary.json"
 
     run(
-        path, train_days=3, test_days=2, step_days=2,
-        output_csv=out_csv, summary_json=summary_json, symbol="XAUUSD", repo_path=REPO_ROOT,
+        path,
+        train_days=3,
+        test_days=2,
+        step_days=2,
+        output_csv=out_csv,
+        summary_json=summary_json,
+        symbol="XAUUSD",
+        repo_path=REPO_ROOT,
     )
 
     assert out_csv.exists()
@@ -366,8 +405,16 @@ def test_cli_main_success(tmp_path, capsys):
 
 def test_cli_main_missing_file(tmp_path, capsys):
     exit_code = main(
-        ["--trades-csv", str(tmp_path / "nope.csv"), "--train-days", "3", "--test-days", "2",
-         "--step-days", "2"]
+        [
+            "--trades-csv",
+            str(tmp_path / "nope.csv"),
+            "--train-days",
+            "3",
+            "--test-days",
+            "2",
+            "--step-days",
+            "2",
+        ]
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err

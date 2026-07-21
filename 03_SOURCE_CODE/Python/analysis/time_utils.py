@@ -97,7 +97,9 @@ def to_server_time(utc_value: datetime, server_utc_offset_hours: float) -> datet
     return utc_value.astimezone(timezone(timedelta(hours=server_utc_offset_hours)))
 
 
-def is_duplicate_timestamp_symbol(seen: set[tuple[datetime, str]], value: datetime, symbol: str) -> bool:
+def is_duplicate_timestamp_symbol(
+    seen: set[tuple[datetime, str]], value: datetime, symbol: str
+) -> bool:
     """Membership check against a caller-maintained (timestamp, symbol) set
     -- the practical interim duplicate-detection key used by
     ``data_collection/journal_reader.py`` while ``signal_id`` remains

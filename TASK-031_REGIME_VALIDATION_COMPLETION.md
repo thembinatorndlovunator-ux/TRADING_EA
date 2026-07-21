@@ -70,7 +70,19 @@ change. `01_BASELINE/` must not be modified.
    FAILURE, and hysteresis") that this task's first draft omitted.
 3. Port the hysteresis logic (state persistence/switching behavior)
    from `MarketRegimeEngine.mqh`, with hand-traceable synthetic fixtures
-   proving it does not flap on borderline inputs.
+   proving it does not flap on borderline inputs. **Added, 2026-07-22
+   Codex review finding (third round): `MRE_ApplyHysteresis` is
+   inherently STATEFUL across calls (`SRegimeHysteresisState` carries
+   `pending_regime`/`pending_count`/`confirmed_regime` forward bar to
+   bar) -- this task's Python port must maintain and thread the
+   equivalent persistent state across a MULTI-BAR sequence of raw-regime
+   reads (a regime transition-history buffer), not just single-shot,
+   stateless fixtures. Test at minimum: a borderline input that flips
+   raw regime every bar (must never confirm a switch, `pending_count`
+   resets each time); a genuine sustained switch across >= `required_bars`
+   consecutive identical reads (must confirm); and the pre-first-
+   confirmation state (`has_confirmed=false`) correctly reporting
+   `TRANSITION_OR_UNCERTAIN` rather than a half-confirmed guess.**
 4. Decide and document whether `MarketStructure.mqh`'s bias computation
    is ported to Python in this task or remains a caller-supplied input
    for another task — either is acceptable, but the choice must be
@@ -109,7 +121,9 @@ No file under `01_BASELINE/` may be modified.
 1. Hand-trace synthetic fixtures for all nine states plus both gating
    overrides plus data-failure behavior.
 2. Hand-trace hysteresis behavior across at least one flapping-input
-   scenario.
+   scenario, using a persisted, multi-bar regime transition-history
+   buffer/state threaded call-to-call (see Specification item 3) --
+   not a single-shot fixture.
 3. Run `pytest` and confirm all new/existing tests pass.
 
 ## Acceptance criteria

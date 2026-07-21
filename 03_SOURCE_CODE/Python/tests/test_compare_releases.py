@@ -6,14 +6,22 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from analysis.compare_releases import MIN_N_PER_GROUP, MIN_N_RESAMPLES, main, run, two_sample_bootstrap_diff
+from analysis.compare_releases import (
+    MIN_N_PER_GROUP,
+    MIN_N_RESAMPLES,
+    main,
+    run,
+    two_sample_bootstrap_diff,
+)
 from analysis.csv_io import CsvSchemaError
 from analysis.metrics import InsufficientSampleError
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _write_trades(path: Path, exits: list[float], profits: list[float], symbol: str = "XAUUSD") -> None:
+def _write_trades(
+    path: Path, exits: list[float], profits: list[float], symbol: str = "XAUUSD"
+) -> None:
     rows = []
     for i, (exit_price, profit) in enumerate(zip(exits, profits)):
         rows.append(
@@ -41,8 +49,12 @@ def test_insufficient_sample_below_min_n_per_group_raises():
     a fake significant result (see test below)."""
 
     with pytest.raises(InsufficientSampleError):
-        two_sample_bootstrap_diff([1.0] * (MIN_N_PER_GROUP - 1), [1.0] * MIN_N_PER_GROUP,
-                                    n_resamples=MIN_N_RESAMPLES, seed=1)
+        two_sample_bootstrap_diff(
+            [1.0] * (MIN_N_PER_GROUP - 1),
+            [1.0] * MIN_N_PER_GROUP,
+            n_resamples=MIN_N_RESAMPLES,
+            seed=1,
+        )
 
 
 def test_degenerate_two_observation_sample_no_longer_blessed_as_significant():
@@ -57,14 +69,36 @@ def test_degenerate_two_observation_sample_no_longer_blessed_as_significant():
 
 def test_below_minimum_n_resamples_rejected():
     with pytest.raises(ValueError):
-        two_sample_bootstrap_diff([1.0] * MIN_N_PER_GROUP, [1.0] * MIN_N_PER_GROUP,
-                                    n_resamples=MIN_N_RESAMPLES - 1, seed=1)
+        two_sample_bootstrap_diff(
+            [1.0] * MIN_N_PER_GROUP,
+            [1.0] * MIN_N_PER_GROUP,
+            n_resamples=MIN_N_RESAMPLES - 1,
+            seed=1,
+        )
+
+
+def test_two_sample_bootstrap_diff_rejects_non_finite_values():
+    """Regression for a Codex review finding (2026-07-22, third round):
+    a non-finite value in either sample previously silently produced NaN
+    point/interval fields instead of a visible error."""
+
+    good = [1.0] * 10
+    bad = [1.0] * 9 + [float("nan")]
+    with pytest.raises(ValueError):
+        two_sample_bootstrap_diff(bad, good, MIN_N_RESAMPLES, seed=1)
+    with pytest.raises(ValueError):
+        two_sample_bootstrap_diff(good, bad, MIN_N_RESAMPLES, seed=1)
 
 
 def test_confidence_out_of_range_rejected():
     with pytest.raises(ValueError):
-        two_sample_bootstrap_diff([1.0] * MIN_N_PER_GROUP, [1.0] * MIN_N_PER_GROUP,
-                                    n_resamples=MIN_N_RESAMPLES, seed=1, confidence=1.5)
+        two_sample_bootstrap_diff(
+            [1.0] * MIN_N_PER_GROUP,
+            [1.0] * MIN_N_PER_GROUP,
+            n_resamples=MIN_N_RESAMPLES,
+            seed=1,
+            confidence=1.5,
+        )
 
 
 def test_observed_diff_is_the_actual_difference_not_a_resampled_mean():
@@ -130,8 +164,17 @@ def test_missing_column_raises(tmp_path):
 def test_empty_dataset_raises(tmp_path):
     baseline_path = tmp_path / "baseline.csv"
     pd.DataFrame(
-        columns=["trade_id", "symbol", "is_long", "entry_time", "exit_time",
-                  "entry_price", "exit_price", "stop_price", "profit"]
+        columns=[
+            "trade_id",
+            "symbol",
+            "is_long",
+            "entry_time",
+            "exit_time",
+            "entry_price",
+            "exit_price",
+            "stop_price",
+            "profit",
+        ]
     ).to_csv(baseline_path, index=False)
     candidate_path = tmp_path / "candidate.csv"
     _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
@@ -144,12 +187,28 @@ def test_duplicate_trade_id_rejected(tmp_path):
     baseline_path = tmp_path / "baseline.csv"
     pd.DataFrame(
         [
-            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
-             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T01:00:00Z",
-             "entry_price": 100.0, "exit_price": 102.0, "stop_price": 98.0, "profit": 10.0},
-            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
-             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T01:00:00Z",
-             "entry_price": 100.0, "exit_price": 99.0, "stop_price": 98.0, "profit": -5.0},
+            {
+                "trade_id": "dup",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 102.0,
+                "stop_price": 98.0,
+                "profit": 10.0,
+            },
+            {
+                "trade_id": "dup",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 99.0,
+                "stop_price": 98.0,
+                "profit": -5.0,
+            },
         ]
     ).to_csv(baseline_path, index=False)
     candidate_path = tmp_path / "candidate.csv"
@@ -190,6 +249,86 @@ def test_no_symbol_filter_still_rejects_datasets_covering_different_symbols(tmp_
         run(baseline_path, candidate_path)  # no symbol= at all
 
 
+def test_impossible_chronology_rejected(tmp_path):
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    rows = []
+    for i in range(12):
+        rows.append(
+            {
+                "trade_id": f"t{i}",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-22T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",  # entry after exit
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 10.0,
+            }
+        )
+    pd.DataFrame(rows).to_csv(candidate_path, index=False)
+
+    with pytest.raises(CsvSchemaError):
+        run(baseline_path, candidate_path)
+
+
+def test_disjoint_trade_periods_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    only symbol sets were checked -- a same-symbol January-2026 baseline
+    vs. January-2025 candidate was still accepted and compared as if the
+    two experiments covered the same market period."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    rows_2025 = []
+    for i in range(12):
+        rows_2025.append(
+            {
+                "trade_id": f"t{i}",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2025-01-01T00:00:00Z",
+                "exit_time": "2025-01-01T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 10.0,
+            }
+        )
+    pd.DataFrame(rows_2025).to_csv(baseline_path, index=False)
+
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)  # 2026-07-21, per _write_trades
+
+    with pytest.raises(CsvSchemaError):
+        run(baseline_path, candidate_path)
+
+
+def test_baseline_and_candidate_ea_version_recorded_separately(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round): a
+    single shared ea_version/data_source value is insufficient to
+    identify TWO releases."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    summary = run(
+        baseline_path,
+        candidate_path,
+        baseline_ea_version="v6.37",
+        candidate_ea_version="v8.11",
+        baseline_data_source="mt5_export_a",
+        candidate_data_source="mt5_export_b",
+    )
+    assert summary["baseline_ea_version"] == "v6.37"
+    assert summary["candidate_ea_version"] == "v8.11"
+    assert summary["baseline_data_source"] == "mt5_export_a"
+    assert summary["candidate_data_source"] == "mt5_export_b"
+
+
 def test_naive_timestamp_rejected(tmp_path):
     """Regression for a Codex review finding: this script previously did
     not parse or validate entry/exit timestamps at all."""
@@ -201,9 +340,15 @@ def test_naive_timestamp_rejected(tmp_path):
     for i in range(12):
         rows.append(
             {
-                "trade_id": f"t{i}", "symbol": "XAUUSD", "is_long": "True",
-                "entry_time": "2026-07-21T00:00:00", "exit_time": "2026-07-21T01:00:00",  # naive
-                "entry_price": 100.0, "exit_price": 105.0, "stop_price": 98.0, "profit": 10.0,
+                "trade_id": f"t{i}",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00",
+                "exit_time": "2026-07-21T01:00:00",  # naive
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 10.0,
             }
         )
     pd.DataFrame(rows).to_csv(candidate_path, index=False)
@@ -260,7 +405,9 @@ def test_stark_difference_detected(tmp_path):
     assert summary["candidate_win_rate"] == pytest.approx(0.75)
     assert summary["baseline_expectancy_r"] == pytest.approx(-1.25)
     assert summary["candidate_expectancy_r"] == pytest.approx(1.25)
-    assert summary["win_rate_diff"]["observed_diff"] == pytest.approx(0.5)  # EXACT, not resample-dependent
+    assert summary["win_rate_diff"]["observed_diff"] == pytest.approx(
+        0.5
+    )  # EXACT, not resample-dependent
     assert summary["win_rate_diff"]["likely_significant"] is True
 
 
@@ -271,7 +418,14 @@ def test_writes_output_json(tmp_path):
     _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
     output_json = tmp_path / "out" / "compare.json"
 
-    run(baseline_path, candidate_path, output_json=output_json, n_resamples=100, seed=1, repo_path=REPO_ROOT)
+    run(
+        baseline_path,
+        candidate_path,
+        output_json=output_json,
+        n_resamples=100,
+        seed=1,
+        repo_path=REPO_ROOT,
+    )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert payload["summary"]["n_baseline_trades"] == 12
@@ -286,7 +440,14 @@ def test_cli_main_success(tmp_path, capsys):
     _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
 
     exit_code = main(
-        ["--baseline-csv", str(baseline_path), "--candidate-csv", str(candidate_path), "--n-resamples", "100"]
+        [
+            "--baseline-csv",
+            str(baseline_path),
+            "--candidate-csv",
+            str(candidate_path),
+            "--n-resamples",
+            "100",
+        ]
     )
     assert exit_code == 0
     assert "baseline_n=12" in capsys.readouterr().out
@@ -294,7 +455,12 @@ def test_cli_main_success(tmp_path, capsys):
 
 def test_cli_main_missing_file(tmp_path, capsys):
     exit_code = main(
-        ["--baseline-csv", str(tmp_path / "nope.csv"), "--candidate-csv", str(tmp_path / "nope2.csv")]
+        [
+            "--baseline-csv",
+            str(tmp_path / "nope.csv"),
+            "--candidate-csv",
+            str(tmp_path / "nope2.csv"),
+        ]
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err

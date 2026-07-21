@@ -133,7 +133,9 @@ def test_glob_traversal_outside_directory_is_ignored(tmp_path):
     from data_collection.journal_reader import read_journal_directory
 
     parent_file = tmp_path / "outside.jsonl"
-    parent_file.write_text(json.dumps(make_valid_record(signal_id="escaped")) + "\n", encoding="utf-8")
+    parent_file.write_text(
+        json.dumps(make_valid_record(signal_id="escaped")) + "\n", encoding="utf-8"
+    )
 
     subdir = tmp_path / "journal"
     subdir.mkdir()
@@ -174,6 +176,31 @@ def test_utf8_bom_is_handled_transparently(tmp_path):
     result = read_journal_directory(tmp_path)
     assert len(result.valid_records) == 1
     assert result.parse_errors == []
+
+
+def test_numeric_overflow_to_infinity_is_a_parse_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round): a
+    numeric literal that OVERFLOWS to infinity (e.g. 1e400) is a
+    completely standard-looking JSON number token -- it never reaches
+    parse_constant at all. Because nested score_breakdown is an
+    unconstrained dict, a record containing {"overflow": 1e400}
+    previously validated successfully and was written out as
+    {'overflow': inf}."""
+
+    from data_collection.journal_reader import read_journal_directory
+
+    record = make_valid_record()
+    record["score_breakdown"] = {"overflow": "PLACEHOLDER"}
+    raw = json.dumps(record).replace('"PLACEHOLDER"', "1e400")
+    (tmp_path / "decisions_20260721.jsonl").write_text(raw + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert result.valid_records == []
+    assert len(result.parse_errors) == 1
+    assert (
+        "overflow" in result.parse_errors[0].error.lower()
+        or "1e400" in result.parse_errors[0].error
+    )
 
 
 def test_duplicate_json_key_is_a_parse_error(tmp_path):

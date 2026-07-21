@@ -9,8 +9,10 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_high_low_geometry,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
+    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
     sanitize_for_csv,
@@ -38,6 +40,24 @@ def test_missing_required_column_still_raises(tmp_path):
     path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
     with pytest.raises(CsvSchemaError):
         read_csv_with_required_columns(path, {"trade_id", "profit", "symbol"})
+
+
+def test_quoted_multiline_duplicate_header_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    reading only the first PHYSICAL line missed a header row that itself
+    spans multiple physical lines due to CSV quoting (a quoted field
+    containing an embedded newline) -- a quoted multiline duplicate
+    header previously bypassed the duplicate-header check entirely."""
+
+    path = tmp_path / "trades.csv"
+    # The header row's second field is a quoted string containing a
+    # literal embedded newline -- csv.reader correctly parses this as
+    # ONE logical header row spanning two physical lines; a naive
+    # single-readline() approach would only see the truncated first
+    # physical line and miss the duplicate "trade_id" entirely.
+    path.write_text('trade_id,"pro\nfit",trade_id\nt1,10.0,t1\n', encoding="utf-8")
+    with pytest.raises(CsvSchemaError):
+        read_csv_with_required_columns(path, {"trade_id"})
 
 
 def test_no_duplicate_header_reads_fine(tmp_path):
@@ -95,18 +115,24 @@ def test_assert_high_low_geometry_rejects_open_outside_range():
 
     df = pd.DataFrame({"open": [110.0], "high": [105.0], "low": [95.0], "close": [100.0]})
     with pytest.raises(CsvSchemaError):
-        assert_high_low_geometry(df, "high", "low", Path("bars.csv"), open_column="open", close_column="close")
+        assert_high_low_geometry(
+            df, "high", "low", Path("bars.csv"), open_column="open", close_column="close"
+        )
 
 
 def test_assert_high_low_geometry_rejects_close_outside_range():
     df = pd.DataFrame({"open": [100.0], "high": [105.0], "low": [95.0], "close": [90.0]})
     with pytest.raises(CsvSchemaError):
-        assert_high_low_geometry(df, "high", "low", Path("bars.csv"), open_column="open", close_column="close")
+        assert_high_low_geometry(
+            df, "high", "low", Path("bars.csv"), open_column="open", close_column="close"
+        )
 
 
 def test_assert_high_low_geometry_passes_for_valid_bar():
     df = pd.DataFrame({"open": [100.0], "high": [105.0], "low": [95.0], "close": [102.0]})
-    assert_high_low_geometry(df, "high", "low", Path("bars.csv"), open_column="open", close_column="close")
+    assert_high_low_geometry(
+        df, "high", "low", Path("bars.csv"), open_column="open", close_column="close"
+    )
 
 
 def test_assert_high_low_geometry_without_open_close_only_checks_high_low():
@@ -172,6 +198,50 @@ def test_assert_output_paths_distinct_passes_for_distinct_paths(tmp_path):
     assert_output_paths_distinct([tmp_path / "a.json", tmp_path / "b.csv"])  # must not raise
 
 
+def test_assert_output_paths_distinct_catches_hard_link():
+    """Regression for a Codex review finding (2026-07-22, third round):
+    path guards previously compared only Path.resolve(), which a hard
+    link to an existing input trivially bypasses (different resolved
+    name, identical underlying file) -- a direct probe used a hard-linked
+    output path to overwrite an input's own inode."""
+
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        original = tmp_dir / "trades.csv"
+        original.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+        hard_link = tmp_dir / "output.csv"
+        os.link(original, hard_link)  # same inode, different path
+
+        with pytest.raises(CsvSchemaError):
+            assert_output_paths_distinct([original, hard_link])
+
+
+def test_assert_path_not_same_file_catches_hard_link():
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        original = tmp_dir / "trades.csv"
+        original.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+        hard_link = tmp_dir / "output.csv"
+        os.link(original, hard_link)
+
+        with pytest.raises(CsvSchemaError):
+            assert_path_not_same_file(hard_link, original)
+
+
+def test_assert_path_not_same_file_passes_for_distinct_files(tmp_path):
+    a = tmp_path / "a.csv"
+    a.write_text("x\n", encoding="utf-8")
+    b = tmp_path / "b.csv"
+    b.write_text("x\n", encoding="utf-8")
+    assert_path_not_same_file(b, a)  # must not raise -- distinct files, even if same content
+
+
 # --- sanitize_for_csv (formula-injection defense) ---------------------------
 
 
@@ -198,6 +268,25 @@ def test_sanitize_for_csv_passes_through_non_strings():
 
 
 # --- parse_is_long (existing behavior, sanity-checked here too) ------------
+
+
+def test_atomic_write_dataframe_csv_writes_correct_content(tmp_path):
+    df = pd.DataFrame({"trade_id": ["t1", "t2"], "profit": [10.0, -5.0]})
+    out_path = tmp_path / "out" / "trades.csv"
+    atomic_write_dataframe_csv(df, out_path)
+
+    assert out_path.exists()
+    read_back = pd.read_csv(out_path)
+    pd.testing.assert_frame_equal(read_back, df)
+
+
+def test_atomic_write_dataframe_csv_leaves_no_temp_file_on_success(tmp_path):
+    df = pd.DataFrame({"trade_id": ["t1"], "profit": [10.0]})
+    out_path = tmp_path / "trades.csv"
+    atomic_write_dataframe_csv(df, out_path)
+
+    remaining = list(tmp_path.iterdir())
+    assert remaining == [out_path]
 
 
 def test_parse_is_long_rejects_unknown_value():

@@ -2,15 +2,20 @@
 
 ## Objective
 
-Wire together the three safety-critical pieces that exist as tested
-standalone modules but are **not yet called by the live EA**:
+Wire together three safety-critical pieces into the live EA. **Only one
+of the three already exists as a tested standalone module** (Codex
+review finding, 2026-07-22, third round: this section previously implied
+all three pre-existed, which contradicts item 1/2 below, each of which
+says plainly "no module exists" — corrected here):
 
-1. Three-loss-per-symbol cooldown (spec section 8) — no module exists.
+1. Three-loss-per-symbol cooldown (spec section 8) — no module exists
+   yet; must be built from scratch as part of this task.
 2. Durable-intent / idempotency persistence (spec section 12) — no
-   module exists.
+   module exists yet; must be built from scratch as part of this task.
 3. Regime-gating (`MRE_IsUntradeableSpreadOrLiquidity`,
    `MRE_ApplyHysteresis`, both built in TASK-016) + `NewsManager.mqh`'s
-   `NEWS_BLACKOUT` (TASK-029) — built but never called from
+   `NEWS_BLACKOUT` (TASK-029) — this is the one piece that already
+   exists as tested standalone modules, built but never called from
    `ThembaAdaptiveIntradayEA.mq5`'s `EvaluateAndJournal`.
 
 TASK-029's own task file deliberately deferred wiring these three

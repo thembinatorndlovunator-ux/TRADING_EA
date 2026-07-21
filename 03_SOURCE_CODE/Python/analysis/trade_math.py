@@ -14,12 +14,16 @@ from dataclasses import dataclass
 import pandas as pd
 
 
-def compute_r_multiple(is_long: bool, entry_price: float, initial_stop_price: float, price: float) -> float:
+def compute_r_multiple(
+    is_long: bool, entry_price: float, initial_stop_price: float, price: float
+) -> float:
     """Mirrors ExitManager.mqh's EM_ComputeR exactly: R = favor_distance /
     risk_distance. Returns 0.0 (never divides by zero) if the initial risk
     distance is non-positive, matching the MQL5 fail-safe behavior."""
 
-    risk_distance = (entry_price - initial_stop_price) if is_long else (initial_stop_price - entry_price)
+    risk_distance = (
+        (entry_price - initial_stop_price) if is_long else (initial_stop_price - entry_price)
+    )
     if risk_distance <= 0.0:
         return 0.0
 
@@ -69,26 +73,35 @@ def compute_mfe_mae(
     """Computes MFE/MAE for one trade from a bars DataFrame with
     'timestamp', 'high', 'low' columns (any symbol filtering is the
     caller's responsibility -- this function does not know about
-    symbols). The window is inclusive of both entry_time and exit_time.
+    symbols).
 
-    **Bar-timestamp convention, declared explicitly (Codex review
-    finding, 2026-07-22): 'timestamp' is the bar's OPEN time** (the
-    standard MT5 convention). Without this declared and enforced,
-    entry_time/exit_time could fall ANYWHERE inside a bar's true
-    [open, close) span -- the entry bar's full high/low could include
-    price action from before the trade actually opened, and the exit
-    bar's could include price action from after it actually closed
-    (look-ahead/measurement contamination, not a mere approximation).
+    **Bar-timestamp convention, declared explicitly: 'timestamp' is the
+    bar's OPEN time** (the standard MT5 convention).
 
-    **Alignment is now REQUIRED, not silently tolerated:** entry_time and
-    exit_time must each exactly match a bar timestamp present in
-    'bars' -- this bounds the residual approximation to "the single
-    entry/exit bar's full range may include some price action from
-    outside the trade's true open instant" (a known, documented
-    limitation that genuinely requires tick/sub-bar data to eliminate
-    entirely) rather than allowing UNBOUNDED misalignment across
-    multiple bars. Raises BarAlignmentError if either timestamp is not
-    an exact bar timestamp.
+    **Fixed, 2026-07-22 Codex review finding (third round): the window
+    was previously INCLUSIVE of exit_time** (``timestamp <= exit_time``)
+    -- but a bar whose OPEN time equals exit_time spans
+    ``[exit_time, next_bar_open)``, a period that occurs ENTIRELY AFTER
+    the trade has already exited. A direct two-bar probe (entry 00:00,
+    exit 01:00, an extreme 01:00 bar) previously returned mfe_r=449.5
+    almost entirely from POST-EXIT price movement -- real look-ahead
+    contamination, not a documentation-only caveat. Under the declared
+    bar-open convention the correct window is the HALF-OPEN interval
+    ``[entry_time, exit_time)`` -- the exit bar itself is excluded
+    (its price action happens after the exit instant), while the entry
+    bar IS included (its price action begins at the entry instant). The
+    one exception is a same-bar trade (``entry_time == exit_time``),
+    where excluding "the bar at exit_time" would exclude the ONLY bar
+    the trade was ever open during -- that single bar is used instead.
+
+    **Alignment is still REQUIRED, not silently tolerated:** entry_time
+    and exit_time must each exactly match a bar timestamp present in
+    'bars' -- this bounds the residual approximation (the entry bar's
+    full range may include price action from slightly before the exact
+    entry instant, a known limitation that genuinely requires tick/
+    sub-bar data to eliminate entirely) rather than allowing UNBOUNDED
+    misalignment across multiple bars. Raises BarAlignmentError if
+    either timestamp is not an exact bar timestamp.
 
     Raises NoBarsInWindowError if no bar falls within the window -- a
     trade with a computable MFE/MAE of exactly 0.0 is different from a
@@ -110,7 +123,10 @@ def compute_mfe_mae(
             "(bar timestamps are bar-OPEN times -- see compute_mfe_mae's own docstring)"
         )
 
-    window = bars[(bars["timestamp"] >= entry_time) & (bars["timestamp"] <= exit_time)]
+    if entry_time == exit_time:
+        window = bars[bars["timestamp"] == entry_time]
+    else:
+        window = bars[(bars["timestamp"] >= entry_time) & (bars["timestamp"] < exit_time)]
     if window.empty:
         raise NoBarsInWindowError(
             f"trade_id={trade_id}: no bars found between {entry_time} and {exit_time}"
@@ -123,8 +139,18 @@ def compute_mfe_mae(
         mfe_price = max(0.0, entry_price - float(window["low"].min()))
         mae_price = max(0.0, float(window["high"].max()) - entry_price)
 
-    mfe_r = compute_r_multiple(is_long, entry_price, stop_price, entry_price + mfe_price if is_long else entry_price - mfe_price)
-    mae_r = compute_r_multiple(is_long, entry_price, stop_price, entry_price - mae_price if is_long else entry_price + mae_price)
+    mfe_r = compute_r_multiple(
+        is_long,
+        entry_price,
+        stop_price,
+        entry_price + mfe_price if is_long else entry_price - mfe_price,
+    )
+    mae_r = compute_r_multiple(
+        is_long,
+        entry_price,
+        stop_price,
+        entry_price - mae_price if is_long else entry_price + mae_price,
+    )
 
     return MfeMaeResult(
         trade_id=trade_id,

@@ -131,7 +131,9 @@ def classify(
         confidence = _clamp01(1.0 - t_final / trend_threshold)
     elif e > expansion_threshold:
         if direction_agree:
-            regime = Regime.VOLATILITY_EXPANSION_UP if overall_up else Regime.VOLATILITY_EXPANSION_DOWN
+            regime = (
+                Regime.VOLATILITY_EXPANSION_UP if overall_up else Regime.VOLATILITY_EXPANSION_DOWN
+            )
             confidence = _clamp01((e - expansion_threshold) / (1.0 - expansion_threshold))
         else:
             regime = Regime.TRANSITION_OR_UNCERTAIN
@@ -146,7 +148,9 @@ def classify(
         regime = Regime.RANGING
         confidence = _clamp01(1.0 - t_final / trend_threshold)
 
-    return RegimeRead(valid=True, regime=regime, confidence=confidence, T=t, T_final=t_final, E=e, ER=er)
+    return RegimeRead(
+        valid=True, regime=regime, confidence=confidence, T=t, T_final=t_final, E=e, ER=er
+    )
 
 
 def build_confusion_matrix(predicted: Sequence[str], actual: Sequence[str]) -> pd.DataFrame:
@@ -156,7 +160,9 @@ def build_confusion_matrix(predicted: Sequence[str], actual: Sequence[str]) -> p
     two sequences have different lengths or either is empty."""
 
     if len(predicted) != len(actual):
-        raise ValueError(f"predicted (n={len(predicted)}) and actual (n={len(actual)}) must be equal length")
+        raise ValueError(
+            f"predicted (n={len(predicted)}) and actual (n={len(actual)}) must be equal length"
+        )
     if not predicted:
         raise ValueError("build_confusion_matrix: empty input")
 

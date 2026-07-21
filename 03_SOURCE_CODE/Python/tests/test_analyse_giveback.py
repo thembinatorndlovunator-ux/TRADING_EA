@@ -44,7 +44,15 @@ def test_header_only_trades_csv_rejected(tmp_path):
 
     trades_path = tmp_path / "trades.csv"
     pd.DataFrame(
-        columns=["trade_id", "symbol", "is_long", "entry_time", "exit_time", "entry_price", "stop_price"]
+        columns=[
+            "trade_id",
+            "symbol",
+            "is_long",
+            "entry_time",
+            "exit_time",
+            "entry_price",
+            "stop_price",
+        ]
     ).to_csv(trades_path, index=False)
     bars_path = tmp_path / "bars.csv"
     _write_bars(bars_path, [101.0])
@@ -59,9 +67,13 @@ def test_malformed_stop_geometry_captured_as_row_error(tmp_path):
         trades_path,
         [
             {
-                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
-                "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T02:00:00Z",
-                "entry_price": 100.0, "stop_price": 101.0,  # wrong side for a long
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T02:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 101.0,  # wrong side for a long
             }
         ],
     )
@@ -84,14 +96,76 @@ def test_non_finite_exit_price_rejected_as_row_error(tmp_path):
         trades_path,
         [
             {
-                "trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
-                "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T02:00:00Z",
-                "entry_price": 100.0, "stop_price": 98.0, "exit_price": float("inf"),
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T02:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+                "exit_price": float("inf"),
             }
         ],
     )
     bars_path = tmp_path / "bars.csv"
     _write_bars(bars_path, [101.0, 102.0, 103.0])
+
+    result = run(trades_path, bars_path)
+    assert result.comparisons == []
+    assert len(result.row_errors) == 1
+
+
+def test_duplicate_symbol_timestamp_bar_rejected(tmp_path):
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    bars_path = tmp_path / "bars.csv"
+    pd.DataFrame(
+        {
+            "symbol": ["XAUUSD", "XAUUSD"],
+            "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T00:00:00Z"],
+            "close": [101.0, 102.0],
+        }
+    ).to_csv(bars_path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_misaligned_entry_exit_time_captured_as_row_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round): a
+    00:30-01:30 trade with only a 01:00 bar previously completed with
+    ZERO row errors despite neither endpoint aligning to any real bar --
+    entry_time/exit_time must now each match an actual bar timestamp."""
+
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:30:00Z",
+                "exit_time": "2026-07-21T01:30:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0])  # single bar at 00:00 only
 
     result = run(trades_path, bars_path)
     assert result.comparisons == []
@@ -234,6 +308,96 @@ def test_no_bars_in_window_is_a_row_error(tmp_path):
     assert len(result.row_errors) == 1
 
 
+def test_guard_helped_rate_is_scoped_to_triggered_subset_not_full_cohort(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    the old key ``guard_helped_rate`` was silently CONDITIONAL on this
+    model's own triggered subset -- one helpful trigger among many total
+    trades would be reported as 100%, not the much smaller full-cohort
+    rate. Here 1 of 4 trades triggers v637 (and that one trigger helps),
+    so ``guard_helped_rate_when_triggered`` must read 100% while
+    ``guard_helped_rate_full_cohort`` must read 25% -- proving the two
+    are no longer conflated under one ambiguous name."""
+
+    bars_path = tmp_path / "bars.csv"
+    bars = pd.DataFrame(
+        {
+            "symbol": ["XAUUSD"] * 8,
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-07-21T00:00:00Z",
+                    "2026-07-21T01:00:00Z",
+                    "2026-07-21T02:00:00Z",
+                    "2026-07-21T03:00:00Z",
+                    "2026-07-21T04:00:00Z",
+                    "2026-07-21T05:00:00Z",
+                    "2026-07-21T06:00:00Z",
+                    "2026-07-21T07:00:00Z",
+                ]
+            ),
+            "close": [101.0, 102.0, 104.0, 101.4, 100.6, 100.5, 100.5, 100.5],
+        }
+    )
+    bars.to_csv(bars_path, index=False)
+
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            # Same fixture as test_guard_would_have_helped_hand_computed:
+            # v637 triggers at r=0.7, actual final r=0.3 -> helped.
+            {
+                "trade_id": "helped-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
+            # Same fixture as test_never_triggered_gives_zero_diff, x3:
+            # R=0.25 never arms the guard at all.
+            {
+                "trade_id": "never-triggered-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T05:00:00Z",
+                "exit_time": "2026-07-21T05:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
+            {
+                "trade_id": "never-triggered-2",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T06:00:00Z",
+                "exit_time": "2026-07-21T06:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
+            {
+                "trade_id": "never-triggered-3",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T07:00:00Z",
+                "exit_time": "2026-07-21T07:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
+        ],
+    )
+
+    summary_json = tmp_path / "out" / "summary.json"
+    result = run(trades_path, bars_path, summary_json=summary_json, seed=1, repo_path=REPO_ROOT)
+    assert len(result.comparisons) == 4
+
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    v637 = payload["v637"]
+    assert v637["n_triggered"] == 1
+    assert v637["guard_helped_rate_when_triggered"] == pytest.approx(1.0)
+    assert v637["guard_helped_rate_full_cohort"] == pytest.approx(0.25)
+    assert "guard_helped_rate" not in v637
+
+
 def test_writes_output_csv_and_summary_json(tmp_path):
     bars_path = tmp_path / "bars.csv"
     _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
@@ -255,7 +419,14 @@ def test_writes_output_csv_and_summary_json(tmp_path):
 
     out_csv = tmp_path / "out" / "giveback.csv"
     summary_json = tmp_path / "out" / "summary.json"
-    run(trades_path, bars_path, output_csv=out_csv, summary_json=summary_json, seed=1, repo_path=REPO_ROOT)
+    run(
+        trades_path,
+        bars_path,
+        output_csv=out_csv,
+        summary_json=summary_json,
+        seed=1,
+        repo_path=REPO_ROOT,
+    )
 
     assert out_csv.exists()
     df = pd.read_csv(out_csv)
@@ -297,12 +468,24 @@ def test_duplicate_trade_id_rejected(tmp_path):
     _write_trades(
         trades_path,
         [
-            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
-             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T00:00:00Z",
-             "entry_price": 100.0, "stop_price": 98.0},
-            {"trade_id": "dup", "symbol": "XAUUSD", "is_long": "True",
-             "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T00:00:00Z",
-             "entry_price": 100.0, "stop_price": 98.0},
+            {
+                "trade_id": "dup",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
+            {
+                "trade_id": "dup",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            },
         ],
     )
     with pytest.raises(CsvSchemaError):
@@ -315,9 +498,17 @@ def test_non_finite_stop_price_rejected(tmp_path):
     trades_path = tmp_path / "trades.csv"
     _write_trades(
         trades_path,
-        [{"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
-          "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T00:00:00Z",
-          "entry_price": 100.0, "stop_price": float("nan")}],
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": float("nan"),
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(trades_path, bars_path)
@@ -332,9 +523,17 @@ def test_naive_timestamp_captured_as_row_error(tmp_path):
     trades_path = tmp_path / "trades.csv"
     _write_trades(
         trades_path,
-        [{"trade_id": "naive-1", "symbol": "XAUUSD", "is_long": "True",
-          "entry_time": "2026-07-21T00:00:00", "exit_time": "2026-07-21T00:00:00Z",
-          "entry_price": 100.0, "stop_price": 98.0}],
+        [
+            {
+                "trade_id": "naive-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
     )
     result = run(trades_path, bars_path)
     assert result.comparisons == []
@@ -348,9 +547,17 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
     trades_path = tmp_path / "trades.csv"
     _write_trades(
         trades_path,
-        [{"trade_id": "t1", "symbol": "XAUUSD", "is_long": "True",
-          "entry_time": "2026-07-21T00:00:00Z", "exit_time": "2026-07-21T00:00:00Z",
-          "entry_price": 100.0, "stop_price": 98.0}],
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(trades_path, bars_path, output_csv=trades_path)
@@ -365,9 +572,17 @@ def test_summary_json_includes_actual_row_errors_not_just_count(tmp_path):
     trades_path = tmp_path / "trades.csv"
     _write_trades(
         trades_path,
-        [{"trade_id": "bad-1", "symbol": "XAUUSD", "is_long": "True",
-          "entry_time": "2027-01-01T00:00:00Z", "exit_time": "2027-01-01T01:00:00Z",
-          "entry_price": 100.0, "stop_price": 98.0}],
+        [
+            {
+                "trade_id": "bad-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2027-01-01T00:00:00Z",
+                "exit_time": "2027-01-01T01:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
     )
     summary_json = tmp_path / "out" / "summary.json"
     run(trades_path, bars_path, summary_json=summary_json)
@@ -383,9 +598,17 @@ def test_cli_main_returns_nonzero_when_row_errors_present(tmp_path):
     trades_path = tmp_path / "trades.csv"
     _write_trades(
         trades_path,
-        [{"trade_id": "bad-1", "symbol": "XAUUSD", "is_long": "True",
-          "entry_time": "2027-01-01T00:00:00Z", "exit_time": "2027-01-01T01:00:00Z",
-          "entry_price": 100.0, "stop_price": 98.0}],
+        [
+            {
+                "trade_id": "bad-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2027-01-01T00:00:00Z",
+                "exit_time": "2027-01-01T01:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
     )
     exit_code = main(["--trades-csv", str(trades_path), "--bars-csv", str(bars_path)])
     assert exit_code == 1

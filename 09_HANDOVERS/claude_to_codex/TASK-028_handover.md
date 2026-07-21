@@ -93,10 +93,20 @@ under `03_SOURCE_CODE/Python/`. Full detail in
 ```
 cd C:\TradingProjects\Themba_EA_Improvement_Lab
 python -m venv .venv   # if not already present (.venv/ is gitignored)
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r 03_SOURCE_CODE\Python\requirements-lock.txt
 cd 03_SOURCE_CODE\Python
 ..\..\.venv\Scripts\python.exe -m pytest -v
+..\..\.venv\Scripts\python.exe -m ruff check .
+..\..\.venv\Scripts\python.exe -m ruff format --check .
+..\..\.venv\Scripts\python.exe -m mypy analysis data_collection --ignore-missing-imports
 ```
+
+**Fixed, 2026-07-22 Codex review finding (third round):** this previously
+installed from `requirements.txt` (the direct-dependency intent list),
+never actually using `requirements-lock.txt` (the real `pip freeze` of
+the exact tested transitive closure) for the one thing it exists to do
+-- give a reproducible install. Also previously undeclared: `ruff format`
+is now a real, run gate (see `pyproject.toml`'s `[tool.ruff]` comment).
 
 ## Files in this task
 

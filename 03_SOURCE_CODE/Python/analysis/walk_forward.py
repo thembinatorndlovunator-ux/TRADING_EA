@@ -5,10 +5,18 @@ entry_price, exit_price, stop_price, profit``).
 
 Window boundaries are entirely deterministic given
 (``train_days``, ``test_days``, ``step_days``) and the dataset's own first/
-last ``exit_time`` -- no randomization is used here (Monte Carlo resampling
-is a separate concern, see ``monte_carlo.py``), so no seed is needed or
-accepted, per the reproducibility contract's "where applicable" qualifier
-on the seed requirement.
+last ``exit_time`` -- window GENERATION itself uses no randomization.
+
+**Correction, 2026-07-22 Codex review finding (third round): this module
+DOES need and accept a seed.** The claim above ("no seed is needed or
+accepted") became false once ``metrics.expectancy`` started computing a
+bootstrap confidence interval internally (a separate, later fix) --
+every non-singleton per-window expectancy now invokes a seeded bootstrap.
+``run()`` accepts an explicit ``seed`` (default 42, matching this
+project's other seed defaults), threads it to every ``expectancy()``
+call, and the report exposes it -- a hidden default seed would otherwise
+make the reported expectancy CIs look reproducible while actually
+depending on an unexposed constant.
 
 **Scope, stated explicitly (Codex review finding, 2026-07-21): this is a
 descriptive rolling-window STABILITY report, not a walk-forward
@@ -44,10 +52,13 @@ import pandas as pd
 
 from analysis.csv_io import (
     CsvSchemaError,
+    assert_chronological_order,
     assert_finite_columns,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
+    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
 )
@@ -57,8 +68,15 @@ from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
 REQUIRED_COLUMNS = {
-    "trade_id", "symbol", "is_long", "entry_time", "exit_time",
-    "entry_price", "exit_price", "stop_price", "profit",
+    "trade_id",
+    "symbol",
+    "is_long",
+    "entry_time",
+    "exit_time",
+    "entry_price",
+    "exit_price",
+    "stop_price",
+    "profit",
 }
 # **Fixed, 2026-07-22 Codex review finding:** 'profit' was missing from
 # this validated set. A missing/NaN profit reaches `profit > 0`, where
@@ -70,16 +88,34 @@ REQUIRED_COLUMNS = {
 NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
 
 SUMMARY_COLUMNS = [
-    "window_index", "train_start", "train_end", "test_start", "test_end",
-    "train_n", "train_win_rate", "train_win_rate_ci_lower", "train_win_rate_ci_upper",
-    "train_expectancy_r", "train_expectancy_r_ci_lower", "train_expectancy_r_ci_upper",
-    "test_n", "test_win_rate", "test_win_rate_ci_lower", "test_win_rate_ci_upper",
-    "test_expectancy_r", "test_expectancy_r_ci_lower", "test_expectancy_r_ci_upper",
+    "window_index",
+    "train_start",
+    "train_end",
+    "test_start",
+    "test_end",
+    "train_n",
+    "train_win_rate",
+    "train_win_rate_ci_lower",
+    "train_win_rate_ci_upper",
+    "train_expectancy_r",
+    "train_expectancy_r_ci_lower",
+    "train_expectancy_r_ci_upper",
+    "test_n",
+    "test_win_rate",
+    "test_win_rate_ci_lower",
+    "test_win_rate_ci_upper",
+    "test_expectancy_r",
+    "test_expectancy_r_ci_lower",
+    "test_expectancy_r_ci_upper",
 ]
 
 
 def generate_windows(
-    first_time: pd.Timestamp, last_time: pd.Timestamp, train_days: int, test_days: int, step_days: int
+    first_time: pd.Timestamp,
+    last_time: pd.Timestamp,
+    train_days: int,
+    test_days: int,
+    step_days: int,
 ) -> list[tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
     """Generates (train_start, train_end, test_start, test_end) tuples,
     rolling forward by 'step_days' each time, stopping once a window's
@@ -117,7 +153,7 @@ class WindowMetrics:
     expectancy_r_ci_upper: Optional[float]
 
 
-def _slice_metrics(slice_df: pd.DataFrame) -> WindowMetrics:
+def _slice_metrics(slice_df: pd.DataFrame, seed: int) -> WindowMetrics:
     n = len(slice_df)
     if n == 0:
         return WindowMetrics(0, None, None, None, None, None, None)
@@ -130,7 +166,7 @@ def _slice_metrics(slice_df: pd.DataFrame) -> WindowMetrics:
 
     exp = None
     try:
-        exp = expectancy(slice_df["r_multiple"].tolist())
+        exp = expectancy(slice_df["r_multiple"].tolist(), seed=seed)
     except InsufficientSampleError:
         pass
 
@@ -156,8 +192,10 @@ def _slice_window(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) 
     silently assigned to one by exit_time alone."""
 
     return trades[
-        (trades["entry_time"] >= start) & (trades["entry_time"] < end)
-        & (trades["exit_time"] >= start) & (trades["exit_time"] < end)
+        (trades["entry_time"] >= start)
+        & (trades["entry_time"] < end)
+        & (trades["exit_time"] >= start)
+        & (trades["exit_time"] < end)
     ]
 
 
@@ -169,17 +207,22 @@ def run(
     output_csv: Optional[Path] = None,
     summary_json: Optional[Path] = None,
     *,
+    seed: int = 42,
     symbol: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Returns a DataFrame with one row per window (train/test metrics
     both included, SUMMARY_COLUMNS in shape even when zero windows are
     generated). Raises CsvSchemaError/InsufficientSampleError the same
-    way analyse_baseline.run does for structural input problems."""
+    way analyse_baseline.run does for structural input problems.
 
+    'seed' feeds every per-window expectancy bootstrap (see module
+    docstring's 2026-07-22 correction) -- always explicit, never hidden."""
+
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, summary_json):
-        if out_path is not None and out_path.resolve() == trades_csv.resolve():
-            raise CsvSchemaError(f"output path {out_path} must not be the same as the input trades_csv")
+        assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
@@ -192,10 +235,16 @@ def run(
     trades["is_long"] = trades["is_long"].apply(parse_is_long)
     trades["entry_time"] = parse_utc_series(trades["entry_time"])
     trades["exit_time"] = parse_utc_series(trades["exit_time"])
-    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
+    assert_chronological_order(trades["entry_time"], trades["exit_time"], trades_csv)
+    assert_valid_stop_geometry(
+        trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv
+    )
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
-            row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
+            row["is_long"],
+            float(row["entry_price"]),
+            float(row["stop_price"]),
+            float(row["exit_price"]),
         ),
         axis=1,
     )
@@ -220,8 +269,8 @@ def run(
         train_slice = _slice_window(trades, train_start, train_end)
         test_slice = _slice_window(trades, test_start, test_end)
 
-        train_m = _slice_metrics(train_slice)
-        test_m = _slice_metrics(test_slice)
+        train_m = _slice_metrics(train_slice, seed)
+        test_m = _slice_metrics(test_slice, seed)
 
         rows.append(
             {
@@ -256,7 +305,7 @@ def run(
 
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        result_df.to_csv(output_csv, index=False)
+        atomic_write_dataframe_csv(result_df, output_csv)
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +316,9 @@ def run(
         # module's own 5-trade test fixture: it silently wrote
         # `mean_test_expectancy_r: NaN`, a non-standard JSON token, instead
         # of the mean over the genuinely-valid windows). Use pd.notna().
-        valid_test_expectancies = result_df["test_expectancy_r"][result_df["test_expectancy_r"].notna()]
+        valid_test_expectancies = result_df["test_expectancy_r"][
+            result_df["test_expectancy_r"].notna()
+        ]
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -279,6 +330,10 @@ def run(
                 "mean_test_expectancy_r": (
                     float(valid_test_expectancies.mean()) if len(valid_test_expectancies) else None
                 ),
+                # **Added, 2026-07-22 Codex review finding (third round):**
+                # every per-window expectancy CI is a seeded bootstrap;
+                # the seed must be reported, not left implicit.
+                "seed": seed,
             },
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -294,6 +349,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--step-days", type=int, required=True)
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--symbol", default=None)
     return parser
 
@@ -308,6 +364,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             step_days=args.step_days,
             output_csv=args.output_csv,
             summary_json=args.summary_json,
+            seed=args.seed,
             symbol=args.symbol,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:

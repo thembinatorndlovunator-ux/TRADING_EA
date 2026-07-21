@@ -2,11 +2,21 @@
 
 Per the reproducibility contract: "Statistical claims report sample size
 and uncertainty. Tiny samples cannot drive automatic live parameter
-changes." Every function here returns its own sample size alongside the
-point estimate (via the ``*Result`` dataclasses below), and every function
-raises ``InsufficientSampleError`` on an empty input rather than returning
-a silently-meaningless 0.0/NaN -- a caller must handle the empty case
-explicitly, never plot or report a number that was never actually computed.
+changes." Every function here raises ``InsufficientSampleError`` on an
+empty input rather than returning a silently-meaningless 0.0/NaN -- a
+caller must handle the empty case explicitly, never plot or report a
+number that was never actually computed.
+
+**Corrected, 2026-07-22 Codex review finding (third round):** this
+docstring previously claimed every function ALSO returns uncertainty
+alongside sample size -- that overstates what is actually implemented.
+``win_rate``/``expectancy``/``bootstrap_confidence_interval`` do (Wilson
+CI, bootstrap CI, percentile CI respectively). ``profit_factor`` and
+``compute_max_drawdown`` report ONLY a point estimate (n is available on
+``ProfitFactorResult`` but no inferential interval exists for either
+statistic here) -- a caller needing drawdown uncertainty should use
+``monte_carlo.py``'s resampled drawdown distribution instead, which does
+carry percentile scenario bounds.
 """
 
 from __future__ import annotations
@@ -40,9 +50,9 @@ class ExpectancyResult:
     expectancy: float
     n: int
     std_dev: float | None  # None when n < 2 -- spread is genuinely
-                           # unestimable from a single observation, never
-                           # reported as a false-precision 0.0 (Codex
-                           # review finding, 2026-07-22)
+    # unestimable from a single observation, never
+    # reported as a false-precision 0.0 (Codex
+    # review finding, 2026-07-22)
     ci_lower: float | None  # bootstrap CI on the MEAN -- None when n < 2
     ci_upper: float | None
     confidence: float | None
@@ -93,7 +103,9 @@ class MaxDrawdownResult:
     max_drawdown_pct_trough_index: int
 
 
-def wilson_confidence_interval(successes: int, n: int, confidence: float = 0.95) -> tuple[float, float]:
+def wilson_confidence_interval(
+    successes: int, n: int, confidence: float = 0.95
+) -> tuple[float, float]:
     """The Wilson score interval for a binomial proportion -- preferred over
     the naive normal-approximation interval because it stays within [0, 1]
     and remains reasonable at small n, both of which matter for this
@@ -160,9 +172,13 @@ def wilson_diff_confidence_interval(
     upper = diff + math.sqrt((u_a - p_a) ** 2 + (p_b - l_b) ** 2)
 
     return ProportionDiffResult(
-        diff=diff, ci_lower=lower, ci_upper=upper,
+        diff=diff,
+        ci_lower=lower,
+        ci_upper=upper,
         likely_significant=(lower > 0.0 or upper < 0.0),
-        n_a=n_a, n_b=n_b, confidence=confidence,
+        n_a=n_a,
+        n_b=n_b,
+        confidence=confidence,
     )
 
 
@@ -206,17 +222,30 @@ def expectancy(
     the mean's uncertainty are equally unestimable from one observation,
     never reported as a false-precision zero. Raises
     InsufficientSampleError only if empty (n == 1 is a valid, if
-    uncertainty-free, expectancy)."""
+    uncertainty-free, expectancy). Raises ValueError if any value is
+    non-finite (NaN/inf) -- **fixed, 2026-07-22 Codex review finding
+    (third round): the n==1 branch previously ran BEFORE any finiteness
+    check, so ``expectancy([NaN])`` silently returned a NaN expectancy
+    instead of a visible error.**
+    """
 
     n = len(pnl)
     if n == 0:
         raise InsufficientSampleError("expectancy: empty pnl sequence")
+    if not all(math.isfinite(x) for x in pnl):
+        raise ValueError("expectancy: pnl contains a non-finite (NaN/inf) value")
 
     mean = sum(pnl) / n
     if n == 1:
         return ExpectancyResult(
-            expectancy=mean, n=n, std_dev=None, ci_lower=None, ci_upper=None,
-            confidence=None, n_resamples=None, seed=None,
+            expectancy=mean,
+            n=n,
+            std_dev=None,
+            ci_lower=None,
+            ci_upper=None,
+            confidence=None,
+            n_resamples=None,
+            seed=None,
         )
 
     variance = sum((x - mean) ** 2 for x in pnl) / (n - 1)
@@ -225,21 +254,35 @@ def expectancy(
         pnl, statistic="mean", n_resamples=n_resamples, confidence=confidence, seed=seed
     )
     return ExpectancyResult(
-        expectancy=mean, n=n, std_dev=std_dev, ci_lower=boot.ci_lower, ci_upper=boot.ci_upper,
-        confidence=confidence, n_resamples=n_resamples, seed=seed,
+        expectancy=mean,
+        n=n,
+        std_dev=std_dev,
+        ci_lower=boot.ci_lower,
+        ci_upper=boot.ci_upper,
+        confidence=confidence,
+        n_resamples=n_resamples,
+        seed=seed,
     )
 
 
 def profit_factor(pnl: Sequence[float]) -> ProfitFactorResult:
     """gross_profit / abs(gross_loss). Raises InsufficientSampleError if
-    empty. If there are zero losing trades, ``profit_factor`` is returned
-    as None (not float('inf')) -- an explicitly undefined value a caller
-    must handle, rather than a special float that silently poisons any
-    downstream arithmetic or gets misread as a real (huge) number."""
+    empty. Raises ValueError if any value is non-finite -- **fixed,
+    2026-07-22 Codex review finding (third round):
+    ``profit_factor([NaN])`` previously returned an "undefined" (None)
+    factor with zero wins/losses, since ``NaN > 0``/``NaN < 0`` are both
+    False in Python, silently classifying a NaN as neither a win nor a
+    loss instead of raising.** If there are zero losing trades,
+    ``profit_factor`` is returned as None (not float('inf')) -- an
+    explicitly undefined value a caller must handle, rather than a
+    special float that silently poisons any downstream arithmetic or
+    gets misread as a real (huge) number."""
 
     n = len(pnl)
     if n == 0:
         raise InsufficientSampleError("profit_factor: empty pnl sequence")
+    if not all(math.isfinite(x) for x in pnl):
+        raise ValueError("profit_factor: pnl contains a non-finite (NaN/inf) value")
 
     gross_profit = sum(x for x in pnl if x > 0)
     gross_loss = sum(x for x in pnl if x < 0)  # negative or zero
@@ -291,7 +334,9 @@ def bootstrap_confidence_interval(
     if not (0.0 < confidence < 1.0):
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
     if n_resamples < MIN_N_RESAMPLES:
-        raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
+        raise ValueError(
+            f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
+        )
 
     import numpy as np
 
@@ -345,7 +390,9 @@ def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
     if not balance_curve:
         raise InsufficientSampleError("compute_max_drawdown: empty balance curve")
     if not all(math.isfinite(v) for v in balance_curve):
-        raise ValueError("compute_max_drawdown: balance_curve contains a non-finite (NaN/inf) value")
+        raise ValueError(
+            "compute_max_drawdown: balance_curve contains a non-finite (NaN/inf) value"
+        )
     if balance_curve[0] <= 0:
         raise ValueError(
             f"compute_max_drawdown: the first value ({balance_curve[0]!r}) must be > 0 -- "

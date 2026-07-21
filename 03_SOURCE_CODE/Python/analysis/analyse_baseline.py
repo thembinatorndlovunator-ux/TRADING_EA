@@ -35,14 +35,24 @@ from typing import Optional
 
 from analysis.csv_io import (
     CsvSchemaError,
+    assert_chronological_order,
     assert_finite_columns,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
+    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
+    sanitize_dataframe_for_csv,
 )
-from analysis.metrics import InsufficientSampleError, compute_max_drawdown, expectancy, profit_factor, win_rate
+from analysis.metrics import (
+    InsufficientSampleError,
+    compute_max_drawdown,
+    expectancy,
+    profit_factor,
+    win_rate,
+)
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
@@ -69,7 +79,12 @@ def run(
     starting_balance: float = 1000.0,
     symbol: Optional[str] = None,
     broker: Optional[str] = None,
-    seed: Optional[int] = None,
+    # **Fixed, 2026-07-22 Codex review finding (third round): this was
+    # never forwarded to the expectancy() bootstrap calls below at all --
+    # they always silently used expectancy()'s own default seed 42
+    # regardless of what a caller passed here. Always an explicit int
+    # now, matching monte_carlo.py/compare_releases.py.**
+    seed: int = 42,
     ea_version: Optional[str] = None,
     data_source: Optional[str] = None,
     repo_path: Optional[Path] = None,
@@ -97,9 +112,13 @@ def run(
         raise InsufficientSampleError(
             f"analyse_baseline.run: starting_balance must be a finite number > 0, got {starting_balance}"
         )
+    # **Fixed, 2026-07-22 Codex review finding (third round): comparing
+    # only Path.resolve() let a hard link to trades_csv pass this check
+    # (different resolved name, identical underlying file) -- a direct
+    # probe used a hard-linked output path to overwrite trades_csv's own
+    # inode. assert_path_not_same_file also checks OS-level file identity.
     for out_path in (output_json, per_trade_csv):
-        if out_path is not None and out_path.resolve() == trades_csv.resolve():
-            raise CsvSchemaError(f"output path {out_path} must not be the same as the input trades_csv")
+        assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_json, per_trade_csv])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
@@ -118,10 +137,16 @@ def run(
     # this layer; this script had been missed).
     trades["entry_time"] = parse_utc_series(trades["entry_time"])
     trades["exit_time"] = parse_utc_series(trades["exit_time"])
-    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
+    assert_chronological_order(trades["entry_time"], trades["exit_time"], trades_csv)
+    assert_valid_stop_geometry(
+        trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv
+    )
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
-            row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
+            row["is_long"],
+            float(row["entry_price"]),
+            float(row["stop_price"]),
+            float(row["exit_price"]),
         ),
         axis=1,
     )
@@ -147,8 +172,8 @@ def run(
     r_multiples = trades_sorted["r_multiple"].tolist()
 
     wr = win_rate([p > 0 for p in profits])
-    exp_dollars = expectancy(profits)
-    exp_r = expectancy(r_multiples)
+    exp_dollars = expectancy(profits, seed=seed)
+    exp_r = expectancy(r_multiples, seed=seed)
     pf = profit_factor(profits)
     dd = compute_max_drawdown(balance_curve)
 
@@ -165,8 +190,26 @@ def run(
             "value": exp_dollars.expectancy,
             "std_dev": exp_dollars.std_dev,
             "n": exp_dollars.n,
+            # **Added, 2026-07-22 Codex review finding (third round):**
+            # the expectancy CI/confidence/resample-count/seed were
+            # computed by expectancy() but discarded before reaching this
+            # summary.
+            "ci_lower": exp_dollars.ci_lower,
+            "ci_upper": exp_dollars.ci_upper,
+            "confidence": exp_dollars.confidence,
+            "n_resamples": exp_dollars.n_resamples,
+            "seed": exp_dollars.seed,
         },
-        "expectancy_r": {"value": exp_r.expectancy, "std_dev": exp_r.std_dev, "n": exp_r.n},
+        "expectancy_r": {
+            "value": exp_r.expectancy,
+            "std_dev": exp_r.std_dev,
+            "n": exp_r.n,
+            "ci_lower": exp_r.ci_lower,
+            "ci_upper": exp_r.ci_upper,
+            "confidence": exp_r.confidence,
+            "n_resamples": exp_r.n_resamples,
+            "seed": exp_r.seed,
+        },
         "profit_factor": pf.profit_factor,
         "gross_profit": pf.gross_profit,
         "gross_loss": pf.gross_loss,
@@ -184,15 +227,23 @@ def run(
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv], symbol=symbol, broker=broker, random_seed=seed,
-            ea_version=ea_version, data_source=data_source, repo_path=repo_path,
+            [trades_csv],
+            symbol=symbol,
+            broker=broker,
+            random_seed=seed,
+            ea_version=ea_version,
+            data_source=data_source,
+            repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
         atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     if per_trade_csv is not None:
         per_trade_csv.parent.mkdir(parents=True, exist_ok=True)
-        trades_sorted.to_csv(per_trade_csv, index=False)
+        # symbol/trade_id are caller-controlled strings -- sanitized
+        # against spreadsheet-formula injection (Codex review finding,
+        # 2026-07-22, third round).
+        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(trades_sorted), per_trade_csv)
 
     return summary
 
@@ -205,7 +256,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--starting-balance", type=float, default=1000.0)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--broker", default=None)
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ea-version", default=None)
     parser.add_argument("--data-source", default=None)
     return parser

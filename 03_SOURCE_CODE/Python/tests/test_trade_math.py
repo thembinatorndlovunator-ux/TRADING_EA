@@ -41,6 +41,13 @@ def _bars():
 
 
 def test_compute_mfe_mae_long_hand_computed():
+    # **Re-traced, 2026-07-22 Codex review finding (third round):** the
+    # window is now HALF-OPEN [entry_time, exit_time) -- the exit bar
+    # (03:00) is excluded since its price action occurs entirely after
+    # the trade has already exited. Bars 0-2 (00:00, 01:00, 02:00) remain
+    # in the window; high_max=105 (bar1), low_min=97 (bar2) -- the same
+    # mfe/mae VALUES as before this fix (both extrema happen to fall
+    # inside bars 0-2 already), but n_bars drops from 4 to 3.
     bars = _bars()
     result = compute_mfe_mae(
         trade_id="t1",
@@ -55,7 +62,58 @@ def test_compute_mfe_mae_long_hand_computed():
     assert result.mae_price == pytest.approx(3.0)  # 100 - 97
     assert result.mfe_r == pytest.approx(2.5)  # 5 / 2
     assert result.mae_r == pytest.approx(-1.5)  # -3 / 2
-    assert result.n_bars == 4
+    assert result.n_bars == 3
+
+
+def test_compute_mfe_mae_exit_bar_excluded_from_window():
+    """Regression for a Codex review finding (2026-07-22, third round):
+    the window previously INCLUDED the exit bar (timestamp <= exit_time),
+    but a bar whose OPEN equals exit_time spans price action entirely
+    AFTER the trade exited -- a direct two-bar probe (entry 00:00, exit
+    01:00, an extreme 01:00 bar) previously returned mfe_r=449.5, almost
+    entirely POST-EXIT look-ahead. With only bar 0 (00:00) in the window
+    (bar 1 at 01:00 excluded as the exit bar), mfe/mae must come ONLY
+    from bar 0's own [99, 101] range, not bar 1's extreme values."""
+
+    bars = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-07-21T00:00Z", "2026-07-21T01:00Z"]),
+            "high": [101.0, 999.0],  # bar 1's extreme high must NOT leak in
+            "low": [99.0, 1.0],  # bar 1's extreme low must NOT leak in
+        }
+    )
+    result = compute_mfe_mae(
+        trade_id="t_exit_excl",
+        is_long=True,
+        entry_price=100.0,
+        stop_price=98.0,
+        entry_time=bars["timestamp"].iloc[0],
+        exit_time=bars["timestamp"].iloc[1],
+        bars=bars,
+    )
+    assert result.n_bars == 1
+    assert result.mfe_price == pytest.approx(1.0)  # 101 - 100, bar 0 only
+    assert result.mae_price == pytest.approx(1.0)  # 100 - 99, bar 0 only
+
+
+def test_compute_mfe_mae_same_bar_trade_uses_that_single_bar():
+    """entry_time == exit_time (a trade opened and closed within the same
+    bar) is the one case where the exit bar must NOT be excluded -- it is
+    the only bar the trade was ever open during."""
+
+    bars = _bars()
+    result = compute_mfe_mae(
+        trade_id="t_same_bar",
+        is_long=True,
+        entry_price=100.0,
+        stop_price=98.0,
+        entry_time=bars["timestamp"].iloc[1],
+        exit_time=bars["timestamp"].iloc[1],
+        bars=bars,
+    )
+    assert result.n_bars == 1
+    assert result.mfe_price == pytest.approx(5.0)  # bar1 high 105 - 100
+    assert result.mae_price == pytest.approx(0.0)  # bar1 low 100 - 100
 
 
 def test_compute_mfe_mae_short_hand_computed():
@@ -146,16 +204,19 @@ def test_compute_mfe_mae_entry_after_exit_raises():
         )
 
 
-def test_compute_mfe_mae_window_is_inclusive_of_partial_bar_subset():
+def test_compute_mfe_mae_window_is_half_open_partial_bar_subset():
+    # **Re-traced, 2026-07-22 Codex review finding (third round):** entry
+    # at bar1 (01:00), exit at bar3 (03:00) -- the half-open window
+    # [01:00, 03:00) includes bars 1-2 (01:00, 02:00) and excludes bar 3
+    # (the exit bar). high max 105 (bar1), low min 97 (bar2).
     bars = _bars()
-    # Only the middle two bars (index 1, 2): high max 105, low min 97
     result = compute_mfe_mae(
         trade_id="t5",
         is_long=True,
         entry_price=100.0,
         stop_price=98.0,
         entry_time=bars["timestamp"].iloc[1],
-        exit_time=bars["timestamp"].iloc[2],
+        exit_time=bars["timestamp"].iloc[3],
         bars=bars,
     )
     assert result.n_bars == 2

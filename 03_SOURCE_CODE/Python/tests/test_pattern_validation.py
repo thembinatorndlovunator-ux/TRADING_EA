@@ -191,6 +191,32 @@ def test_run_writes_output_csv(tmp_path):
     assert len(result) == 2
 
 
+def test_run_writes_provenance_sidecar(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    this script previously emitted an entirely unprovenanced CSV, unlike
+    every other pipeline in this layer."""
+
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+        }
+    ).to_csv(path, index=False)
+    summary_json = tmp_path / "out" / "summary.json"
+
+    run(path, summary_json=summary_json, symbol="XAUUSD")
+
+    import json
+
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"] != ""
+    assert payload["metadata"]["symbol"] == "XAUUSD"
+    assert payload["summary"]["n_bars"] == 2
+
+
 def test_compare_to_mql5_export_reports_disagreements(tmp_path):
     python_results = pd.DataFrame(
         {"k": [0, 1], "bullish_engulfing": [True, False], "bearish_engulfing": [False, False]}
@@ -257,9 +283,9 @@ def test_compare_to_mql5_export_rejects_duplicate_mql5_key(tmp_path):
 
 def test_run_rejects_non_finite_ohlc(tmp_path):
     path = tmp_path / "ohlc.csv"
-    pd.DataFrame(
-        {"open": [99.0], "high": [float("nan")], "low": [98.0], "close": [100.0]}
-    ).to_csv(path, index=False)
+    pd.DataFrame({"open": [99.0], "high": [float("nan")], "low": [98.0], "close": [100.0]}).to_csv(
+        path, index=False
+    )
     with pytest.raises(CsvSchemaError):
         run(path)
 

@@ -89,6 +89,16 @@ class TradeDecision(BaseModel):
     reasons_rejected: list[str] = Field(default_factory=list)
     ea_version: str
     git_commit: str
+    # **Added, 2026-07-22 Codex review finding (third round): the durable
+    # journal-decision-to-trade-outcome join (analysis/join_signal_to_outcome.py,
+    # new) needs a stable key. Both optional/nullable since the live EA does
+    # not populate them yet (TASK-036_JOURNAL_PRODUCER_COMPLETION.md owns
+    # the MQL5-side population; this is the Python-schema half of that
+    # task, done here so the consuming join pipeline can be real and
+    # tested now rather than perpetually deferred). A decision rejected
+    # before order submission legitimately has neither.**
+    order_id: Optional[str] = None
+    deal_id: Optional[str] = None
 
     @field_validator("timestamp_utc", mode="before")
     @classmethod

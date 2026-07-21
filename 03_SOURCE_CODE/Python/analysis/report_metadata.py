@@ -21,15 +21,15 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 PIPELINE_VERSION = "0.2.0"  # bump when a pipeline's OUTPUT SHAPE changes,
-                            # not on every code edit -- matches this
-                            # project's #property version discipline of
-                            # marking meaningful revisions, not churn.
-                            # **Bumped, 2026-07-22 Codex review finding:**
-                            # this remained 0.1.0 through the entire prior
-                            # remediation round despite output-shape
-                            # changes (renamed fields, new CI columns,
-                            # new required checks) directly contrary to
-                            # this comment's own stated rule.
+# not on every code edit -- matches this
+# project's #property version discipline of
+# marking meaningful revisions, not churn.
+# **Bumped, 2026-07-22 Codex review finding:**
+# this remained 0.1.0 through the entire prior
+# remediation round despite output-shape
+# changes (renamed fields, new CI columns,
+# new required checks) directly contrary to
+# this comment's own stated rule.
 
 
 class GitMetadataError(RuntimeError):
@@ -189,6 +189,12 @@ class ReportMetadata:
     # existed on this dataclass at all.
     ea_version: Optional[str] = None
     data_source: Optional[str] = None
+    # **Added, 2026-07-22 Codex review finding (third round): spread and
+    # slippage (named explicitly in 00_MASTER_PROMPT_FOR_CLAUDE.md:54-58's
+    # required-provenance list) had no distinct fields -- only the
+    # generic, unstructured costs_note existed.
+    spread_note: Optional[str] = None
+    slippage_note: Optional[str] = None
     generated_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -213,6 +219,8 @@ def build_report_metadata(
     random_seed: Optional[int] = None,
     ea_version: Optional[str] = None,
     data_source: Optional[str] = None,
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> ReportMetadata:
     """Convenience constructor: captures git commit/dirty state and the
@@ -248,4 +256,6 @@ def build_report_metadata(
         pipeline_version=PIPELINE_VERSION,
         ea_version=ea_version,
         data_source=data_source,
+        spread_note=spread_note,
+        slippage_note=slippage_note,
     )

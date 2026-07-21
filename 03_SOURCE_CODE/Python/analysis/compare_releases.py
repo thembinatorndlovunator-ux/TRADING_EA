@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,9 @@ import pandas as pd
 from analysis.analyse_baseline import REQUIRED_COLUMNS
 from analysis.csv_io import (
     CsvSchemaError,
+    assert_chronological_order,
     assert_finite_columns,
+    assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
     parse_is_long,
@@ -79,10 +82,16 @@ def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str])
     # visible failure rather than a silent no-op.
     trades["entry_time"] = parse_utc_series(trades["entry_time"])
     trades["exit_time"] = parse_utc_series(trades["exit_time"])
-    assert_valid_stop_geometry(trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv)
+    assert_chronological_order(trades["entry_time"], trades["exit_time"], trades_csv)
+    assert_valid_stop_geometry(
+        trades["is_long"], trades["entry_price"], trades["stop_price"], trades_csv
+    )
     trades["r_multiple"] = trades.apply(
         lambda row: compute_r_multiple(
-            row["is_long"], float(row["entry_price"]), float(row["stop_price"]), float(row["exit_price"])
+            row["is_long"],
+            float(row["entry_price"]),
+            float(row["stop_price"]),
+            float(row["exit_price"]),
         ),
         axis=1,
     )
@@ -102,7 +111,10 @@ class DiffCiResult:
 
 
 def two_sample_bootstrap_diff(
-    baseline_values: list[float], candidate_values: list[float], n_resamples: int, seed: int,
+    baseline_values: list[float],
+    candidate_values: list[float],
+    n_resamples: int,
+    seed: int,
     confidence: float = 0.95,
 ) -> DiffCiResult:
     """Reports the OBSERVED difference (mean(candidate) - mean(baseline)
@@ -128,8 +140,11 @@ def two_sample_bootstrap_diff(
     MIN_N_PER_GROUP values -- below that, a bootstrap CI cannot represent
     real uncertainty (a degenerate 2-observation-per-group sample can
     only ever resample to that same tiny set of possible means). Raises
-    ValueError if n_resamples < MIN_N_RESAMPLES or confidence is out of
-    (0, 1).
+    ValueError if n_resamples < MIN_N_RESAMPLES, confidence is out of
+    (0, 1), or either input contains a non-finite value -- **fixed,
+    2026-07-22 Codex review finding (third round): this previously
+    accepted a non-finite sample and silently returned NaN point/interval
+    fields.**
     """
 
     if len(baseline_values) < MIN_N_PER_GROUP or len(candidate_values) < MIN_N_PER_GROUP:
@@ -138,7 +153,13 @@ def two_sample_bootstrap_diff(
             f"got baseline={len(baseline_values)} candidate={len(candidate_values)}"
         )
     if n_resamples < MIN_N_RESAMPLES:
-        raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
+        raise ValueError(
+            f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
+        )
+    if not all(math.isfinite(v) for v in baseline_values) or not all(
+        math.isfinite(v) for v in candidate_values
+    ):
+        raise ValueError("two_sample_bootstrap_diff: baseline/candidate values must all be finite")
     if not (0.0 < confidence < 1.0):
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
@@ -179,19 +200,28 @@ def run(
     broker: Optional[str] = None,
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
-    ea_version: Optional[str] = None,
-    data_source: Optional[str] = None,
+    # **Fixed, 2026-07-22 Codex review finding (third round): a single
+    # shared ea_version/data_source value is insufficient to identify TWO
+    # releases -- a caller could only ever record one version for both
+    # sides of the comparison. Separate baseline/candidate fields now.**
+    baseline_ea_version: Optional[str] = None,
+    candidate_ea_version: Optional[str] = None,
+    baseline_data_source: Optional[str] = None,
+    candidate_data_source: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
     """'broker'/'period_start'/'period_end' are recorded in the report's
     provenance metadata and are the CALLER's responsibility to ensure are
     actually identical between the two datasets -- this script can only
-    verify what is present IN the CSVs themselves (symbol, below), not
-    facts (broker, costs, modelling mode, set file) that live outside
-    them. Always state these explicitly when calling this comparison."""
+    verify what is present IN the CSVs themselves (symbol and, now, the
+    data-driven trade period -- see below), not facts (broker, costs,
+    modelling mode, set file) that live outside them. Always state these
+    explicitly when calling this comparison."""
 
-    if output_json is not None and output_json.resolve() in (baseline_csv.resolve(), candidate_csv.resolve()):
-        raise CsvSchemaError(f"output_json {output_json} must not be the same as an input path")
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
+    assert_path_not_same_file(output_json, baseline_csv, "output_json")
+    assert_path_not_same_file(output_json, candidate_csv, "output_json")
 
     baseline = _load_trades_with_r_multiple(baseline_csv, symbol)
     candidate = _load_trades_with_r_multiple(candidate_csv, symbol)
@@ -211,6 +241,26 @@ def run(
             "A release comparison requires both datasets to cover the same instrument(s)."
         )
 
+    # **Added, 2026-07-22 Codex review finding (third round): only symbol
+    # sets were checked -- a same-symbol January-2026 baseline vs.
+    # January-2025 candidate was still accepted. broker/period/costs/
+    # modelling-mode/set-file identity cannot be verified from the CSVs
+    # themselves (they are caller-asserted facts, documented above), but
+    # the DATA-DRIVEN trade period each dataset actually covers can be,
+    # and a wholly disjoint period is a defensible, data-driven rejection
+    # (not exhaustive comparability, but a real check, not zero checks).**
+    baseline_period = (baseline["entry_time"].min(), baseline["exit_time"].max())
+    candidate_period = (candidate["entry_time"].min(), candidate["exit_time"].max())
+    periods_overlap = (
+        baseline_period[0] <= candidate_period[1] and candidate_period[0] <= baseline_period[1]
+    )
+    if not periods_overlap:
+        raise CsvSchemaError(
+            f"compare_releases: baseline period {baseline_period} and candidate period "
+            f"{candidate_period} do not overlap at all -- these do not look like comparable "
+            "experiments over the same market period."
+        )
+
     # Win-rate difference: a proper two-proportion interval (Newcombe-
     # Wilson), not a bootstrap over raw 0/1 outcomes -- **fixed, 2026-07-22
     # Codex review finding:** bootstrapping binary outcomes collapses to a
@@ -225,7 +275,11 @@ def run(
     # Continuous R-expectancy difference remains a bootstrap -- appropriate
     # for a continuous statistic, unlike the binary win-rate case above.
     expectancy_r_diff = two_sample_bootstrap_diff(
-        baseline["r_multiple"].tolist(), candidate["r_multiple"].tolist(), n_resamples, seed, confidence
+        baseline["r_multiple"].tolist(),
+        candidate["r_multiple"].tolist(),
+        n_resamples,
+        seed,
+        confidence,
     )
 
     summary = {
@@ -249,14 +303,24 @@ def run(
         "n_resamples": n_resamples,
         "seed": seed,
         "confidence": confidence,
+        "baseline_period": [str(baseline_period[0]), str(baseline_period[1])],
+        "candidate_period": [str(candidate_period[0]), str(candidate_period[1])],
+        "baseline_ea_version": baseline_ea_version,
+        "candidate_ea_version": candidate_ea_version,
+        "baseline_data_source": baseline_data_source,
+        "candidate_data_source": candidate_data_source,
     }
 
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [baseline_csv, candidate_csv], symbol=symbol, broker=broker,
-            period_start=period_start, period_end=period_end, random_seed=seed,
-            ea_version=ea_version, data_source=data_source, repo_path=repo_path,
+            [baseline_csv, candidate_csv],
+            symbol=symbol,
+            broker=broker,
+            period_start=period_start,
+            period_end=period_end,
+            random_seed=seed,
+            repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
         atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -276,8 +340,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--broker", default=None)
     parser.add_argument("--period-start", default=None)
     parser.add_argument("--period-end", default=None)
-    parser.add_argument("--ea-version", default=None)
-    parser.add_argument("--data-source", default=None)
+    parser.add_argument("--baseline-ea-version", default=None)
+    parser.add_argument("--candidate-ea-version", default=None)
+    parser.add_argument("--baseline-data-source", default=None)
+    parser.add_argument("--candidate-data-source", default=None)
     return parser
 
 
@@ -295,8 +361,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             broker=args.broker,
             period_start=args.period_start,
             period_end=args.period_end,
-            ea_version=args.ea_version,
-            data_source=args.data_source,
+            baseline_ea_version=args.baseline_ea_version,
+            candidate_ea_version=args.candidate_ea_version,
+            baseline_data_source=args.baseline_data_source,
+            candidate_data_source=args.candidate_data_source,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

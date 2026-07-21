@@ -59,19 +59,29 @@ from typing import Optional
 
 import numpy as np
 
-from analysis.csv_io import CsvSchemaError, assert_finite_columns, assert_unique_ids, read_csv_with_required_columns
-from analysis.metrics import InsufficientSampleError, compute_max_drawdown, wilson_confidence_interval
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_path_not_same_file,
+    assert_unique_ids,
+    read_csv_with_required_columns,
+)
+from analysis.metrics import (
+    InsufficientSampleError,
+    compute_max_drawdown,
+    wilson_confidence_interval,
+)
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.resampling import seeded_bootstrap_indices
 
 REQUIRED_COLUMNS = {"trade_id", "profit"}
 MIN_N_RESAMPLES = 100  # below this a percentile scenario-bound estimate is not defensible
 MIN_N_TRADES = 20  # **Added, 2026-07-22 Codex review finding:** below this, resampling
-                   # manufactures apparent precision the underlying sample cannot support
-                   # -- a direct probe with a single historical trade previously returned
-                   # a suspiciously "precise" [1010.0, 1010.0] final-balance bound and a
-                   # [0.0, 0.0] drawdown bound; more simulations cannot create sample
-                   # information that was never there.
+# manufactures apparent precision the underlying sample cannot support
+# -- a direct probe with a single historical trade previously returned
+# a suspiciously "precise" [1010.0, 1010.0] final-balance bound and a
+# [0.0, 0.0] drawdown bound; more simulations cannot create sample
+# information that was never there.
 
 
 @dataclass(frozen=True)
@@ -137,7 +147,9 @@ def run_monte_carlo(
             f"run_monte_carlo: starting_balance must be a finite number > 0, got {starting_balance}"
         )
     if n_resamples < MIN_N_RESAMPLES:
-        raise ValueError(f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}")
+        raise ValueError(
+            f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
+        )
     if not (0.0 < confidence < 1.0):
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
     if not all(math.isfinite(p) for p in pnl):
@@ -169,7 +181,9 @@ def run_monte_carlo(
     alpha = 1.0 - confidence
     if ruin_threshold is not None:
         prob_ruin = ruin_hits / n_resamples
-        ruin_ci_lower, ruin_ci_upper = wilson_confidence_interval(ruin_hits, n_resamples, confidence)
+        ruin_ci_lower, ruin_ci_upper = wilson_confidence_interval(
+            ruin_hits, n_resamples, confidence
+        )
     else:
         prob_ruin = None
         ruin_ci_lower = None
@@ -206,8 +220,9 @@ def run(
     symbol: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> MonteCarloResult:
-    if output_json is not None and output_json.resolve() == trades_csv.resolve():
-        raise CsvSchemaError(f"output_json {output_json} must not be the same as the input trades_csv")
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
+    assert_path_not_same_file(output_json, trades_csv, "output_json")
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
@@ -229,7 +244,32 @@ def run(
         metadata = build_report_metadata(
             [trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
         )
-        payload = {"metadata": metadata.to_dict(), "result": result.__dict__}
+        # **Added, 2026-07-22 Codex review finding (third round):** the
+        # module docstring and dataclass docstring already explained that
+        # ``final_balance_ci_*``/``max_drawdown_pct_ci_*`` are percentile
+        # scenario bounds from an i.i.d. fixed-cash resampling model, not
+        # a conventional statistical CI -- but that caveat lived only in
+        # PROSE, never in the machine-readable JSON artifact itself. A
+        # tool or reader consuming only the JSON (not this source file)
+        # had no way to know the field names overstate what they mean.
+        # ``bound_type``/``model``/``caveat`` are now serialized directly
+        # alongside the result so the artifact is self-describing.
+        payload = {
+            "metadata": metadata.to_dict(),
+            "bound_type": "percentile_scenario_bound",
+            "model": "fixed_cash_iid_empirical_bootstrap",
+            "caveat": (
+                "final_balance_ci_* and max_drawdown_pct_ci_* are percentile scenario "
+                "bounds conditional on an i.i.d. empirical-bootstrap reshuffling of this "
+                "fixed-cash historical P/L sample -- NOT a conventional statistical "
+                "confidence interval for a future balance or drawdown, and not valid "
+                "evidence for a percentage-of-equity compounding system or for a system "
+                "with streak-dependent risk controls (e.g. a loss-streak cooldown). "
+                "prob_ruin_ci_* is a Wilson interval on finite-simulation error only. "
+                "See analysis/monte_carlo.py module docstring for the full scope."
+            ),
+            "result": result.__dict__,
+        }
         atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result

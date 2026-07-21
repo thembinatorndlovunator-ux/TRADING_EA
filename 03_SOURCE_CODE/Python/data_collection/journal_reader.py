@@ -34,6 +34,7 @@ around here by ignoring decode errors.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +59,26 @@ def _reject_non_finite_json_constant(token: str) -> None:
     admitted non-finite value that could poison downstream arithmetic."""
 
     raise ValueError(f"non-standard JSON constant {token!r} (NaN/Infinity) is not permitted")
+
+
+def _parse_float_rejecting_overflow(text: str) -> float:
+    """``json.loads``'s ``parse_float`` hook: a numeric literal that
+    OVERFLOWS to infinity when converted to float (e.g. ``1e400``) is a
+    completely standard-looking JSON number token -- it never reaches
+    ``parse_constant`` at all (that hook only intercepts the literal
+    non-standard tokens ``NaN``/``Infinity``/``-Infinity``, not a
+    numeric literal that merely evaluates to one via float overflow).
+
+    **Fixed, 2026-07-22 Codex review finding (third round):** because
+    nested ``score_breakdown`` is an unconstrained dict, a record
+    containing ``{"overflow": 1e400}`` previously validated successfully
+    and was written to CSV as ``{'overflow': inf}``, with the CLI
+    returning 0 (no error reported anywhere)."""
+
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"numeric literal {text!r} overflows to a non-finite float ({value})")
+    return value
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -153,6 +174,7 @@ def _read_lines_from_file(
                     record = json.loads(
                         stripped,
                         parse_constant=_reject_non_finite_json_constant,
+                        parse_float=_parse_float_rejecting_overflow,
                         object_pairs_hook=_reject_duplicate_keys,
                     )
                 except ValueError as exc:  # json.JSONDecodeError is itself a ValueError
@@ -240,7 +262,9 @@ def read_journal_directory(
         # portable-metadata discipline.
         source_label = str(path.resolve().relative_to(resolved_directory))
         remaining_budget = max_records - total_records_seen
-        parsed, parse_errors, non_blank_count = _read_lines_from_file(path, source_label, remaining_budget)
+        parsed, parse_errors, non_blank_count = _read_lines_from_file(
+            path, source_label, remaining_budget
+        )
         all_parse_errors.extend(parse_errors)
         total_records_seen += non_blank_count
 

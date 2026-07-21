@@ -4,13 +4,20 @@ bar including TASK-017's wick-to-body ratio fix, bullish/bearish
 engulfing), validated against hand-constructed synthetic OHLC fixtures, for
 independent cross-checking against the MQL5 source.
 
-**Explicitly NOT a full port.** ``CandlestickPatternEngine.mqh`` defines 18
-pattern functions; this module ports the 4 named above (kept algebraically
-identical to the MQL5 source, not re-derived) as a first slice -- the
-remaining 14 (dragonfly/gravestone rejection, marubozu, doji, spinning
-top, inside/outside bar, tweezer top/bottom, harami, morning/evening star,
-three white soldiers/three black crows, three-bar reversal) are explicitly
-NOT ported here, left for a follow-up increment.
+**Explicitly NOT a full port.** ``CandlestickPatternEngine.mqh`` defines
+**19** ``CP_Is*Array`` boolean pattern predicates PLUS one non-boolean
+helper, ``CP_DetectHaramiArray`` -- **20 detector/predicate functions
+total** (corrected count, 2026-07-22 Codex review finding, third round:
+this docstring previously said "18 total/14 remaining", which does not
+match the actual MQL5 source -- see ``TASK-033_PATTERN_VALIDATION_COMPLETION.md``
+for the full, verified enumeration). This module ports the 4 named above
+(kept algebraically identical to the MQL5 source, not re-derived) as a
+first slice -- the remaining 15 ``CP_Is*Array`` predicates (dragonfly/
+gravestone rejection, marubozu, doji, spinning top, inside/outside bar,
+tweezer top/bottom, harami-confirmed, morning/evening star, three white
+soldiers/three black crows, three-bar reversal) PLUS the
+``CP_DetectHaramiArray`` helper (16 functions total) are explicitly NOT
+ported here, left for TASK-033.
 
 **Array convention, stated explicitly (a common point of confusion this
 project has flagged before):** these functions use the SAME "logical
@@ -30,6 +37,7 @@ data per the reproducibility contract's rule 7.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,9 +49,12 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_high_low_geometry,
+    assert_output_paths_distinct,
     assert_unique_ids,
+    atomic_write_dataframe_csv,
     read_csv_with_required_columns,
 )
+from analysis.report_metadata import atomic_write_text, build_report_metadata
 
 CP_BODY_EPSILON = 0.00001
 CP_PIN_BAR_MIN_WICK_TO_BODY = 2.0
@@ -65,8 +76,13 @@ class CandleRatios:
     valid: bool
 
 
-def measure_ratios(opens: Sequence[float], highs: Sequence[float], lows: Sequence[float],
-                    closes: Sequence[float], k: int) -> CandleRatios:
+def measure_ratios(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+) -> CandleRatios:
     """Direct port of CP_MeasureRatiosArray. A zero-range bar (high==low)
     never qualifies for any pattern, per section 5 -- 'valid' is False in
     that case, matching the MQL5 source's own early return."""
@@ -124,8 +140,14 @@ def size_percentile(highs: Sequence[float], lows: Sequence[float], k: int, windo
 
 
 def is_bullish_pin_bar(
-    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-    k: int, trend_lookback: int, min_lower_wick_ratio: float = 0.60, max_body_ratio: float = 0.30,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    trend_lookback: int,
+    min_lower_wick_ratio: float = 0.60,
+    max_body_ratio: float = 0.30,
     max_opposite_wick_ratio: float = 0.15,
 ) -> bool:
     """Direct port of CP_IsBullishPinBarArray, including TASK-017's
@@ -155,8 +177,14 @@ def is_bullish_pin_bar(
 
 
 def is_bearish_pin_bar(
-    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-    k: int, trend_lookback: int, min_upper_wick_ratio: float = 0.60, max_body_ratio: float = 0.30,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    trend_lookback: int,
+    min_upper_wick_ratio: float = 0.60,
+    max_body_ratio: float = 0.30,
     max_opposite_wick_ratio: float = 0.15,
 ) -> bool:
     """Direct port of CP_IsBearishPinBarArray (mirror of the bullish case)."""
@@ -185,8 +213,13 @@ def is_bearish_pin_bar(
 
 
 def is_bullish_engulfing(
-    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-    k: int, size_window: int = 20, min_size_percentile: float = 0.50,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    size_window: int = 20,
+    min_size_percentile: float = 0.50,
 ) -> bool:
     """Direct port of CP_IsBullishEngulfingArray."""
 
@@ -207,8 +240,13 @@ def is_bullish_engulfing(
 
 
 def is_bearish_engulfing(
-    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-    k: int, size_window: int = 20, min_size_percentile: float = 0.50,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    size_window: int = 20,
+    min_size_percentile: float = 0.50,
 ) -> bool:
     """Direct port of CP_IsBearishEngulfingArray."""
 
@@ -229,8 +267,12 @@ def is_bearish_engulfing(
 
 
 def detect_all_patterns(
-    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-    trend_lookback: int = 5, size_window: int = 20,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    trend_lookback: int = 5,
+    size_window: int = 20,
 ) -> pd.DataFrame:
     """Runs every ported pattern at every valid logical index k, returning
     a DataFrame with one row per k and one boolean column per pattern."""
@@ -241,10 +283,18 @@ def detect_all_patterns(
         rows.append(
             {
                 "k": k,
-                "bullish_pin_bar": is_bullish_pin_bar(opens, highs, lows, closes, k, trend_lookback),
-                "bearish_pin_bar": is_bearish_pin_bar(opens, highs, lows, closes, k, trend_lookback),
-                "bullish_engulfing": is_bullish_engulfing(opens, highs, lows, closes, k, size_window),
-                "bearish_engulfing": is_bearish_engulfing(opens, highs, lows, closes, k, size_window),
+                "bullish_pin_bar": is_bullish_pin_bar(
+                    opens, highs, lows, closes, k, trend_lookback
+                ),
+                "bearish_pin_bar": is_bearish_pin_bar(
+                    opens, highs, lows, closes, k, trend_lookback
+                ),
+                "bullish_engulfing": is_bullish_engulfing(
+                    opens, highs, lows, closes, k, size_window
+                ),
+                "bearish_engulfing": is_bearish_engulfing(
+                    opens, highs, lows, closes, k, size_window
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -300,8 +350,18 @@ def compare_to_mql5_export(python_results: pd.DataFrame, mql5_export_csv: Path) 
     return both[disagreement_mask].drop(columns=["_merge"])
 
 
-def run(ohlc_csv: Path, output_csv: Optional[Path] = None, *, trend_lookback: int = 5,
-        size_window: int = 20, ascending_input: bool = False) -> pd.DataFrame:
+def run(
+    ohlc_csv: Path,
+    output_csv: Optional[Path] = None,
+    summary_json: Optional[Path] = None,
+    *,
+    trend_lookback: int = 5,
+    size_window: int = 20,
+    ascending_input: bool = False,
+    symbol: Optional[str] = None,
+    seed: Optional[int] = None,
+    repo_path: Optional[Path] = None,
+) -> pd.DataFrame:
     """Reads 'ohlc_csv' (columns open/high/low/close) and detects every
     ported pattern at every valid index.
 
@@ -314,6 +374,11 @@ def run(ohlc_csv: Path, output_csv: Optional[Path] = None, *, trend_lookback: in
     logical-index convention (row 0 = most recent bar); pass True if
     'ohlc_csv' is in the more common chronologically-ascending order
     (row 0 = oldest bar) and this function will reverse it first.
+
+    'summary_json', if given, records this pipeline's provenance --
+    **added, 2026-07-22 Codex review finding (third round): this script
+    previously emitted an entirely unprovenanced CSV, unlike every other
+    pipeline in this layer.**
     """
 
     # **Fixed, 2026-07-22 Codex review finding:** this script had no
@@ -321,24 +386,52 @@ def run(ohlc_csv: Path, output_csv: Optional[Path] = None, *, trend_lookback: in
     # in this layer.
     if output_csv is not None and output_csv.resolve() == ohlc_csv.resolve():
         raise CsvSchemaError(f"output_csv {output_csv} must not be the same as the input ohlc_csv")
+    if summary_json is not None and summary_json.resolve() == ohlc_csv.resolve():
+        raise CsvSchemaError(
+            f"summary_json {summary_json} must not be the same as the input ohlc_csv"
+        )
+    assert_output_paths_distinct([output_csv, summary_json])
 
     ohlc = read_csv_with_required_columns(ohlc_csv, REQUIRED_OHLC_COLUMNS)
     assert_finite_columns(ohlc, ["open", "high", "low", "close"], ohlc_csv)
     # Full OHLC geometry (open/close must also fall within [low, high]),
     # not just high >= low -- see assert_high_low_geometry's own
     # docstring for the Codex review finding this closes.
-    assert_high_low_geometry(ohlc, "high", "low", ohlc_csv, open_column="open", close_column="close")
+    assert_high_low_geometry(
+        ohlc, "high", "low", ohlc_csv, open_column="open", close_column="close"
+    )
     if ascending_input:
         ohlc = ohlc.iloc[::-1].reset_index(drop=True)
 
     result = detect_all_patterns(
-        ohlc["open"].tolist(), ohlc["high"].tolist(), ohlc["low"].tolist(), ohlc["close"].tolist(),
-        trend_lookback=trend_lookback, size_window=size_window,
+        ohlc["open"].tolist(),
+        ohlc["high"].tolist(),
+        ohlc["low"].tolist(),
+        ohlc["close"].tolist(),
+        trend_lookback=trend_lookback,
+        size_window=size_window,
     )
 
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        result.to_csv(output_csv, index=False)
+        atomic_write_dataframe_csv(result, output_csv)
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        metadata = build_report_metadata(
+            [ohlc_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+        )
+        payload = {
+            "metadata": metadata.to_dict(),
+            "summary": {
+                "n_bars": len(ohlc),
+                "trend_lookback": trend_lookback,
+                "size_window": size_window,
+                "ascending_input": ascending_input,
+                "n_detections": int(result.drop(columns=["k"]).sum().sum()),
+            },
+        }
+        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result
 
@@ -347,13 +440,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ohlc-csv", required=True, type=Path)
     parser.add_argument("--output-csv", type=Path, default=None)
+    parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--trend-lookback", type=int, default=5)
     parser.add_argument("--size-window", type=int, default=20)
     parser.add_argument(
-        "--ascending-input", action="store_true",
+        "--ascending-input",
+        action="store_true",
         help="Set if ohlc_csv is chronologically ascending (row 0 = oldest); "
-             "default assumes it is already in the MQL5 logical-index convention (row 0 = newest).",
+        "default assumes it is already in the MQL5 logical-index convention (row 0 = newest).",
     )
+    parser.add_argument("--symbol", default=None)
+    parser.add_argument("--seed", type=int, default=None)
     return parser
 
 
@@ -361,15 +458,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
         result = run(
-            args.ohlc_csv, args.output_csv, trend_lookback=args.trend_lookback,
-            size_window=args.size_window, ascending_input=args.ascending_input,
+            args.ohlc_csv,
+            args.output_csv,
+            args.summary_json,
+            trend_lookback=args.trend_lookback,
+            size_window=args.size_window,
+            ascending_input=args.ascending_input,
+            symbol=args.symbol,
+            seed=args.seed,
         )
     except (FileNotFoundError, CsvSchemaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     n_detections = int(result.drop(columns=["k"]).sum().sum())
-    print(f"pattern_validation: {len(result)} bars scanned, {n_detections} total pattern detections.")
+    print(
+        f"pattern_validation: {len(result)} bars scanned, {n_detections} total pattern detections."
+    )
     return 0
 
 

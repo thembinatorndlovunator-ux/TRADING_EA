@@ -8,10 +8,18 @@ this project's reference materials (candlestick/SMC PDFs, baseline EA
 source, the rule-based scoring logic already built), to improve signal
 quality — exported as ONNX and consumed by the live MQL5 EA for signal
 scoring/filtering. **Order execution remains entirely inside MQL5's
-existing, already-built risk infrastructure** (OrderManager, cooldown,
-daily/weekly limits, drawdown controller) — Python never talks to the
-broker. This is the user's explicit architecture choice (2026-07-21),
-matching TASK-028's own pre-existing "Offline-learning boundary" rule.
+risk infrastructure** (OrderManager (TASK-026), DailyWeeklyLimits.mqh,
+DrawdownController.mqh — all already built and tested standalone; plus
+cooldown/durable-intent/regime-gating once TASK-034 builds and wires
+them) — Python never talks to the broker. **Corrected, 2026-07-22 Codex
+review finding (third round):** this previously called cooldown
+"existing, already-built" infrastructure alongside the others — that is
+NOT true of cooldown, which does not exist yet at all (TASK-034 builds
+it from scratch; see that task file's own Objective), and this task's
+"never bypass cooldown" acceptance criterion is only checkable once
+TASK-034 has actually shipped it. This is the user's explicit
+architecture choice (2026-07-21), matching TASK-028's own pre-existing
+"Offline-learning boundary" rule.
 
 ## Reason
 

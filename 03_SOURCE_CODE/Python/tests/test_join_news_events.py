@@ -40,8 +40,15 @@ def test_missing_journal_dir_raises(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     with pytest.raises(FileNotFoundError):
         run(tmp_path / "missing_journal", news_path)
@@ -156,8 +163,13 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     out_csv = tmp_path / "out" / "joined.csv"
     summary_json = tmp_path / "out" / "summary.json"
     run(
-        tmp_path, news_path, output_csv=out_csv, summary_json=summary_json,
-        currency="USD", seed=1, repo_path=REPO_ROOT,
+        tmp_path,
+        news_path,
+        output_csv=out_csv,
+        summary_json=summary_json,
+        currency="USD",
+        seed=1,
+        repo_path=REPO_ROOT,
     )
 
     assert out_csv.exists()
@@ -175,8 +187,15 @@ def test_cli_main_success(tmp_path, capsys):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     exit_code = main(["--journal-dir", str(tmp_path), "--news-events-csv", str(news_path)])
     assert exit_code == 0
@@ -187,8 +206,15 @@ def test_cli_main_missing_journal_dir(tmp_path, capsys):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     exit_code = main(
         ["--journal-dir", str(tmp_path / "missing"), "--news-events-csv", str(news_path)]
@@ -203,10 +229,20 @@ def test_duplicate_event_id_rejected(tmp_path):
     _write_news(
         news_path,
         [
-            {"event_id": "dup", "event_name": "NFP", "currency": "USD", "importance": 2,
-             "scheduled_utc": "2026-07-21T14:10:00Z"},
-            {"event_id": "dup", "event_name": "NFP revision", "currency": "USD", "importance": 2,
-             "scheduled_utc": "2026-07-21T14:10:00Z"},
+            {
+                "event_id": "dup",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            },
+            {
+                "event_id": "dup",
+                "event_name": "NFP revision",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            },
         ],
     )
     with pytest.raises(CsvSchemaError):
@@ -218,24 +254,127 @@ def test_non_finite_importance_rejected(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": float("nan"),
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": float("nan"),
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(tmp_path, news_path)
 
 
-def test_importance_out_of_range_rejected(tmp_path):
-    """Regression for a Codex review finding (2026-07-22): 'importance'
-    was only checked for finiteness, not for matching MT5's actual
-    ENUM_CALENDAR_EVENT_IMPORTANCE range ([0, 3])."""
+def test_duplicate_journal_decisions_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    this script never ran the journal duplicate detectors -- two
+    identical valid decisions were counted TWICE, silently biasing the
+    blackout count."""
+
+    dup_record = make_valid_record(signal_id="dup-1")
+    _write_journal(tmp_path, [dup_record, dup_record])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_importance_beyond_mt5_range_is_valid_provider_neutral_ordinal(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    NewsManager.mqh's own SNewsEvent docstring states 'importance' is a
+    PROVIDER-NEUTRAL ordinal ("whatever scale the provider uses"), not
+    hard-limited to MT5's own [0, 3] ENUM_CALENDAR_EVENT_IMPORTANCE range
+    -- a value of 5 (e.g. from a differently-scaled provider such as the
+    FairEconomy feed) must be accepted, not rejected as "out of range"."""
 
     _write_journal(tmp_path, [make_valid_record()])
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 5,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 5,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    result = run(tmp_path, news_path, min_importance=0)
+    assert result.n_news_events_considered == 1
+
+
+def test_negative_importance_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": -1,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_non_integer_importance_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 1.5,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path)
+
+
+def test_boolean_importance_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    Python booleans (a subtype of int) were previously admitted silently
+    as 0/1 instead of rejected as the wrong type entirely."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": True,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(tmp_path, news_path)
@@ -256,8 +395,15 @@ def test_invalid_journal_records_surfaced_not_silently_dropped(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
 
     errors_json = tmp_path / "out" / "errors.json"
@@ -278,11 +424,49 @@ def test_cli_reports_nonzero_exit_when_errors_present(tmp_path, capsys):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     exit_code = main(["--journal-dir", str(tmp_path), "--news-events-csv", str(news_path)])
     assert exit_code == 1
+
+
+def test_errors_auto_persisted_even_without_explicit_errors_json(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    row-level invalid-journal details were previously persisted ONLY if
+    the caller happened to request errors_json explicitly."""
+
+    bad_record = make_valid_record()
+    bad_record["market_family"] = ""
+    _write_journal(tmp_path, [bad_record])
+    news_path = tmp_path / "news.csv"
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    out_dir = tmp_path / "out"
+    output_csv = out_dir / "joined.csv"
+    run(tmp_path, news_path, output_csv=output_csv)
+
+    errors_path = out_dir / "joined.errors.json"
+    assert errors_path.exists()
+    payload = json.loads(errors_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["n_validation_errors"] == 1
 
 
 def test_output_inside_journal_dir_rejected(tmp_path):
@@ -294,8 +478,15 @@ def test_output_inside_journal_dir_rejected(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(tmp_path, news_path, output_csv=tmp_path / "joined.csv")
@@ -309,8 +500,15 @@ def test_naive_news_timestamp_rejected(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00"}],  # no "Z"
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00",
+            }
+        ],  # no "Z"
     )
     with pytest.raises(TimezoneValidationError):
         run(tmp_path, news_path)
@@ -321,8 +519,15 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     with pytest.raises(CsvSchemaError):
         run(tmp_path, news_path, output_csv=news_path)
@@ -337,8 +542,15 @@ def test_dataset_hash_includes_journal_files_not_just_news(tmp_path):
     news_path = tmp_path / "news.csv"
     _write_news(
         news_path,
-        [{"event_id": "e1", "event_name": "NFP", "currency": "USD", "importance": 2,
-          "scheduled_utc": "2026-07-21T14:10:00Z"}],
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
     )
     summary_json_a = tmp_path / "out_a" / "summary.json"
     run(tmp_path, news_path, summary_json=summary_json_a, currency="USD", repo_path=REPO_ROOT)

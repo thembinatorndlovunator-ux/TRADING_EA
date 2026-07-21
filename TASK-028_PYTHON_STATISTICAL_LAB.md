@@ -8,9 +8,13 @@ research, walk-forward analysis, Monte Carlo analysis, and offline-learning
 validation.
 
 This is the primary Python implementation task from master-prompt sections 19
-and 23 Phase 9. It also owns Python work explicitly deferred by earlier tasks,
-especially TASK-016's regime fixtures/confusion matrix and TASK-024's score-
-correlation validation.
+and 23 Phase 9. It also owns Python work explicitly deferred by earlier tasks
+(especially TASK-016's regime fixtures/confusion matrix) plus the master
+prompt's own directly-required score-correlation audit (lines 747-757 —
+corrected, 2026-07-22 Codex review finding, third round: this previously
+misattributed the correlation requirement to TASK-024, which deferred a
+different gap, three missing score components, not a correlation audit;
+see `TASK-032_SCORE_CORRELATION_ANALYSIS.md`'s own correction).
 
 ## Reason
 
@@ -38,7 +42,10 @@ or automatic rewriting of EA source, parameters, set files, or model weights.
 - `TEST_PLAN.md` - metrics, partitions, robustness tests, and rejection gates.
 - `TASK-016_MARKET_REGIME_ENGINE.md` - deferred regime fixtures/confusion
   matrix.
-- Master-prompt section 11 and TASK-024 - score-correlation audit.
+- `00_MASTER_PROMPT_FOR_CLAUDE.md:747-757` - score-correlation audit
+  requirement (corrected, 2026-07-22 Codex review finding, third round:
+  not TASK-024, which deferred a different gap — see
+  `TASK-032_SCORE_CORRELATION_ANALYSIS.md`'s own correction).
 - `TRADE_DECISION_SCHEMA.json` and TASK-009 - journal input contract.
 - `requirements.txt` - currently declared Python dependencies.
 
@@ -278,8 +285,9 @@ exists. Flagged as a needed future MQL5 task, not silently worked around.
   `monte_carlo.py`, `pattern_validation.py`, `compare_releases.py`.
 - All 10 required notebooks.
 - Deferred validation: regime confusion matrix (TASK-016), score-
-  correlation analysis (TASK-024), candlestick/chart-pattern validation
-  against MQL5 fixtures, MFE/MAE fixtures.
+  correlation analysis (master prompt lines 747-757, not TASK-024 —
+  corrected, 2026-07-22 Codex review finding, third round), candlestick/
+  chart-pattern validation against MQL5 fixtures, MFE/MAE fixtures.
 - `03_SOURCE_CODE/Python/news_connectors/` — empty, no adapter built yet
   (needs `join_news_events.py` first, which needs an agreed news-event
   export format from the MQL5 side — `NewsManager.mqh`, TASK-029, has no
@@ -328,14 +336,26 @@ findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — two independent review rounds
-completed** (2026-07-21 and 2026-07-22; see
+**Codex, via `/code-review ultra` — three independent review rounds
+completed** (2026-07-21, 2026-07-22, 2026-07-22; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
-round). Round 1: 15 findings (2 P0/11 P1/2 P2), all resolved. Round 2: 16
-findings (2 P0/11 P1/3 P2), all resolved — see the "part 4" remediation
-notes below. A third review round should be requested once the user is
-ready, per Codex's own stated disposition each time real correctness
-issues are found.
+round). Round 1: 15 findings (2 P0/11 P1/2 P2), remediation applied with
+regression tests. Round 2: 16 findings (2 P0/11 P1/3 P2), remediation
+applied with regression tests — see the "part 4" remediation notes
+below. **Round 3 independently confirmed most of rounds 1-2's fixes**
+(see that review's own "Corrections independently confirmed" section --
+walk-forward, baseline/release comparison, giveback/MFE finite checks,
+bootstrap CI validation, the Wilson interval, Monte Carlo's minimum-
+trade-count and caveats, path-collision/atomic-write handling, CSV/JSON
+hardening, journal reading, and all declared quality-gate commands were
+all independently verified genuinely improved or resolved), while also
+surfacing 17 NEW findings (3 P0/10 P1/4 P2) against the round-2 HEAD —
+**corrected, 2026-07-22 Codex review finding, third round: prior wording
+here declared rounds 1-2 "all resolved" before any independent review
+had confirmed it; "remediation applied, pending independent review" is
+the honest phrasing until a review actually runs.** Round 3's 17
+findings are being remediated now; a fourth review round should be
+requested once the user is ready.
 
 ## Implementation notes (Claude, part 2 of N — completes the 9 scripts + 10 notebooks)
 
@@ -369,10 +389,14 @@ different task's deferred item, and built all ten required notebooks.
    explicitly documents the i.i.d.-resampling simplification (no
    trade-sequence autocorrelation).
 8. **`pattern_validation.py`** — Python ports of 4 of
-   `CandlestickPatternEngine.mqh`'s 18 pattern functions (bullish/bearish
-   pin bar incl. TASK-017's fix, bullish/bearish engulfing); explicitly
-   partial, and cross-checking against a real MQL5-exported
-   detector-results CSV is not yet possible (no such export exists).
+   `CandlestickPatternEngine.mqh`'s 20 detector/predicate functions (19
+   `CP_Is*Array` boolean predicates plus the non-boolean
+   `CP_DetectHaramiArray` helper — corrected count, 2026-07-22 Codex
+   review finding, third round; this previously said "18") — the 4
+   ported are bullish/bearish pin bar incl. TASK-017's fix, bullish/
+   bearish engulfing; explicitly partial, and cross-checking against a
+   real MQL5-exported detector-results CSV is not yet possible (no such
+   export exists).
 9. **`compare_releases.py`** — two-sample bootstrap CI on the win-rate/
    expectancy difference between two releases; never declares a release
    "better" automatically. Its own test suite incidentally demonstrates
@@ -412,8 +436,13 @@ section per rule 7:
 
 1. `01_baseline_trade_audit.ipynb` → `analyse_baseline.py`
 2. `02_profit_giveback_analysis.ipynb` → `analyse_giveback.py`
-3. `03_strategy_regime_analysis.ipynb` → `regime_validation.py`
-4. `04_session_and_news_analysis.ipynb` → `join_news_events.py`
+3. `03_strategy_regime_analysis.ipynb` → `regime_validation.py` +
+   `performance_breakdown.py` (added, 2026-07-22 remediation, third round
+   -- this mapping previously omitted `performance_breakdown.py`, which
+   this notebook also calls; a stale mapping fixed per Codex review
+   finding #17)
+4. `04_session_and_news_analysis.ipynb` → `join_news_events.py` +
+   `performance_breakdown.py` (same fix as row 3 above)
 5. `05_mfe_mae_exit_analysis.ipynb` → `calculate_mfe_mae.py`
 6. `06_parameter_stability.ipynb` → `parameter_stability.py` (real giveback-guard
    parameter sweep, as of the 2026-07-22 remediation -- previously misattributed
@@ -435,10 +464,14 @@ of the paired-notebook pattern, not one of these ten.)
   batched per TASK-025/027) exist in this project yet. Every "Real-data
   run: PENDING" note across all 11 notebooks is the honest, current state.
 - **Deferred validation from the original spec, still open:** score-
-  component correlation analysis (TASK-024's deferred item) has no
-  dedicated module yet. Candlestick/chart-pattern validation is only
-  4-of-18 patterns deep, and chart patterns (double top/bottom,
-  head-and-shoulders) are not ported at all.
+  component correlation analysis (master prompt lines 747-757's own
+  requirement, not TASK-024's deferred item — corrected, 2026-07-22
+  Codex review finding, third round) has no dedicated module yet.
+  Candlestick/chart-pattern validation is only
+  4-of-20 patterns deep (corrected count, 2026-07-22 Codex review
+  finding, third round; this previously said "4-of-18"), and chart
+  patterns (double top/bottom, head-and-shoulders) are not ported at
+  all.
 - **`03_SOURCE_CODE/Python/news_connectors/`** remains empty — no
   offline/cached adapter built (would need an agreed news-event export
   format from the MQL5 side first).
@@ -480,9 +513,14 @@ bonus module (`regime_validation.py`) partially addresses TASK-016's
 deferred item (7 of 9 states, formula-only, no gating/hysteresis, no
 confusion matrix against real evidence — full completion now tracked as
 `TASK-031_REGIME_VALIDATION_COMPLETION.md`). Two full independent Codex
-review rounds completed, 31 total findings across both, all resolved
-with regression tests reproducing each reported counterexample. 340
-tests passing, ruff and mypy both clean.**
+review rounds completed, 31 total findings across both, remediation
+applied with regression tests reproducing each reported counterexample
+(340 tests passing, ruff and mypy both clean at the time) — **a third
+independent review round subsequently confirmed most of this genuinely
+resolved (see the Reviewer section above) while surfacing 17 further
+findings, remediated separately; corrected, 2026-07-22 Codex review
+finding, third round: this line previously said "all resolved" before
+any independent confirmation had actually happened.**
 
 ## Implementation notes (Claude, part 3 of N — Codex review remediation)
 
@@ -505,11 +543,15 @@ rather than staying an undifferentiated backlog bullet are now:
 - `TASK-031_REGIME_VALIDATION_COMPLETION.md` — full 9-state coverage,
   gating/hysteresis, confusion matrix against real independently-labelled
   evidence.
-- `TASK-032_SCORE_CORRELATION_ANALYSIS.md` — TASK-024's deferred
-  score-component correlation audit (BOS/displacement, pin-bar/wick, EMA
-  evidence correlation).
-- `TASK-033_PATTERN_VALIDATION_COMPLETION.md` — the remaining 14 of 18
-  candlestick patterns and all chart patterns (double top/bottom,
+- `TASK-032_SCORE_CORRELATION_ANALYSIS.md` — the master prompt's own
+  score-component correlation audit requirement (lines 747-757, not
+  TASK-024's deferred item — corrected, 2026-07-22 Codex review finding,
+  third round; see that task file's own correction) (BOS/displacement,
+  pin-bar/wick, EMA evidence correlation).
+- `TASK-033_PATTERN_VALIDATION_COMPLETION.md` — the remaining 16 of 20
+  candlestick detector/predicate functions (corrected count, 2026-07-22
+  Codex review finding, third round; this previously said "14 of 18")
+  and all chart patterns (double top/bottom,
   head-and-shoulders/inverse), cross-checked against real MQL5-exported
   detector results.
 

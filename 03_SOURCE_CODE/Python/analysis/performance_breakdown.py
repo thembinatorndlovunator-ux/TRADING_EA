@@ -37,12 +37,14 @@ journal-decision + outcome record, not a raw MT5 export).
 
 **Real-data run: PENDING.** Producing this unified CSV requires joining
 a journal decision to its eventual trade outcome by a durable
-signal/order/deal identity -- unimplemented in this project today (no
-``order_id``/``deal_id`` field exists anywhere yet; tracked as a
-numbered follow-up). Every dimension this script groups by is
-genuinely optional except ``profit`` -- a caller with only SOME
-dimensions populated (e.g. symbol/direction but not strategy/session)
-still gets a real, correct breakdown over whichever dimensions it has.
+signal/order/deal identity -- **the join pipeline itself now exists and
+is tested** (``analysis/join_signal_to_outcome.py``, 2026-07-22), but it
+is still blocked on the live EA actually POPULATING `order_id`/`deal_id`
+(tracked as `TASK-036_JOURNAL_PRODUCER_COMPLETION.md`). Every dimension
+this script groups by is genuinely optional except ``profit`` -- a
+caller with only SOME dimensions populated (e.g. symbol/direction but
+not strategy/session) still gets a real, correct breakdown over
+whichever dimensions it has.
 """
 
 from __future__ import annotations
@@ -59,8 +61,11 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
     assert_unique_ids,
+    atomic_write_dataframe_csv,
     read_csv_with_required_columns,
+    sanitize_dataframe_for_csv,
 )
 from analysis.metrics import InsufficientSampleError, expectancy, profit_factor, win_rate
 from analysis.report_metadata import atomic_write_text, build_report_metadata
@@ -69,9 +74,22 @@ from analysis.time_utils import parse_utc_series
 REQUIRED_COLUMNS = {"trade_id", "profit"}
 NUMERIC_COLUMNS = ("profit",)
 # Every dimension a caller MAY group by -- present/absent independently.
+# **Extended, 2026-07-22 Codex review finding (third round): 'intraday_mode'
+# and 'news_state'/'in_news_blackout' were missing entirely, despite the
+# master prompt naming mode and news-window explicitly among the required
+# breakdown dimensions.**
 OPTIONAL_DIMENSIONS = (
-    "symbol", "direction", "strategy", "setup", "regime", "session_state",
-    "hour_of_day", "day_of_week",
+    "symbol",
+    "direction",
+    "strategy",
+    "setup",
+    "regime",
+    "session_state",
+    "intraday_mode",
+    "news_state",
+    "in_news_blackout",
+    "hour_of_day",
+    "day_of_week",
 )
 
 
@@ -92,12 +110,25 @@ def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str]) -> pd.DataFrame:
-    """Groups 'df' by 'dimensions' (a subset of OPTIONAL_DIMENSIONS
-    actually present in df.columns) and computes win_rate (+ Wilson CI),
-    expectancy in dollars (+ bootstrap CI where n>=2), and profit_factor
-    per group. Raises ValueError if 'dimensions' is empty or any entry is
-    not an actual column of 'df'.
+def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str], seed: int = 42) -> pd.DataFrame:
+    """Groups 'df' by 'dimensions' (each one MUST be a member of
+    OPTIONAL_DIMENSIONS -- **fixed, 2026-07-22 Codex review finding
+    (third round): this previously accepted ANY column present in 'df',
+    including 'trade_id' or 'profit' themselves, as long as it existed --
+    not the documented restricted dimension set**) and computes win_rate
+    (+ Wilson CI), expectancy in dollars (+ bootstrap CI where n>=2), and
+    -- when 'df' has an 'r_multiple' column -- R-expectancy too
+    (**fixed, 2026-07-22 Codex review finding (third round): the
+    documented r_multiple input was previously accepted but never used,
+    so only dollar expectancy was ever reported**), and profit_factor per
+    group. Raises ValueError if 'dimensions' is empty, contains a column
+    not in OPTIONAL_DIMENSIONS, or a named dimension is not actually
+    present in 'df'.
+
+    'seed' feeds every per-group expectancy bootstrap -- **fixed,
+    2026-07-22 Codex review finding (third round): this function
+    previously ignored the caller's seed entirely and always used
+    expectancy()'s own hidden default.**
 
     A group with n==0 cannot occur (groupby only yields groups with at
     least one row); a group of n==1 still reports a point expectancy with
@@ -107,9 +138,16 @@ def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str]) -> pd.DataFra
 
     if not dimensions:
         raise ValueError("compute_breakdown: at least one dimension is required")
+    not_allowed = [d for d in dimensions if d not in OPTIONAL_DIMENSIONS]
+    if not_allowed:
+        raise ValueError(
+            f"compute_breakdown: dimension(s) not in OPTIONAL_DIMENSIONS: {not_allowed}"
+        )
     missing = [d for d in dimensions if d not in df.columns]
     if missing:
         raise ValueError(f"compute_breakdown: dimension(s) not present in data: {missing}")
+
+    has_r_multiple = "r_multiple" in df.columns
 
     rows = []
     for group_key, group_df in df.groupby(list(dimensions), dropna=False):
@@ -124,10 +162,20 @@ def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str]) -> pd.DataFra
         row["win_rate_ci_lower"] = wr.ci_lower
         row["win_rate_ci_upper"] = wr.ci_upper
 
-        exp = expectancy(profits)
+        exp = expectancy(profits, seed=seed)
         row["expectancy_dollars"] = exp.expectancy
         row["expectancy_ci_lower"] = exp.ci_lower
         row["expectancy_ci_upper"] = exp.ci_upper
+
+        if has_r_multiple:
+            exp_r = expectancy(group_df["r_multiple"].tolist(), seed=seed)
+            row["expectancy_r"] = exp_r.expectancy
+            row["expectancy_r_ci_lower"] = exp_r.ci_lower
+            row["expectancy_r_ci_upper"] = exp_r.ci_upper
+        else:
+            row["expectancy_r"] = None
+            row["expectancy_r_ci_lower"] = None
+            row["expectancy_r_ci_upper"] = None
 
         pf = profit_factor(profits)
         row["profit_factor"] = pf.profit_factor
@@ -135,8 +183,17 @@ def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str]) -> pd.DataFra
         rows.append(row)
 
     columns = list(dimensions) + [
-        "n_trades", "win_rate", "win_rate_ci_lower", "win_rate_ci_upper",
-        "expectancy_dollars", "expectancy_ci_lower", "expectancy_ci_upper", "profit_factor",
+        "n_trades",
+        "win_rate",
+        "win_rate_ci_lower",
+        "win_rate_ci_upper",
+        "expectancy_dollars",
+        "expectancy_ci_lower",
+        "expectancy_ci_upper",
+        "expectancy_r",
+        "expectancy_r_ci_lower",
+        "expectancy_r_ci_upper",
+        "profit_factor",
     ]
     result = pd.DataFrame(rows, columns=columns)
     return result.sort_values(list(dimensions)).reset_index(drop=True)
@@ -149,7 +206,7 @@ def run(
     summary_json: Optional[Path] = None,
     *,
     symbol: Optional[str] = None,
-    seed: Optional[int] = None,
+    seed: int = 42,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Reads 'trades_csv' (the unified joined schema -- see module
@@ -157,11 +214,17 @@ def run(
     CsvSchemaError if a required column is missing/duplicate/non-finite,
     or if 'dimensions' contains a column not present in the file.
     Raises InsufficientSampleError if the file has zero rows.
+
+    'seed' is threaded to every per-group expectancy bootstrap -- **fixed,
+    2026-07-22 Codex review finding (third round): this recorded the
+    supplied seed in metadata but never actually passed it to
+    compute_breakdown(), which always used a hidden default instead.**
     """
 
+    # Uses OS-level file-identity (not just Path.resolve()) so a hard
+    # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, summary_json):
-        if out_path is not None and out_path.resolve() == trades_csv.resolve():
-            raise CsvSchemaError(f"output path {out_path} must not be the same as the input trades_csv")
+        assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
     trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
@@ -169,17 +232,25 @@ def run(
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
     assert_finite_columns(trades, NUMERIC_COLUMNS, trades_csv)
+    if "r_multiple" in trades.columns:
+        assert_finite_columns(trades, ["r_multiple"], trades_csv)
 
     trades = _derive_time_dimensions(trades)
-    result = compute_breakdown(trades, dimensions)
+    result = compute_breakdown(trades, dimensions, seed=seed)
 
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        result.to_csv(output_csv, index=False)
+        # Dimension values (strategy, setup, regime, session_state, etc.)
+        # are caller/journal-controlled strings -- sanitized against
+        # spreadsheet-formula injection before export (Codex review
+        # finding, 2026-07-22, third round).
+        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(result), output_csv)
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
-        metadata = build_report_metadata([trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path)
+        metadata = build_report_metadata(
+            [trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+        )
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -200,7 +271,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--symbol", default=None)
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     return parser
 
 

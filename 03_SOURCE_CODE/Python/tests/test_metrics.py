@@ -96,6 +96,18 @@ def test_expectancy_hand_computed():
     assert result.ci_lower <= result.expectancy <= result.ci_upper
 
 
+def test_expectancy_rejects_non_finite_value_even_at_n_equals_1():
+    """Regression for a Codex review finding (2026-07-22, third round):
+    the n==1 branch previously ran BEFORE any finiteness check, so
+    expectancy([NaN]) silently returned a NaN expectancy instead of a
+    visible error."""
+
+    with pytest.raises(ValueError):
+        expectancy([float("nan")])
+    with pytest.raises(ValueError):
+        expectancy([1.0, float("inf"), 3.0])
+
+
 def test_expectancy_single_observation_has_no_estimable_uncertainty():
     """Regression for a Codex review finding (2026-07-22): reporting
     std_dev=0.0 for a single observation is FALSE PRECISION -- spread is
@@ -124,6 +136,17 @@ def test_profit_factor_hand_computed():
     assert result.profit_factor == pytest.approx(4.0)
     assert result.n_wins == 2
     assert result.n_losses == 1
+
+
+def test_profit_factor_rejects_non_finite_value():
+    """Regression for a Codex review finding (2026-07-22, third round):
+    profit_factor([NaN]) previously returned an "undefined" (None)
+    factor with zero wins/losses since NaN > 0 and NaN < 0 are both
+    False in Python -- silently classifying a NaN as neither, instead of
+    raising."""
+
+    with pytest.raises(ValueError):
+        profit_factor([float("nan")])
 
 
 def test_profit_factor_no_losses_is_none_not_infinity():

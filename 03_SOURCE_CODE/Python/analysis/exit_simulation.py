@@ -16,7 +16,11 @@ from typing import Literal, Optional, Sequence
 
 
 def should_giveback_close_v637(
-    current_r: float, peak_r: float, arm_rr: float, giveback_percent: float, close_trigger_floor_r: float
+    current_r: float,
+    peak_r: float,
+    arm_rr: float,
+    giveback_percent: float,
+    close_trigger_floor_r: float,
 ) -> bool:
     """Direct port of ExitManager.mqh's EM_ShouldGivebackCloseV637."""
 
@@ -32,7 +36,9 @@ def should_giveback_close_v637(
     return current_r <= trigger_r
 
 
-def should_giveback_close_v811(current_r: float, peak_r: float, arm_r: float, floor_r: float) -> bool:
+def should_giveback_close_v811(
+    current_r: float, peak_r: float, arm_r: float, floor_r: float
+) -> bool:
     """Direct port of ExitManager.mqh's EM_ShouldGivebackCloseV811."""
 
     effective_arm = max(0.3, arm_r)

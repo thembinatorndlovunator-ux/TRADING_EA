@@ -109,7 +109,9 @@ def test_different_seed_can_differ():
 
 
 def test_ruin_threshold_none_gives_none_prob_ruin():
-    result = run_monte_carlo(VALID_PNL_20, n_resamples=100, seed=1, starting_balance=100.0, ruin_threshold=None)
+    result = run_monte_carlo(
+        VALID_PNL_20, n_resamples=100, seed=1, starting_balance=100.0, ruin_threshold=None
+    )
     assert result.prob_ruin is None
     assert result.prob_ruin_ci_lower is None
     assert result.prob_ruin_ci_upper is None
@@ -122,7 +124,9 @@ def test_ruin_threshold_reachable_gives_positive_probability_with_ci():
     # 20-element pool containing one large loss, the chance of NEVER
     # drawing it in a way that triggers ruin is negligible.
     pnl = [-100.0] + [50.0] * 19
-    result = run_monte_carlo(pnl, n_resamples=500, seed=3, starting_balance=60.0, ruin_threshold=0.0)
+    result = run_monte_carlo(
+        pnl, n_resamples=500, seed=3, starting_balance=60.0, ruin_threshold=0.0
+    )
     assert result.prob_ruin is not None
     assert 0.0 < result.prob_ruin <= 1.0
     assert result.prob_ruin_ci_lower <= result.prob_ruin <= result.prob_ruin_ci_upper
@@ -176,9 +180,9 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
 
 def test_run_writes_output_json(tmp_path):
     path = tmp_path / "trades.csv"
-    pd.DataFrame(
-        {"trade_id": [f"t{i}" for i in range(20)], "profit": VALID_PNL_20}
-    ).to_csv(path, index=False)
+    pd.DataFrame({"trade_id": [f"t{i}" for i in range(20)], "profit": VALID_PNL_20}).to_csv(
+        path, index=False
+    )
     output_json = tmp_path / "out" / "mc.json"
 
     result = run(
@@ -192,11 +196,36 @@ def test_run_writes_output_json(tmp_path):
     assert result.n_trades == 20
 
 
+def test_run_json_output_self_describes_percentile_scenario_bound_caveat(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, third round):
+    the module/dataclass docstrings already explained that
+    final_balance_ci_*/max_drawdown_pct_ci_* are percentile scenario
+    bounds, not a conventional confidence interval -- but that caveat
+    lived only in prose, never in the machine-readable JSON artifact a
+    downstream tool would actually consume."""
+
+    path = tmp_path / "trades.csv"
+    pd.DataFrame({"trade_id": [f"t{i}" for i in range(20)], "profit": VALID_PNL_20}).to_csv(
+        path, index=False
+    )
+    output_json = tmp_path / "out" / "mc.json"
+
+    run(path, n_resamples=100, seed=1, output_json=output_json, repo_path=REPO_ROOT)
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["bound_type"] == "percentile_scenario_bound"
+    assert "iid" in payload["model"] or "bootstrap" in payload["model"]
+    assert (
+        "not a conventional statistical" in payload["caveat"]
+        or "NOT a conventional statistical" in payload["caveat"]
+    )
+
+
 def test_cli_main_success(tmp_path, capsys):
     path = tmp_path / "trades.csv"
-    pd.DataFrame(
-        {"trade_id": [f"t{i}" for i in range(20)], "profit": VALID_PNL_20}
-    ).to_csv(path, index=False)
+    pd.DataFrame({"trade_id": [f"t{i}" for i in range(20)], "profit": VALID_PNL_20}).to_csv(
+        path, index=False
+    )
     exit_code = main(["--trades-csv", str(path), "--seed", "1", "--n-resamples", "100"])
     assert exit_code == 0
     assert "n_trades=20" in capsys.readouterr().out

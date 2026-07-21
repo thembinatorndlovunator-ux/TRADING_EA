@@ -34,6 +34,11 @@ must not be modified.
 - `03_SOURCE_CODE/MQL5/Include/ThembaEA/Patterns/CandlestickPatternEngine.mqh`
   -- has no CSV/export function for detector results (needed for
   TASK-033's real cross-check).
+- `03_SOURCE_CODE/MQL5/.../ChartPatternEngine.mqh` -- likewise has no
+  export function, and is likewise needed for TASK-033's real cross-check
+  (added, 2026-07-22 Codex review finding, third round -- previously
+  omitted from this Evidence list despite TASK-033 deferring its
+  cross-check here too).
 - `03_SOURCE_CODE/MQL5/Include/ThembaEA/News/NewsManager.mqh` -- no
   CSV/SQLite deterministic-backtest provider exists (TASK-029's own
   explicitly deferred item).
@@ -54,8 +59,32 @@ must not be modified.
 3. **Pattern-detector export**: a new function on
    `CandlestickPatternEngine.mqh` that writes each pattern predicate's
    per-bar boolean result to CSV in the `k, <pattern_name>...` shape
-   `pattern_validation.compare_to_mql5_export` already expects.
-4. Every export must itself follow this project's reproducibility
+   `pattern_validation.compare_to_mql5_export` already expects. **Added,
+   2026-07-22 Codex review finding (third round): this item previously
+   named only `CandlestickPatternEngine.mqh` -- `TASK-033_PATTERN_
+   VALIDATION_COMPLETION.md` explicitly defers BOTH the candlestick AND
+   the chart-pattern real MQL5-export cross-check to this task (its own
+   Objective/Out-of-scope say so), so this export must ALSO cover
+   `ChartPatternEngine.mqh` (double top/bottom, head-and-shoulders/
+   inverse) in the same per-bar boolean CSV shape -- a candlestick-only
+   export would leave TASK-033's chart-pattern cross-check with no data
+   source to run against.**
+4. **Regime-dataset labelling protocol (added, 2026-07-22 Codex review
+   finding, third round -- previously unspecified entirely, leaving
+   acceptance criterion "a real, independently-labelled regime dataset
+   is produced" with no actual protocol to satisfy it):** the
+   "independently-labelled" ground truth for `regime_validation.
+   build_confusion_matrix` cannot be the live EA's own
+   `MarketRegimeEngine.mqh` output (that would be comparing the
+   classifier against itself, not an independent label). Define and
+   document a real labelling protocol here -- e.g. a human analyst
+   hand-labelling a real historical chart segment bar-by-bar against the
+   spec's own nine-state definitions (section 2), BEFORE looking at what
+   the engine outputs for those same bars, with the labelling
+   methodology and labeller identity recorded in the resulting dataset's
+   provenance. Do not accept a self-referential or synthetic-fixture
+   substitute as satisfying this.
+5. Every export must itself follow this project's reproducibility
    contract (explicit paths, no hidden state, visible failures on
    malformed source data) -- these are pipelines like any other, not a
    special exemption.
@@ -104,10 +133,14 @@ No file under `01_BASELINE/` may be modified.
       by `join_news_events.py` without modification.
 - [ ] Pattern-detector export produces a real per-bar CSV consumable by
       `pattern_validation.compare_to_mql5_export` without modification,
-      AND `compare_to_mql5_export` is actually run against it with the
-      result reported (this closes the real-evidence obligation
-      `TASK-033` explicitly deferred here).
-- [ ] A real, independently-labelled regime dataset is produced and
+      covering BOTH candlestick (`CandlestickPatternEngine.mqh`) AND
+      chart patterns (`ChartPatternEngine.mqh` -- added, 2026-07-22 Codex
+      review finding, third round), AND `compare_to_mql5_export` is
+      actually run against both with the result reported (this closes
+      the real-evidence obligation `TASK-033` explicitly deferred here).
+- [ ] A real, independently-labelled regime dataset is produced using
+      the labelling protocol defined in Specification item 4 (added,
+      2026-07-22 Codex review finding, third round) and
       `regime_validation.build_confusion_matrix` is actually run against
       it with the result reported (this closes the real-evidence
       obligation `TASK-031` explicitly deferred here).
