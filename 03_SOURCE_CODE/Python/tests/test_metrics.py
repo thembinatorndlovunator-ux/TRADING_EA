@@ -7,6 +7,7 @@ import pytest
 from analysis.metrics import (
     InsufficientSampleError,
     bootstrap_confidence_interval,
+    compute_max_drawdown,
     expectancy,
     profit_factor,
     wilson_confidence_interval,
@@ -170,3 +171,35 @@ def test_bootstrap_ci_different_seed_can_differ():
 def test_bootstrap_ci_rejects_unknown_statistic():
     with pytest.raises(ValueError):
         bootstrap_confidence_interval([1.0, 2.0, 3.0], statistic="mode", n_resamples=10, seed=1)
+
+
+# --- compute_max_drawdown ----------------------------------------------------
+
+
+def test_max_drawdown_empty_raises():
+    with pytest.raises(InsufficientSampleError):
+        compute_max_drawdown([])
+
+
+def test_max_drawdown_hand_computed():
+    # peak 120 (idx1) -> trough 90 (idx2): dd=30, 25%
+    # peak 130 (idx3) -> trough 80 (idx4): dd=50, 38.46% <- the larger one
+    curve = [100.0, 120.0, 90.0, 130.0, 80.0]
+    result = compute_max_drawdown(curve)
+    assert result.max_drawdown_abs == pytest.approx(50.0)
+    assert result.max_drawdown_pct == pytest.approx(50.0 / 130.0)
+    assert result.peak_index == 3
+    assert result.trough_index == 4
+
+
+def test_max_drawdown_monotonically_rising_is_zero():
+    result = compute_max_drawdown([100.0, 110.0, 120.0, 130.0])
+    assert result.max_drawdown_abs == 0.0
+    assert result.max_drawdown_pct == 0.0
+
+
+def test_max_drawdown_single_point():
+    result = compute_max_drawdown([100.0])
+    assert result.max_drawdown_abs == 0.0
+    assert result.peak_index == 0
+    assert result.trough_index == 0

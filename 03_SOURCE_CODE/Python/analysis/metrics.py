@@ -58,6 +58,14 @@ class BootstrapCiResult:
     seed: int
 
 
+@dataclass(frozen=True)
+class MaxDrawdownResult:
+    max_drawdown_abs: float  # peak-to-trough decline, always >= 0
+    max_drawdown_pct: float  # relative to the peak at that point, in [0, 1]
+    peak_index: int
+    trough_index: int
+
+
 def wilson_confidence_interval(successes: int, n: int, confidence: float = 0.95) -> tuple[float, float]:
     """The Wilson score interval for a binomial proportion -- preferred over
     the naive normal-approximation interval because it stays within [0, 1]
@@ -202,4 +210,44 @@ def bootstrap_confidence_interval(
         confidence=confidence,
         n_resamples=n_resamples,
         seed=seed,
+    )
+
+
+def compute_max_drawdown(equity_curve: Sequence[float]) -> MaxDrawdownResult:
+    """Maximum peak-to-trough decline over a chronologically-ordered
+    equity curve (the caller's responsibility to order correctly -- this
+    function does not know about timestamps). Tracks the running peak and,
+    at every point, the decline from that peak; the MAXIMUM such decline
+    (not merely the final one) is what's returned, per the standard
+    max-drawdown definition. Raises InsufficientSampleError if empty.
+    """
+
+    if not equity_curve:
+        raise InsufficientSampleError("compute_max_drawdown: empty equity curve")
+
+    peak = equity_curve[0]
+    peak_index = 0
+    max_dd_abs = 0.0
+    max_dd_pct = 0.0
+    best_peak_index = 0
+    best_trough_index = 0
+
+    for i, value in enumerate(equity_curve):
+        if value > peak:
+            peak = value
+            peak_index = i
+
+        dd_abs = peak - value
+        dd_pct = (dd_abs / peak) if peak != 0 else 0.0
+        if dd_abs > max_dd_abs:
+            max_dd_abs = dd_abs
+            max_dd_pct = dd_pct
+            best_peak_index = peak_index
+            best_trough_index = i
+
+    return MaxDrawdownResult(
+        max_drawdown_abs=max_dd_abs,
+        max_drawdown_pct=max_dd_pct,
+        peak_index=best_peak_index,
+        trough_index=best_trough_index,
     )
