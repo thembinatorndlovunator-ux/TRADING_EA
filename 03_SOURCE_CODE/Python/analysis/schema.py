@@ -33,7 +33,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, field_validator
 
 from analysis.time_utils import TimezoneValidationError, ensure_utc
 
@@ -71,24 +71,41 @@ class TradeDecision(BaseModel):
     market_family: Literal["METAL", "SYNTHETIC"]
     intraday_mode: Literal["SCALP", "DAY_TRADE"]
     regime: str
-    regime_confidence: float = Field(ge=0.0, le=100.0)
+    regime_confidence: StrictFloat = Field(ge=0.0, le=100.0)
     direction: Literal["BUY", "SELL", "NONE"]
     strategy: str
     setup: str
     candlestick_pattern: Optional[str] = None
     chart_pattern: Optional[str] = None
-    score: float = Field(ge=0.0, le=100.0)
+    score: StrictFloat = Field(ge=0.0, le=100.0)
     score_breakdown: dict = Field(default_factory=dict)
-    entry: Optional[float] = None
-    stop: Optional[float] = None
-    targets: list[float] = Field(default_factory=list)
-    risk_percent: float
+    entry: Optional[StrictFloat] = None
+    stop: Optional[StrictFloat] = None
+    targets: list[StrictFloat] = Field(default_factory=list)
+    risk_percent: StrictFloat
     news_state: str
     session_state: str
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_rejected: list[str] = Field(default_factory=list)
     ea_version: str
     git_commit: str
+
+    @field_validator("timestamp_utc", mode="before")
+    @classmethod
+    def _timestamp_must_be_string(cls, value: object) -> object:
+        # **Fixed, 2026-07-21 Codex review finding:** pydantic's default
+        # (non-strict) datetime coercion accepts a bare int/float as a Unix
+        # timestamp, even though the schema requires an ISO-8601 STRING
+        # (DJ_FormatIso8601Utc never emits anything else). Reproduced
+        # counterexample: `timestamp_utc=0` was silently converted to the
+        # 1970 Unix epoch instead of being rejected. This `mode="before"`
+        # check runs ahead of pydantic's own datetime parsing and rejects
+        # any non-string input outright.
+        if not isinstance(value, str):
+            raise ValueError(
+                f"timestamp_utc must be an ISO-8601 string, got {type(value).__name__}: {value!r}"
+            )
+        return value
 
     @field_validator("timestamp_utc")
     @classmethod
@@ -112,19 +129,42 @@ class TradeDecision(BaseModel):
 
     @field_validator("candlestick_pattern", "chart_pattern", mode="before")
     @classmethod
-    def _empty_string_stays_none(cls, value: object) -> object:
-        # DecisionJournal.mqh serializes "" as JSON null for these two
-        # fields specifically (see DJ_SerializeDecision) -- an empty string
-        # arriving here (rather than null) would indicate a serialization
-        # drift between the MQL5 and Python sides, so it is intentionally
-        # NOT normalized to None silently; only an actual null is accepted.
+    def _reject_empty_string(cls, value: object) -> object:
+        # **Fixed, 2026-07-21 Codex review finding:** this validator's own
+        # comment always said an empty string must be REJECTED (only JSON
+        # null is valid, per DJ_SerializeDecision's own convention -- see
+        # class docstring), but the code simply returned the value
+        # unchanged, so an empty string was silently accepted as if it
+        # were a normal (if unusual) pattern name -- a no-op that
+        # contradicted its own stated intent. Now actually raises.
+        if value == "":
+            raise ValueError(
+                "must be JSON null (not an empty string) when absent, per "
+                "DJ_SerializeDecision's own null-for-empty convention"
+            )
         return value
 
-    @field_validator("entry", "stop")
+    @field_validator("entry", "stop", "risk_percent")
     @classmethod
     def _finite_or_none(cls, value: Optional[float]) -> Optional[float]:
         if value is not None and not _is_finite(value):
-            raise ValueError("entry/stop must be a finite number or null")
+            raise ValueError("must be a finite number (or null for entry/stop)")
+        return value
+
+    @field_validator("targets")
+    @classmethod
+    def _targets_all_finite(cls, value: list[float]) -> list[float]:
+        # **Fixed, 2026-07-21 Codex review finding:** finiteness was
+        # previously checked only for entry/stop; risk_percent and every
+        # element of targets could carry NaN/Infinity straight through
+        # (regime_confidence/score happen to already reject NaN as a side
+        # effect of their ge/le bounds, since any comparison against NaN
+        # is False in Python, but that was never a deliberate, tested
+        # guarantee for targets or risk_percent). risk_percent is now
+        # covered by the shared validator above.
+        for v in value:
+            if not _is_finite(v):
+                raise ValueError(f"every target must be a finite number, got {v!r}")
         return value
 
 
