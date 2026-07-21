@@ -1,3 +1,11 @@
+[project]
+name = "themba-ea-python-lab"
+# time_utils.py's parse_iso8601_utc relies on datetime.fromisoformat
+# handling a trailing "Z" directly, a Python 3.11+ behavior -- this is
+# the actual minimum version this code depends on, not an arbitrary
+# floor. Developed and tested against 3.13.14 (see requirements.txt).
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
@@ -5,3 +13,11 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# Every notebook inserts the project root onto sys.path before importing
+# local packages (no notebook here gets pytest's pythonpath ini option),
+# so a module-level import genuinely cannot be "at the top of the file"
+# -- this is the standard, deliberate notebook pattern, not a lint
+# regression to chase away.
+"notebooks/*.ipynb" = ["E402"]

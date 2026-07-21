@@ -124,7 +124,7 @@ def parse_utc_series(values: "pd.Series") -> "pd.Series":  # noqa: F821 -- panda
     for index, raw in values.items():
         try:
             parsed.append(parse_iso8601_utc(str(raw)))
-        except (TimezoneValidationError, ValueError) as exc:
+        except (TimezoneValidationError, ValueError):
             bad_rows.append((index, raw))
             parsed.append(pd.NaT)
 

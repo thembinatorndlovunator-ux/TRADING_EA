@@ -177,7 +177,6 @@ def run(
         }
         for model in ("v637", "v811"):
             triggered = [c for c in comparisons if getattr(c, f"{model}_trigger_r") is not None]
-            helped = [c for c in triggered if getattr(c, f"{model}_r_diff") > 0.0]
             summary[model] = {
                 "n_triggered": len(triggered),
                 "n_not_triggered": len(comparisons) - len(triggered),

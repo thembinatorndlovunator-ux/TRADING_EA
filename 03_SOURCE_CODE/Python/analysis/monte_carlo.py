@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 
 from analysis.csv_io import CsvSchemaError, assert_finite_columns, assert_unique_ids, read_csv_with_required_columns
 from analysis.metrics import InsufficientSampleError, compute_max_drawdown, wilson_confidence_interval
