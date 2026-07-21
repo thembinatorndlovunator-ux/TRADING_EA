@@ -37,7 +37,13 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from analysis.csv_io import CsvSchemaError, read_csv_with_required_columns
+from analysis.csv_io import (
+    CsvSchemaError,
+    assert_finite_columns,
+    assert_high_low_geometry,
+    assert_unique_ids,
+    read_csv_with_required_columns,
+)
 
 CP_BODY_EPSILON = 0.00001
 CP_PIN_BAR_MIN_WICK_TO_BODY = 2.0
@@ -249,30 +255,73 @@ def compare_to_mql5_export(python_results: pd.DataFrame, mql5_export_csv: Path) 
     real MQL5-exported detector-results CSV (columns: k, <same pattern
     names as booleans>) and reports every row where they disagree.
 
+    **Fixed, 2026-07-21 Codex review finding:** previously used an INNER
+    merge, which silently drops any 'k' present in only one side --
+    reproduced counterexample: Python results at k=1 and an MQL5 export at
+    k=0 (i.e. the two datasets never actually overlap at all) returned an
+    EMPTY disagreement DataFrame, the strongest possible false "pass". A
+    duplicate 'k' on either side could also silently fan out into a
+    Cartesian join. Now requires exact, unique key coverage on both sides
+    (via an outer merge with an indicator column) and raises
+    CsvSchemaError -- not a silent comparison -- if either side has a key
+    the other lacks, or if either side has a duplicate key.
+
     **Not yet exercisable against real data** -- no MQL5 module in this
-    project currently exports pattern results to a file. Raises
+    project currently exports pattern results to a file. Also raises
     CsvSchemaError if the export is missing the 'k' column or any pattern
     column present in 'python_results'.
     """
 
     pattern_columns = [c for c in python_results.columns if c != "k"]
+    if python_results["k"].duplicated().any():
+        raise CsvSchemaError("compare_to_mql5_export: python_results has duplicate 'k' values")
+
     mql5_results = read_csv_with_required_columns(mql5_export_csv, {"k", *pattern_columns})
+    assert_unique_ids(mql5_results, "k", mql5_export_csv)
 
-    merged = python_results.merge(mql5_results, on="k", suffixes=("_python", "_mql5"))
-    disagreement_mask = pd.Series(False, index=merged.index)
+    merged = python_results.merge(
+        mql5_results, on="k", how="outer", suffixes=("_python", "_mql5"), indicator=True
+    )
+
+    left_only = merged[merged["_merge"] == "left_only"]
+    right_only = merged[merged["_merge"] == "right_only"]
+    if not left_only.empty or not right_only.empty:
+        raise CsvSchemaError(
+            f"compare_to_mql5_export: key coverage mismatch -- "
+            f"{len(left_only)} k value(s) only in python_results ({sorted(left_only['k'].tolist())}), "
+            f"{len(right_only)} k value(s) only in {mql5_export_csv} ({sorted(right_only['k'].tolist())})"
+        )
+
+    both = merged[merged["_merge"] == "both"]
+    disagreement_mask = pd.Series(False, index=both.index)
     for col in pattern_columns:
-        disagreement_mask |= merged[f"{col}_python"] != merged[f"{col}_mql5"]
+        disagreement_mask |= both[f"{col}_python"] != both[f"{col}_mql5"]
 
-    return merged[disagreement_mask]
+    return both[disagreement_mask].drop(columns=["_merge"])
 
 
 def run(ohlc_csv: Path, output_csv: Optional[Path] = None, *, trend_lookback: int = 5,
-        size_window: int = 20) -> pd.DataFrame:
-    """Reads 'ohlc_csv' (columns open/high/low/close, already in the
-    MQL5 logical-index convention -- row 0 = most recent bar) and detects
-    every ported pattern at every valid index."""
+        size_window: int = 20, ascending_input: bool = False) -> pd.DataFrame:
+    """Reads 'ohlc_csv' (columns open/high/low/close) and detects every
+    ported pattern at every valid index.
+
+    'ascending_input' makes the required array convention an explicit,
+    caller-declared choice instead of a silent assumption (a Codex review
+    finding: there is no timestamp/order column in this CSV shape with
+    which to verify the convention from the data alone, so a normal
+    chronologically-ascending export could otherwise be silently analyzed
+    backwards). Default False means 'ohlc_csv' is ALREADY in the MQL5
+    logical-index convention (row 0 = most recent bar); pass True if
+    'ohlc_csv' is in the more common chronologically-ascending order
+    (row 0 = oldest bar) and this function will reverse it first.
+    """
 
     ohlc = read_csv_with_required_columns(ohlc_csv, REQUIRED_OHLC_COLUMNS)
+    assert_finite_columns(ohlc, ["open", "high", "low", "close"], ohlc_csv)
+    assert_high_low_geometry(ohlc, "high", "low", ohlc_csv)
+    if ascending_input:
+        ohlc = ohlc.iloc[::-1].reset_index(drop=True)
+
     result = detect_all_patterns(
         ohlc["open"].tolist(), ohlc["high"].tolist(), ohlc["low"].tolist(), ohlc["close"].tolist(),
         trend_lookback=trend_lookback, size_window=size_window,
@@ -291,6 +340,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--trend-lookback", type=int, default=5)
     parser.add_argument("--size-window", type=int, default=20)
+    parser.add_argument(
+        "--ascending-input", action="store_true",
+        help="Set if ohlc_csv is chronologically ascending (row 0 = oldest); "
+             "default assumes it is already in the MQL5 logical-index convention (row 0 = newest).",
+    )
     return parser
 
 
@@ -298,7 +352,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
         result = run(
-            args.ohlc_csv, args.output_csv, trend_lookback=args.trend_lookback, size_window=args.size_window
+            args.ohlc_csv, args.output_csv, trend_lookback=args.trend_lookback,
+            size_window=args.size_window, ascending_input=args.ascending_input,
         )
     except (FileNotFoundError, CsvSchemaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

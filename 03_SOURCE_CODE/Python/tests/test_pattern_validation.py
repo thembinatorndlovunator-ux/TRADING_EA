@@ -224,3 +224,78 @@ def test_cli_main_missing_file(tmp_path, capsys):
     exit_code = main(["--ohlc-csv", str(tmp_path / "nope.csv")])
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_compare_to_mql5_export_rejects_non_overlapping_keys(tmp_path):
+    """Regression for a Codex review finding (2026-07-21): the previous
+    INNER merge silently dropped non-overlapping keys, so Python results
+    at k=1 and an MQL5 export at k=0 (datasets that never actually
+    overlap) returned an EMPTY disagreement DataFrame -- the strongest
+    possible false "pass" for two datasets that were never compared."""
+
+    python_results = pd.DataFrame({"k": [1], "bullish_engulfing": [True]})
+    mql5_export = tmp_path / "mql5_export.csv"
+    pd.DataFrame({"k": [0], "bullish_engulfing": [True]}).to_csv(mql5_export, index=False)
+
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(python_results, mql5_export)
+
+
+def test_compare_to_mql5_export_rejects_duplicate_python_key():
+    python_results = pd.DataFrame({"k": [0, 0], "bullish_engulfing": [True, False]})
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(python_results, Path("unused.csv"))
+
+
+def test_compare_to_mql5_export_rejects_duplicate_mql5_key(tmp_path):
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    mql5_export = tmp_path / "mql5_export.csv"
+    pd.DataFrame({"k": [0, 0], "bullish_engulfing": [True, False]}).to_csv(mql5_export, index=False)
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(python_results, mql5_export)
+
+
+def test_run_rejects_non_finite_ohlc(tmp_path):
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {"open": [99.0], "high": [float("nan")], "low": [98.0], "close": [100.0]}
+    ).to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(path)
+
+
+def test_run_rejects_high_below_low(tmp_path):
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame({"open": [99.0], "high": [90.0], "low": [100.0], "close": [95.0]}).to_csv(
+        path, index=False
+    )
+    with pytest.raises(CsvSchemaError):
+        run(path)
+
+
+def test_run_ascending_input_is_reversed_before_detection(tmp_path):
+    """A caller declaring ascending_input=True gets the SAME detection
+    result as passing the already-reversed (MQL5-convention) array
+    directly -- confirms the reversal actually happens, not just accepted
+    as a flag."""
+
+    # MQL5-convention (newest first): bullish engulfing at k=0.
+    opens = [99.0, 110.0]
+    highs = [113.0, 111.0]
+    lows = [98.0, 99.0]
+    closes = [112.0, 100.0]
+    path_newest_first = tmp_path / "ohlc_newest_first.csv"
+    pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes}).to_csv(
+        path_newest_first, index=False
+    )
+    direct_result = run(path_newest_first)
+
+    # Same data, chronologically ascending (oldest first) -- the reverse order.
+    path_ascending = tmp_path / "ohlc_ascending.csv"
+    pd.DataFrame(
+        {"open": opens[::-1], "high": highs[::-1], "low": lows[::-1], "close": closes[::-1]}
+    ).to_csv(path_ascending, index=False)
+    reversed_result = run(path_ascending, ascending_input=True)
+
+    assert bool(direct_result.iloc[0]["bullish_engulfing"]) is True
+    assert bool(reversed_result.iloc[0]["bullish_engulfing"]) is True
