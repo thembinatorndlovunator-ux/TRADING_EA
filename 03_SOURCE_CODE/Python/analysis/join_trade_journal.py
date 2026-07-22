@@ -25,7 +25,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from analysis.csv_io import atomic_write_dataframe_csv, sanitize_for_csv
+from analysis.csv_io import (
+    assert_output_paths_distinct,
+    assert_path_not_direct_child_of_directory,
+    assert_path_not_same_file,
+    atomic_write_dataframe_csv,
+    sanitize_for_csv,
+)
 from analysis.report_metadata import (
     PIPELINE_VERSION,
     ReportMetadata,
@@ -95,23 +101,29 @@ def run(
         if base is not None:
             errors_json = base.parent / f"{base.stem}.provenance.json"
 
-    output_paths = [p for p in (output_csv, output_json, errors_json) if p is not None]
-    resolved_outputs = [p.resolve() for p in output_paths]
-    if len(set(resolved_outputs)) != len(resolved_outputs):
-        raise ValueError("output_csv, output_json, and errors_json must all be distinct paths")
-    if any(p == input_dir.resolve() for p in resolved_outputs):
-        raise ValueError("an output path must not be the same as input_dir")
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): these
+    # collision checks previously hand-rolled ad hoc resolved-STRING
+    # comparisons instead of the shared hard-link-aware helpers every
+    # other pipeline in this layer uses, and the "outside input_dir"
+    # check tested only the IMMEDIATE parent -- a nested
+    # ``input_dir/subdir/out.csv`` output silently bypassed it despite
+    # genuinely living inside the input directory.**
+    assert_output_paths_distinct([output_csv, output_json, errors_json])
+    for out_path in (output_csv, output_json, errors_json):
+        assert_path_not_direct_child_of_directory(out_path, input_dir, "output path")
     # **Fixed, 2026-07-22 Codex review finding:** this previously checked
     # output paths only against input_dir ITSELF, not against the actual
     # decisions_*.jsonl files inside it -- a direct probe used a journal
-    # source file as output_csv and overwrote the source evidence. Any
-    # output written INSIDE input_dir (regardless of filename) is now
-    # rejected outright, both to prevent overwriting a real journal file
-    # and to prevent a derived output later being picked up by a
-    # SUBSEQUENT run's own journal glob.
-    resolved_input_dir = input_dir.resolve()
-    if any(p.parent == resolved_input_dir for p in resolved_outputs):
-        raise ValueError(f"an output path must not be written inside input_dir ({input_dir})")
+    # source file as output_csv and overwrote the source evidence.
+    # **Extended, 2026-07-22 Codex review finding (fifth round):** now
+    # hard-link-safe (``assert_path_not_same_file``, not resolved-string
+    # equality) and checked against every actual journal file directly,
+    # not just "is it a direct child of input_dir" -- catching a hard
+    # link to a real journal file from anywhere on disk, not only one
+    # sitting next to it.
+    for out_path in (output_csv, output_json, errors_json):
+        for journal_file in input_dir.glob("decisions_*.jsonl"):
+            assert_path_not_same_file(out_path, journal_file, "output path")
 
     # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
     # previously computed AFTER read_journal_directory had already parsed

@@ -9,6 +9,7 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_high_low_geometry,
     assert_output_paths_distinct,
+    assert_path_not_direct_child_of_directory,
     assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
@@ -240,6 +241,40 @@ def test_assert_path_not_same_file_passes_for_distinct_files(tmp_path):
     b = tmp_path / "b.csv"
     b.write_text("x\n", encoding="utf-8")
     assert_path_not_same_file(b, a)  # must not raise -- distinct files, even if same content
+
+
+def test_assert_path_not_direct_child_of_directory_rejects_directory_itself(tmp_path):
+    with pytest.raises(CsvSchemaError):
+        assert_path_not_direct_child_of_directory(tmp_path, tmp_path)
+
+
+def test_assert_path_not_direct_child_of_directory_rejects_direct_child(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    join_trade_journal.py/join_news_events.py previously hand-rolled this
+    check with plain resolved-string equality instead of this shared
+    helper."""
+
+    with pytest.raises(CsvSchemaError):
+        assert_path_not_direct_child_of_directory(tmp_path / "derived.csv", tmp_path)
+
+
+def test_assert_path_not_direct_child_of_directory_allows_nested_subdirectory():
+    """Deliberately does NOT reject a deeper subdirectory (e.g.
+    'directory/out/result.csv') -- this project's own established pattern
+    for colocating outputs near their input directory in their own
+    subfolder, which a non-recursive glob never descends into anyway."""
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        # Must not raise -- 'out' is a subdirectory, not a direct child file.
+        assert_path_not_direct_child_of_directory(tmp_dir / "out" / "result.csv", tmp_dir)
+
+
+def test_assert_path_not_direct_child_of_directory_allows_sibling_directory(tmp_path):
+    sibling = tmp_path.parent / "sibling_dir" / "result.csv"
+    assert_path_not_direct_child_of_directory(sibling, tmp_path)  # must not raise
 
 
 # --- sanitize_for_csv (formula-injection defense) ---------------------------

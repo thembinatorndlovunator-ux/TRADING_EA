@@ -285,3 +285,53 @@ def test_oversized_single_line_is_a_parse_error_not_unbounded_memory(tmp_path):
     assert len(result.parse_errors) == 1
     assert "exceeds max line length" in result.parse_errors[0].error
     assert len(result.parse_errors[0].raw_line) <= 2000
+
+
+def test_deeply_nested_json_row_is_a_parse_error_not_an_aborted_directory(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a deeply-nested-but-sub-megabyte JSON row exhausts Python's own call
+    stack inside json.loads, raising RecursionError -- NOT a ValueError,
+    so it previously propagated straight out of read_journal_directory,
+    aborting the read of the ENTIRE directory (including every other,
+    perfectly valid file) instead of becoming a single row error."""
+
+    # A deeply nested array is well under any byte-size limit but still
+    # exhausts the interpreter's recursion limit while json.loads walks it.
+    deeply_nested = "[" * 100_000 + "]" * 100_000
+    good_record = make_valid_record(signal_id="after-deep-nesting")
+    (tmp_path / "decisions_20260721.jsonl").write_text(
+        deeply_nested + "\n" + json.dumps(good_record) + "\n", encoding="utf-8"
+    )
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.valid_records) == 1
+    assert result.valid_records[0].signal_id == "after-deep-nesting"
+    assert len(result.parse_errors) == 1
+
+
+def test_multi_byte_utf8_line_over_byte_limit_but_under_char_limit_rejected(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    MAX_LINE_BYTES previously bounded CHARACTERS (via
+    TextIOWrapper.readline's own size semantics), not real bytes -- a
+    line under the character limit can still exceed it in actual UTF-8
+    bytes if it contains multi-byte characters. A genuine byte-length
+    check must catch this even when the character-based read alone would
+    not have flagged it as oversized."""
+
+    import data_collection.journal_reader as journal_reader_module
+
+    monkeypatch.setattr(journal_reader_module, "MAX_LINE_BYTES", 100)
+    # Each "é" is 1 character but 2 UTF-8 bytes -- 80 of them is 80
+    # characters (under the 100-character readline bound) but 160 bytes
+    # (over the 100-byte limit). ensure_ascii=False is required so the
+    # literal multi-byte character reaches the file, not an escaped
+    # "é" ASCII sequence.
+    multi_byte_line = json.dumps({"note": "é" * 80}, ensure_ascii=False)
+    assert len(multi_byte_line) <= 100  # under the character-based readline bound
+    assert len(multi_byte_line.encode("utf-8")) > 100  # over the real byte limit
+    (tmp_path / "decisions_20260721.jsonl").write_text(multi_byte_line + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.valid_records) == 0
+    assert len(result.parse_errors) == 1
+    assert "exceeds max line length" in result.parse_errors[0].error

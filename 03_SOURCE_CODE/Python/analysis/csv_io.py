@@ -137,6 +137,35 @@ def assert_path_not_same_file(
         )
 
 
+def assert_path_not_direct_child_of_directory(
+    output_path: Optional[Path], directory: Path, context: str = "output path"
+) -> None:
+    """Raises CsvSchemaError if 'output_path' is 'directory' itself, or a
+    DIRECT child of it (matching what a non-recursive
+    ``directory.glob("decisions_*.jsonl")``-style scan could pick up on a
+    later run) -- writing an output directly inside a directory this
+    pipeline treats as read-only INPUT risks a stray CSV/JSON later being
+    misread as a real source file. Deliberately does NOT reject a deeper
+    subdirectory (e.g. ``directory/out/result.csv``) -- that is this
+    project's own established, intentional pattern for colocating outputs
+    near their input directory in their own subfolder, and a non-recursive
+    glob never descends into it anyway.
+
+    **Fixed, 2026-07-22 Codex review finding (fifth round): the two call
+    sites this replaces (``join_trade_journal.py``, ``join_news_events.py``)
+    previously each hand-rolled an ad hoc
+    ``output_path.resolve().parent == directory.resolve()`` check using
+    plain resolved-STRING comparison rather than this shared helper.**
+    """
+
+    if output_path is None:
+        return
+    resolved_output = output_path.resolve()
+    resolved_directory = directory.resolve()
+    if resolved_output == resolved_directory or resolved_output.parent == resolved_directory:
+        raise CsvSchemaError(f"{context} {output_path} must not be written inside {directory}")
+
+
 def parse_is_long(value: object) -> bool:
     """Parses a CSV 'is_long' field -- accepts "True"/"False"/"1"/"0"/
     "yes"/"no"/"long"/"short", case-insensitive. Raises ValueError (never

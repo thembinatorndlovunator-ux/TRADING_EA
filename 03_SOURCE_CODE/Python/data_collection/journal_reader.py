@@ -51,6 +51,18 @@ DEFAULT_MAX_RECORDS_PER_DIRECTORY = 1_000_000
 # the error record, not what was READ into memory to get there. A real
 # DecisionJournal line (one TradeDecision JSON object) is at most a few
 # KB; this is a generous but genuinely bounded ceiling.
+#
+# **Clarified, 2026-07-22 Codex review finding (fifth round): this name
+# implies a byte limit, but ``TextIOWrapper.readline(size)`` bounds
+# CHARACTERS, not bytes -- for UTF-8 content with multi-byte characters,
+# a line could read fewer than MAX_LINE_BYTES characters while actually
+# occupying more than MAX_LINE_BYTES bytes on disk.** The name is kept
+# for backward compatibility (already a public constant other modules
+# import), but ``_read_lines_from_file`` below now ALSO verifies the
+# real UTF-8-encoded byte length of every accepted line and rejects it
+# under the same limit if the character-based read alone was not
+# sufficient to catch it -- a genuine byte bound, not just a character
+# one, regardless of the name.
 MAX_LINE_BYTES = 1_000_000
 
 
@@ -230,6 +242,16 @@ def _read_lines_from_file(
                         f"{source_label}: more than the remaining max_records budget of "
                         f"{remaining_budget} lines -- refusing to load the rest into memory"
                     )
+                # **Added, 2026-07-22 Codex review finding (fifth round):**
+                # the character-based 'oversized' check above (from
+                # readline's own size bound) does not guarantee the line's
+                # real UTF-8 byte length is within MAX_LINE_BYTES -- a
+                # line under the character limit can still exceed it in
+                # bytes if it contains multi-byte characters. Checked here
+                # as a genuine byte-length verification, independent of
+                # (and in addition to) the character-based read bound.
+                if not oversized and len(stripped.encode("utf-8")) > MAX_LINE_BYTES:
+                    oversized = True
                 if oversized:
                     errors.append(
                         ParseError(
@@ -247,7 +269,14 @@ def _read_lines_from_file(
                         parse_float=_parse_float_rejecting_overflow,
                         object_pairs_hook=_reject_duplicate_keys,
                     )
-                except ValueError as exc:  # json.JSONDecodeError is itself a ValueError
+                # **Added, 2026-07-22 Codex review finding (fifth round):**
+                # a deeply-nested-but-sub-megabyte JSON row (e.g. thousands
+                # of nested arrays/objects) exhausts Python's own call
+                # stack inside json.loads, raising RecursionError -- NOT a
+                # ValueError, so it previously propagated straight out of
+                # this function, aborting the ENTIRE directory read on one
+                # malformed row instead of becoming a single row error.
+                except (ValueError, RecursionError) as exc:
                     # Cap the retained raw line so one hostile/huge line
                     # cannot itself become an unbounded in-memory payload
                     # inside the error record (Codex review finding).
@@ -256,7 +285,7 @@ def _read_lines_from_file(
                             source_file=source_label,
                             line_number=line_number,
                             raw_line=stripped[:2000],
-                            error=str(exc),
+                            error=str(exc) or type(exc).__name__,
                         )
                     )
                     continue

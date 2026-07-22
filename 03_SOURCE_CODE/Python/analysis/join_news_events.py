@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
@@ -44,6 +45,8 @@ import pandas as pd
 from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
+    assert_output_paths_distinct,
+    assert_path_not_direct_child_of_directory,
     assert_path_not_same_file,
     assert_unique_ids,
     atomic_write_dataframe_csv,
@@ -154,6 +157,31 @@ def run(
             f"before_minutes/after_minutes must be >= 0, got before_minutes={before_minutes}, "
             f"after_minutes={after_minutes}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round): the bare
+    # 'min_importance < MIN_IMPORTANCE_VALUE' check above admits several
+    # wrong-typed/non-finite values that are not a legitimate importance
+    # threshold: NaN (every comparison against NaN is False in Python, so
+    # it silently passes), a fractional float like 1.5 (the news CSV's
+    # own 'importance' column is enforced as a non-negative INTEGER
+    # ordinal, so a fractional threshold can never match anything
+    # meaningfully), and a Python bool (a subtype of int -- True/False
+    # would silently compare as 1/0). All three now rejected outright,
+    # matching the same type/finiteness discipline already enforced on
+    # the news CSV's own 'importance' column below.**
+    if isinstance(min_importance, bool):
+        raise ValueError(
+            f"min_importance must be an integer ordinal, not a bool, got {min_importance!r}"
+        )
+    if not isinstance(min_importance, int):
+        if not (isinstance(min_importance, float) and math.isfinite(min_importance)):
+            raise ValueError(
+                f"min_importance must be a finite integer ordinal, got non-finite value "
+                f"{min_importance!r}"
+            )
+        if min_importance != int(min_importance):
+            raise ValueError(
+                f"min_importance must be an integer ordinal, got fractional value {min_importance!r}"
+            )
     if min_importance < MIN_IMPORTANCE_VALUE:
         raise ValueError(f"min_importance must be >= {MIN_IMPORTANCE_VALUE}, got {min_importance}")
 
@@ -169,12 +197,14 @@ def run(
         if base is not None:
             errors_json = base.parent / f"{base.stem}.errors.json"
 
-    resolved_journal_dir = journal_dir.resolve()
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): these
+    # collision checks previously mixed a shared hard-link-aware helper
+    # (for news_events_csv) with ad hoc resolved-STRING comparisons (for
+    # journal_dir and output-output distinctness) -- now all three use
+    # the same shared, hard-link-safe helpers every other pipeline in
+    # this layer uses.**
     for out_path in (output_csv, summary_json, errors_json):
-        if out_path is None:
-            continue
-        if out_path.resolve() == resolved_journal_dir:
-            raise CsvSchemaError(f"output path {out_path} must not be the same as journal_dir")
+        assert_path_not_direct_child_of_directory(out_path, journal_dir, "output path")
         # Uses OS-level file-identity (not just Path.resolve()) so a hard
         # link to news_events_csv is also caught -- Codex review finding, third round.
         assert_path_not_same_file(out_path, news_events_csv, "output path")
@@ -182,18 +212,12 @@ def run(
         # INSIDE journal_dir (even under a different name) could later be
         # picked up by a SUBSEQUENT run's "decisions_*.jsonl" glob as if
         # it were a real journal input, folding a derived output into its
-        # own future dataset hash. Outputs must live outside journal_dir
-        # entirely.
-        if out_path.resolve().parent == resolved_journal_dir:
-            raise CsvSchemaError(
-                f"output path {out_path} must not be written inside journal_dir "
-                f"({journal_dir}) -- it could be picked up as a journal input by a future run"
-            )
-    output_resolved = [
-        p.resolve() for p in (output_csv, summary_json, errors_json) if p is not None
-    ]
-    if len(set(output_resolved)) != len(output_resolved):
-        raise CsvSchemaError("output_csv, summary_json, and errors_json must all be distinct paths")
+        # own future dataset hash. Any real journal file is also checked
+        # directly (hard-link-safe), catching a hard link to one from
+        # anywhere on disk, not only a direct child of journal_dir.
+        for journal_file in journal_dir.glob("decisions_*.jsonl"):
+            assert_path_not_same_file(out_path, journal_file, "output path")
+    assert_output_paths_distinct([output_csv, summary_json, errors_json])
 
     # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
     # previously computed AFTER read_journal_directory had already parsed
@@ -238,7 +262,15 @@ def run(
             "would silently double-count decisions in the blackout analysis"
         )
 
-    news = read_csv_with_required_columns(news_events_csv, REQUIRED_NEWS_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): 'event_id'
+    # was previously read with generic pandas numeric inference despite
+    # NewsManager.mqh's SNewsEvent defining it as a durable STRING --
+    # "001" was silently re-emitted as "1", and "001"/"1" then collapsed
+    # into a false duplicate (the same identifier class of bug already
+    # fixed for order_id/deal_id/trade_id in join_signal_to_outcome.py).**
+    news = read_csv_with_required_columns(
+        news_events_csv, REQUIRED_NEWS_COLUMNS, dtype={"event_id": str}
+    )
     assert_unique_ids(news, "event_id", news_events_csv)
     assert_finite_columns(news, ["importance"], news_events_csv)
     # **Fixed, 2026-07-22 Codex review finding (third round): the

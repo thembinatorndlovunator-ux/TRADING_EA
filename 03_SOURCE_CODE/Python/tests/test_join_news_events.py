@@ -543,6 +543,78 @@ def test_negative_min_importance_filter_rejected(tmp_path):
         run(tmp_path, news_path, min_importance=-1)
 
 
+def test_nan_min_importance_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    min_importance=NaN previously passed the bare '< MIN_IMPORTANCE_VALUE'
+    check outright, since every comparison against NaN is False in
+    Python."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, min_importance=float("nan"))
+
+
+def test_fractional_min_importance_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a fractional min_importance (e.g. 1.5) previously passed silently --
+    the news CSV's own 'importance' column is enforced as a non-negative
+    INTEGER ordinal, so a fractional threshold can never match anything
+    meaningfully."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, min_importance=1.5)
+
+
+def test_boolean_min_importance_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a Python bool (a subtype of int) previously passed silently as
+    min_importance, comparing as 1/0."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, min_importance=True)
+
+
+def test_leading_zero_event_id_preserved_not_collapsed_by_numeric_inference(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    'event_id' was previously read with generic pandas numeric inference
+    -- NewsManager.mqh's SNewsEvent defines it as a durable STRING, but
+    "001" was silently re-emitted as "1", and "001"/"1" then collapsed
+    into a false duplicate under float64 inference."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    pd.DataFrame(
+        [
+            {
+                "event_id": "001",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 3,
+                "scheduled_utc": "2026-07-21T14:00:00Z",
+            },
+            {
+                "event_id": "1",
+                "event_name": "CPI",
+                "currency": "USD",
+                "importance": 3,
+                "scheduled_utc": "2026-07-22T14:00:00Z",
+            },
+        ]
+    ).to_csv(news_path, index=False)
+    # "001" and "1" are DISTINCT string identifiers -- must not be
+    # rejected as a duplicate event_id.
+    result = run(tmp_path, news_path)
+    assert result.n_decisions == 1
+
+
 def test_output_path_colliding_with_input_rejected(tmp_path):
     _write_journal(tmp_path, [make_valid_record()])
     news_path = tmp_path / "news.csv"
