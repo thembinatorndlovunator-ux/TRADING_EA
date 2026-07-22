@@ -303,8 +303,15 @@ def run(
     # component hash could ever have drifted from what was actually
     # parsed, since neither involved a second read of anything.
     dataset_paths_for_metadata = [news_events_csv, *journal_files]
+    # **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 16): the news_events_csv side's label was previously the bare
+    # basename -- role-qualified now, matching the already-role-qualified
+    # "journal_directory" label on the other side.**
     combined_hash = combine_labeled_hashes(
-        [(news_events_csv.name, news_file_hash), ("journal_directory", read_result.dataset_hash)]
+        [
+            (f"news_events_csv:{news_events_csv.name}", news_file_hash),
+            ("journal_directory", read_result.dataset_hash),
+        ]
     )
     metadata = build_report_metadata(
         dataset_paths_for_metadata,

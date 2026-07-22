@@ -369,12 +369,13 @@ def run(
     # bare KeyError trying to access "test_expectancy_r" on it.
     result_df = pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result_df, output_csv)
-
+    # **Reordered, 2026-07-22 Codex review finding (seventh round, P1
+    # finding 16): metadata (git commit/dirty state, which capture_git_commit
+    # can raise GitMetadataError computing) is now captured BEFORE
+    # output_csv is written, not after -- previously, an invalid repo_path
+    # raised AFTER the result CSV already existed on disk, leaving an
+    # apparently-valid result with no provenance sidecar at all.**
     if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
             [trades_csv],
             symbol=symbol,
@@ -436,6 +437,13 @@ def run(
                 "confidence": confidence,
             },
         }
+
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_dataframe_csv(result_df, output_csv)
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result_df

@@ -199,7 +199,11 @@ _UTF8_BOM = b"\xef\xbb\xbf"
 
 
 def _read_lines_from_file(
-    path: Path, source_label: str, remaining_budget: int, remaining_byte_budget: int
+    path: Path,
+    source_label: str,
+    remaining_budget: int,
+    remaining_byte_budget: int,
+    remaining_error_budget: int,
 ) -> tuple[list[tuple[int, dict]], list[ParseError], int, int, str]:
     """Parses each non-blank line of 'path' as JSON, STREAMING line-by-line
     (never loading the whole file into memory at once) and raising
@@ -278,7 +282,28 @@ def _read_lines_from_file(
     a single pass, so it is structurally impossible for the hashed bytes
     to differ from the parsed ones: there is no second read, and
     therefore no window for the file to change in between.
+
+    **Added, 2026-07-22 Codex review finding (seventh round, P1 finding
+    16): 'remaining_error_budget' -- previously, max_retained_errors was
+    only checked by the CALLER after this function returned, i.e. after
+    an ENTIRE file's own parse errors had already been fully accumulated
+    in memory. A single file consisting of up to 'remaining_budget' (as
+    large as max_records, e.g. 1,000,000) malformed-but-individually-
+    small lines could retain far more error records than
+    max_retained_errors (default 50,000) before that ceiling ever took
+    effect. This function now enforces the SAME ceiling incrementally,
+    from within its own per-line loop, so a single hostile file can never
+    itself exceed the remaining budget.**
     """
+
+    def _append_error(err: ParseError) -> None:
+        errors.append(err)
+        if len(errors) > remaining_error_budget:
+            raise JournalReaderLimitError(
+                f"{source_label}: retained parse error count exceeds the remaining "
+                f"max_retained_errors budget of {remaining_error_budget} -- refusing to retain "
+                "any more error records"
+            )
 
     parsed: list[tuple[int, dict]] = []
     errors: list[ParseError] = []
@@ -323,7 +348,7 @@ def _read_lines_from_file(
                         )
                     if chunk == b"" or chunk.endswith(b"\n"):
                         break
-                errors.append(
+                _append_error(
                     ParseError(
                         source_file=source_label,
                         line_number=line_number,
@@ -345,7 +370,7 @@ def _read_lines_from_file(
             try:
                 raw_line = line_bytes.decode("utf-8")
             except UnicodeDecodeError as exc:
-                errors.append(
+                _append_error(
                     ParseError(
                         source_file=source_label,
                         line_number=line_number,
@@ -353,6 +378,30 @@ def _read_lines_from_file(
                         error=f"file-level decode failure (not valid UTF-8): {exc}",
                     )
                 )
+                # **Fixed, 2026-07-22 Codex review finding (seventh round,
+                # P1 finding 16): parsing stops here (matching the prior
+                # file-level-abort behavior), but the hash must still cover
+                # the REST of the file's raw bytes -- otherwise two files
+                # sharing an identical prefix up to this exact decode
+                # failure, but differing arbitrarily afterward, would
+                # receive the SAME dataset hash (the unread suffix was
+                # previously never hashed at all, since the loop simply
+                # stopped calling fh.readline()). Drains and hashes the
+                # remainder in bounded 64KB chunks, still enforcing
+                # remaining_byte_budget, without attempting to parse any
+                # of it.**
+                while True:
+                    tail_chunk = fh.read(65536)
+                    if tail_chunk == b"":
+                        break
+                    hasher.update(tail_chunk)
+                    bytes_read += len(tail_chunk)
+                    if bytes_read > remaining_byte_budget:
+                        raise JournalReaderLimitError(
+                            f"{source_label}: more than the remaining max_total_source_bytes "
+                            f"budget of {remaining_byte_budget} bytes -- refusing to load the "
+                            "rest into memory"
+                        )
                 break  # matches the prior file-level-abort behavior
 
             stripped = raw_line.strip()
@@ -382,7 +431,7 @@ def _read_lines_from_file(
                 # Cap the retained raw line so one hostile/huge line
                 # cannot itself become an unbounded in-memory payload
                 # inside the error record (Codex review finding).
-                errors.append(
+                _append_error(
                     ParseError(
                         source_file=source_label,
                         line_number=line_number,
@@ -392,7 +441,7 @@ def _read_lines_from_file(
                 )
                 continue
             if not isinstance(record, dict):
-                errors.append(
+                _append_error(
                     ParseError(
                         source_file=source_label,
                         line_number=line_number,
@@ -480,13 +529,25 @@ def read_journal_directory(
     total_bytes_seen = 0
     per_file_hashes: list[tuple[str, str]] = []
 
-    candidate_paths = sorted(files) if files is not None else sorted(directory.glob(pattern))
-
-    if len(candidate_paths) > max_files:
-        raise JournalReaderLimitError(
-            f"{directory}: {len(candidate_paths)} candidate file(s) exceeds max_files budget of "
-            f"{max_files} -- refusing to read the rest into memory"
-        )
+    # **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 16): 'sorted(directory.glob(pattern))' previously fully materialized
+    # (and sorted) EVERY matching path before max_files ever got a chance
+    # to reject the directory -- an adversarial directory with far more
+    # than max_files matching entries could exhaust memory/time building
+    # that full list before the ceiling check below ever ran. This now
+    # consumes the (unsorted) candidate iterator incrementally, aborting
+    # the instant more than max_files entries have been seen, and only
+    # THEN sorts the bounded result.
+    candidate_source = iter(files) if files is not None else directory.glob(pattern)
+    candidate_paths_unsorted: list[Path] = []
+    for candidate in candidate_source:
+        candidate_paths_unsorted.append(candidate)
+        if len(candidate_paths_unsorted) > max_files:
+            raise JournalReaderLimitError(
+                f"{directory}: more than max_files budget of {max_files} candidate file(s) -- "
+                "refusing to read the rest into memory"
+            )
+    candidate_paths = sorted(candidate_paths_unsorted)
 
     for path in candidate_paths:
         # Defensive: 'pattern' is normally a fixed literal
@@ -534,8 +595,16 @@ def read_journal_directory(
         source_label = str(path.resolve().relative_to(resolved_directory))
         remaining_budget = max_records - total_records_seen
         remaining_byte_budget = max_total_source_bytes - total_bytes_seen
+        # **Added, 2026-07-22 Codex review finding (seventh round, P1
+        # finding 16): the remaining error budget is now passed IN so a
+        # single file cannot itself retain more parse errors than the
+        # combined ceiling allows -- see _read_lines_from_file's own
+        # docstring.**
+        remaining_error_budget = max_retained_errors - (
+            len(all_parse_errors) + len(all_validation_errors)
+        )
         parsed, parse_errors, non_blank_count, bytes_read, file_hash = _read_lines_from_file(
-            path, source_label, remaining_budget, remaining_byte_budget
+            path, source_label, remaining_budget, remaining_byte_budget, remaining_error_budget
         )
         all_parse_errors.extend(parse_errors)
         total_records_seen += non_blank_count

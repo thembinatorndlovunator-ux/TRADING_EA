@@ -905,6 +905,46 @@ def test_summary_json_auto_derived_when_omitted(tmp_path):
     assert summary["metadata"]["dataset_hash"]
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+
+    out_csv = tmp_path / "out" / "giveback.csv"
+    summary_json = tmp_path / "out" / "giveback.summary.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(trades_path, bars_path, output_csv=out_csv, summary_json=summary_json, seed=1,
+            repo_path=not_a_repo)
+
+    assert not out_csv.exists()
+    assert not summary_json.exists()
+
+
 def test_summary_json_includes_actual_row_errors_not_just_count(tmp_path):
     """Regression for a Codex review finding: only a row-error COUNT was
     written, losing which trades actually failed."""

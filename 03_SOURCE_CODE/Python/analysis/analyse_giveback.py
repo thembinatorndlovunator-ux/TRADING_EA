@@ -383,18 +383,27 @@ def run(
         except (ValueError, KeyError) as exc:
             row_errors.append({"trade_id": trade_id, "error": str(exc)})
 
-    if output_csv is not None:
-        # trade_id is a caller-controlled string -- sanitized against
-        # spreadsheet-formula injection (Codex review finding,
-        # 2026-07-22, third round). Written atomically (temp-then-rename).
-        atomic_write_dataframe_csv(
-            sanitize_dataframe_for_csv(pd.DataFrame([c.__dict__ for c in comparisons])), output_csv
-        )
-
+    # **Reordered, 2026-07-22 Codex review finding (seventh round, P1
+    # finding 16): metadata (git commit/dirty state, which capture_git_commit
+    # can raise GitMetadataError computing) is now captured BEFORE
+    # output_csv is written, not after -- previously, an invalid repo_path
+    # raised AFTER the result CSV already existed on disk, leaving an
+    # apparently-valid result with no provenance sidecar at all. Building
+    # metadata first means a failure here leaves NO file written.**
     if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        # **Fixed, 2026-07-22 Codex review finding (seventh round, P1
+        # finding 16): the label was previously the bare basename -- two
+        # inputs sharing a basename (e.g. both trades_csv/bars_csv
+        # happening to be named "export.csv" in different directories) can
+        # swap roles while producing the identical (basename, hash) pair
+        # set, so combine_labeled_hashes' own order-independence could not
+        # detect a caller accidentally swapping which path plays which
+        # role. Labels are now role-qualified, not just filenames.**
         combined_hash = combine_labeled_hashes(
-            [(trades_csv.name, trades_csv_hash), (bars_csv.name, bars_csv_hash)]
+            [
+                (f"trades_csv:{trades_csv.name}", trades_csv_hash),
+                (f"bars_csv:{bars_csv.name}", bars_csv_hash),
+            ]
         )
         metadata = build_report_metadata(
             [trades_csv, bars_csv],
@@ -405,6 +414,17 @@ def run(
             repo_path=repo_path,
             dataset_hash_override=combined_hash,
         )
+
+    if output_csv is not None:
+        # trade_id is a caller-controlled string -- sanitized against
+        # spreadsheet-formula injection (Codex review finding,
+        # 2026-07-22, third round). Written atomically (temp-then-rename).
+        atomic_write_dataframe_csv(
+            sanitize_dataframe_for_csv(pd.DataFrame([c.__dict__ for c in comparisons])), output_csv
+        )
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
         summary = {
             "metadata": metadata.to_dict(),
             "n_trades_compared": len(comparisons),

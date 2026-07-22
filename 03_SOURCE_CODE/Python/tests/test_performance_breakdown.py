@@ -371,6 +371,37 @@ def test_summary_json_auto_derived_when_omitted(tmp_path):
     assert payload["metadata"]["dataset_hash"]
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk,
+    leaving an apparently-valid result with no provenance sidecar --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written, so a failure here must
+    leave NEITHER file on disk."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    trades_csv = tmp_path / "trades.csv"
+    _fixture_df().to_csv(trades_csv, index=False)
+    output_csv = tmp_path / "out" / "breakdown.csv"
+    summary_json = tmp_path / "out" / "breakdown.summary.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(
+            trades_csv,
+            ["strategy"],
+            output_csv=output_csv,
+            summary_json=summary_json,
+            repo_path=not_a_repo,
+        )
+
+    assert not output_csv.exists()
+    assert not summary_json.exists()
+
+
 def test_derive_time_dimensions_hand_computed(tmp_path):
     trades_csv = tmp_path / "trades.csv"
     pd.DataFrame(

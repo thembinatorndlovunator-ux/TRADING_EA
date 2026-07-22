@@ -268,6 +268,38 @@ def test_run_v637_2d_sweep_reads_real_csv_and_reproduces_hand_traced_numbers(tmp
     assert by_key[(2.5, 40.0)]["mean_r_diff_over_all_paths"] == pytest.approx(0.0)
 
 
+def test_run_v637_2d_sweep_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written (this project's
+    run()/run_v811_sweep()/run_v637_2d_sweep() all had the same bug and
+    the same fix -- this covers the representative case)."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+    output_csv = tmp_path / "out" / "v637_2d_stability.csv"
+    summary_json = tmp_path / "out" / "v637_2d_summary.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run_v637_2d_sweep(
+            r_paths_csv,
+            [1.0, 1.25],
+            [40.0, 60.0],
+            output_csv=output_csv,
+            summary_json=summary_json,
+            repo_path=not_a_repo,
+        )
+
+    assert not output_csv.exists()
+    assert not summary_json.exists()
+
+
 def test_run_v637_2d_sweep_writes_output_csv_and_summary_json(tmp_path):
     r_paths_csv = tmp_path / "r_paths.csv"
     _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})

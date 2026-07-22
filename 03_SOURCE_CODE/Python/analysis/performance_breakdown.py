@@ -466,16 +466,15 @@ def run(
         trades, dimensions, seed=seed, n_resamples=n_resamples, confidence=confidence
     )
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        # Dimension values (strategy, setup, regime, session_state, etc.)
-        # are caller/journal-controlled strings -- sanitized against
-        # spreadsheet-formula injection before export (Codex review
-        # finding, 2026-07-22, third round).
-        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(result), output_csv)
-
+    # **Reordered, 2026-07-22 Codex review finding (seventh round, P1
+    # finding 16): metadata (git commit/dirty state, which capture_git_commit
+    # can raise GitMetadataError computing) is now captured BEFORE
+    # output_csv is written, not after -- previously, an invalid repo_path
+    # raised AFTER the result CSV already existed on disk, leaving an
+    # apparently-valid result with no provenance sidecar at all (result and
+    # provenance were never one atomic publication). Building metadata first
+    # means a failure here leaves NO file written, not a half-published pair.**
     if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
             [trades_csv],
             symbol=symbol,
@@ -499,6 +498,17 @@ def run(
                 "confidence": confidence,
             },
         }
+
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        # Dimension values (strategy, setup, regime, session_state, etc.)
+        # are caller/journal-controlled strings -- sanitized against
+        # spreadsheet-formula injection before export (Codex review
+        # finding, 2026-07-22, third round).
+        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(result), output_csv)
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     return result

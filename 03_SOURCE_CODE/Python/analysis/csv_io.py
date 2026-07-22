@@ -76,11 +76,18 @@ def _read_csv_bytes_checked(
     impossible: there is only one read, so there is no window for the
     file to change in between.**
 
-    Raises CsvSchemaError if 'path' exceeds MAX_CSV_FILE_BYTES, checked
-    via a stat() call BEFORE the file is read into memory -- **added,
-    2026-07-22 Codex review finding (sixth round): a caller-controlled
-    CSV of unbounded size previously had no ceiling anywhere in this
-    layer.**
+    Raises CsvSchemaError if 'path' exceeds MAX_CSV_FILE_BYTES. A stat()
+    call BEFORE the read is a fast-path rejection for an obviously
+    oversized file, but is NOT the enforcement mechanism by itself --
+    **fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    16): the previous version checked stat() size, then called
+    path.read_bytes() (unbounded) -- a concurrently growing file could
+    exceed the ceiling in the window between the two calls (a classic
+    TOCTOU race), and read_bytes() itself has no cap regardless. The
+    actual read is now bounded to AT MOST MAX_CSV_FILE_BYTES + 1 bytes
+    (so this function itself never loads more, even transiently), and
+    the ACTUAL bytes returned are re-checked against the ceiling after
+    the read, independent of whatever the earlier stat() call reported.**
     """
 
     file_size = path.stat().st_size
@@ -90,7 +97,13 @@ def _read_csv_bytes_checked(
             f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the whole file into memory"
         )
 
-    raw_bytes = path.read_bytes()
+    with path.open("rb") as fh:
+        raw_bytes = fh.read(MAX_CSV_FILE_BYTES + 1)
+    if len(raw_bytes) > MAX_CSV_FILE_BYTES:
+        raise CsvSchemaError(
+            f"{path}: file size (observed while reading) exceeds MAX_CSV_FILE_BYTES ceiling of "
+            f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the rest into memory"
+        )
     # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
     # leading BOM, identical to plain "utf-8" otherwise) without a second
     # file open.

@@ -451,6 +451,38 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     assert payload["summary"]["train_days"] == 3
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    out_csv = tmp_path / "out" / "windows.csv"
+    summary_json = tmp_path / "out" / "summary.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(
+            path,
+            train_days=3,
+            test_days=2,
+            step_days=2,
+            output_csv=out_csv,
+            summary_json=summary_json,
+            symbol="XAUUSD",
+            repo_path=not_a_repo,
+        )
+
+    assert not out_csv.exists()
+    assert not summary_json.exists()
+
+
 def test_summary_json_auto_derived_when_omitted(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round): a
     caller requesting output_csv without summary_json previously got a

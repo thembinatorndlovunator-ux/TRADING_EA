@@ -1099,6 +1099,36 @@ def test_run_writes_output_csv(tmp_path):
     assert len(result) == 2
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+        }
+    ).to_csv(path, index=False)
+    out_csv = tmp_path / "out" / "patterns.csv"
+    summary_json = tmp_path / "out" / "patterns.summary.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(path, out_csv, summary_json, repo_path=not_a_repo)
+
+    assert not out_csv.exists()
+    assert not summary_json.exists()
+
+
 def test_run_always_includes_three_bar_reversal_column(tmp_path):
     """Regression for a Codex review finding (2026-07-22, seventh round,
     P1 finding 11): run()'s own CLI path previously exposed neither

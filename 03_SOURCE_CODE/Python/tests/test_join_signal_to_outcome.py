@@ -328,6 +328,40 @@ def test_run_writes_output_csv_and_errors_json(tmp_path):
     assert payload["summary"]["n_row_errors"] == 1
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    journal_csv = tmp_path / "journal.csv"
+    pd.DataFrame([{"order_id": "o1", "strategy": "SR_BOUNCE"}]).to_csv(journal_csv, index=False)
+    trades_csv = tmp_path / "trades.csv"
+    pd.DataFrame(
+        [{"trade_id": "t1", "order_id": "o1", "deal_id": "d1", "profit": 30.0}]
+    ).to_csv(trades_csv, index=False)
+
+    output_csv = tmp_path / "out" / "unified.csv"
+    errors_json = tmp_path / "out" / "errors.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(
+            journal_csv,
+            trades_csv,
+            output_csv=output_csv,
+            errors_json=errors_json,
+            repo_path=not_a_repo,
+        )
+
+    assert not output_csv.exists()
+    assert not errors_json.exists()
+
+
 def test_run_provenance_auto_written_even_without_explicit_errors_json(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fourth round):
     provenance was previously written ONLY when errors_json was supplied

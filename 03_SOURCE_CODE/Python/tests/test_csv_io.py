@@ -63,6 +63,40 @@ def test_oversized_csv_file_rejected_before_reading_into_memory(tmp_path, monkey
         read_csv_with_required_columns(path, {"trade_id", "profit"})
 
 
+def test_actual_bytes_read_checked_even_if_stat_reports_smaller_size(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): the size check previously relied ONLY on a stat()
+    call made BEFORE read_bytes() -- a classic TOCTOU race: a
+    concurrently growing file could exceed the ceiling in the window
+    between the two calls, and read_bytes() itself has no cap regardless
+    of what stat() reported. Simulates the race directly: stat() is
+    monkeypatched to report a tiny size for this one file while its real
+    on-disk content exceeds the ceiling -- the ACTUAL bytes read must
+    still be checked and must still raise."""
+
+    import analysis.csv_io as csv_io_module
+    from pathlib import Path
+
+    monkeypatch.setattr(csv_io_module, "MAX_CSV_FILE_BYTES", 10)
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")  # real size > 10 bytes
+
+    real_stat = Path.stat
+
+    class _FakeStatResult:
+        st_size = 1  # lies: reports far smaller than the real file
+
+    def fake_stat(self, *args, **kwargs):
+        if self == path:
+            return _FakeStatResult()
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+
+    with pytest.raises(CsvSchemaError):
+        read_csv_with_required_columns(path, {"trade_id", "profit"})
+
+
 def test_quoted_multiline_duplicate_header_rejected(tmp_path):
     """Regression for a Codex review finding (2026-07-22, third round):
     reading only the first PHYSICAL line missed a header row that itself

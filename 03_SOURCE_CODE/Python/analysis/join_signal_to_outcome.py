@@ -539,14 +539,22 @@ def run(
 
     joined_df, row_errors = join_signal_to_outcome(journal_df, trades_df)
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(joined_df), output_csv)
-
+    # **Reordered, 2026-07-22 Codex review finding (seventh round, P1
+    # finding 16): metadata (git commit/dirty state, which capture_git_commit
+    # can raise GitMetadataError computing) is now captured BEFORE
+    # output_csv is written, not after -- previously, an invalid repo_path
+    # raised AFTER the result CSV already existed on disk, leaving an
+    # apparently-valid result with no provenance sidecar at all.**
     if errors_json is not None:
-        errors_json.parent.mkdir(parents=True, exist_ok=True)
+        # **Fixed, 2026-07-22 Codex review finding (seventh round, P1
+        # finding 16): the label was previously the bare basename -- see
+        # analyse_giveback.py's matching fix for the exact
+        # role-swap-collision counterexample this closes.**
         combined_hash = combine_labeled_hashes(
-            [(journal_csv.name, journal_csv_hash), (trades_csv.name, trades_csv_hash)]
+            [
+                (f"journal_csv:{journal_csv.name}", journal_csv_hash),
+                (f"trades_csv:{trades_csv.name}", trades_csv_hash),
+            ]
         )
         metadata = build_report_metadata(
             [journal_csv, trades_csv],
@@ -557,6 +565,13 @@ def run(
             repo_path=repo_path,
             dataset_hash_override=combined_hash,
         )
+
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(joined_df), output_csv)
+
+    if errors_json is not None:
+        errors_json.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {

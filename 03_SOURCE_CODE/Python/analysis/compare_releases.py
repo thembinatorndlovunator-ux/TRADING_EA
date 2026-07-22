@@ -765,8 +765,16 @@ def run(
         # exact hash computed during that one read.**
         summary["baseline_dataset_hash"] = baseline_csv_hash
         summary["candidate_dataset_hash"] = candidate_csv_hash
+        # **Fixed, 2026-07-22 Codex review finding (seventh round, P1
+        # finding 16): the label was previously the bare basename -- see
+        # analyse_giveback.py's matching fix for the exact
+        # role-swap-collision counterexample this closes (baseline_csv and
+        # candidate_csv swapping roles while sharing a basename).**
         combined_hash = combine_labeled_hashes(
-            [(baseline_csv.name, baseline_csv_hash), (candidate_csv.name, candidate_csv_hash)]
+            [
+                (f"baseline_csv:{baseline_csv.name}", baseline_csv_hash),
+                (f"candidate_csv:{candidate_csv.name}", candidate_csv_hash),
+            ]
         )
         metadata = build_report_metadata(
             [baseline_csv, candidate_csv],

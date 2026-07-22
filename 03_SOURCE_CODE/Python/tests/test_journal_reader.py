@@ -441,6 +441,35 @@ def test_distinct_invalid_byte_streams_produce_different_hashes(tmp_path):
     assert result_a.dataset_hash != result_b.dataset_hash
 
 
+def test_hash_covers_bytes_after_a_decode_failure_not_just_before_it(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a decode failure stops PARSING (matching the prior
+    file-level-abort behavior), but the hash previously stopped too -- two
+    files sharing an identical prefix up to the exact same decode failure,
+    but differing arbitrarily in the UNREAD suffix, collapsed to the SAME
+    dataset hash. The hash must now cover the entire file regardless of
+    where parsing stopped."""
+
+    dir_a = tmp_path / "a"
+    dir_a.mkdir()
+    # Invalid UTF-8 on the first line (triggers the file-level-abort path),
+    # followed by a suffix that differs between the two files below.
+    (dir_a / "decisions_20260721.jsonl").write_bytes(b"\xff\xfe garbage\ntail-A-content-here\n")
+
+    dir_b = tmp_path / "b"
+    dir_b.mkdir()
+    (dir_b / "decisions_20260721.jsonl").write_bytes(b"\xff\xfe garbage\ntail-B-different!!!\n")
+
+    result_a = read_journal_directory(dir_a)
+    result_b = read_journal_directory(dir_b)
+
+    assert result_a.valid_records == []
+    assert result_b.valid_records == []
+    assert len(result_a.parse_errors) == 1
+    assert len(result_b.parse_errors) == 1
+    assert result_a.dataset_hash != result_b.dataset_hash
+
+
 def test_max_total_source_bytes_limit_raises_even_for_all_blank_lines(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round): a
     flood of whitespace-only lines previously bypassed both the

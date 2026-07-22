@@ -439,6 +439,52 @@ def test_writes_output_csv_and_errors_json(tmp_path):
     assert payload["summary"]["expected_cadence_minutes"] == _DEFAULT_CADENCE_MINUTES
 
 
+def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 16): a direct call with an invalid repo_path previously
+    raised GitMetadataError AFTER output_csv already existed on disk --
+    result and provenance were not one atomic publication. Metadata is
+    now captured before either file is written."""
+
+    from analysis.report_metadata import GitMetadataError
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+
+    out_csv = tmp_path / "out" / "mfe_mae.csv"
+    errors_json = tmp_path / "out" / "errors.json"
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+
+    with pytest.raises(GitMetadataError):
+        run(
+            trades_path,
+            bars_path,
+            output_csv=out_csv,
+            errors_json=errors_json,
+            seed=1,
+            repo_path=not_a_repo,
+        )
+
+    assert not out_csv.exists()
+    assert not errors_json.exists()
+
+
 def test_errors_json_auto_derived_when_omitted(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round): a
     caller requesting output_csv without errors_json previously got a CSV
