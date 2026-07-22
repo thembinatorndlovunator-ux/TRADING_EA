@@ -228,16 +228,29 @@ bool CPT_DetectDoubleBottomArray(const double &highs[], const double &lows[], co
   }
 
 //+------------------------------------------------------------------+
-//| TASK-039 — triple top: three confirmed swing highs (h1 newest, h2      |
-//| middle, h3 oldest) each within price_tolerance_atr of its immediate       |
-//| neighbor (a stated, documented interpretation choice extending double       |
-//| top's own single-pair tolerance check to two pairwise comparisons rather      |
-//| than a three-way spread, matching this engine's existing pairwise-             |
-//| tolerance convention), separated by two confirmed swing-low troughs.            |
-//| Neckline is the LOWER of the two troughs (a flat neckline, same as              |
-//| double top — triple top does not need head-and-shoulders' sloped-neckline          |
-//| treatment since it has no single dominant "head" asymmetry to interpolate            |
-//| across).                                                                              |
+//| Triple top: three confirmed swing highs (h1 newest, h2 middle, h3    |
+//| oldest) PAIRWISE within price_tolerance_atr of EACH OTHER -- all         |
+//| three pairs (h1-h2, h2-h3, AND h1-h3), per                                  |
+//| TASK-002_PHASE2_SPECIFICATION.md section 6's own literal wording, not          |
+//| just the two adjacent pairs (|H1-H2|<=tol and |H2-H3|<=tol does NOT             |
+//| imply |H1-H3|<=tol -- by the triangle inequality it can be up to 2x tol,           |
+//| a genuine spec deviation the seventh-round Codex review found, not a                 |
+//| stated interpretation choice). Separated by two confirmed swing-low                    |
+//| troughs forming a POSSIBLY SLOPED neckline through those two points                       |
+//| (CPT_LinearInterpolate, the SAME sloped-neckline machinery                                  |
+//| CPT_DetectHeadAndShouldersArray already uses) -- a previous flat                              |
+//| MathMin(trough1,trough2) neckline is also fixed here, per the same                              |
+//| review finding.                                                                                    |
+//|                                                                    |
+//| **Interpretation choice, stated explicitly (the spec's own triple-top       |
+//| sentence does not fully pin this down beyond "same breakout/target/stop        |
+//| logic using the neckline's value at the breakout bar"): boundary_price is           |
+//| the neckline evaluated at h1 (the newest peak), mirroring                              |
+//| CPT_DetectHeadAndShouldersArray's own "at rs (newest shoulder)"                            |
+//| convention exactly. The pullback-depth floor is checked against BOTH                          |
+//| troughs individually (extreme minus each trough's own raw low, not an   |
+//| interpolated point) since a genuine pullback requirement is about how      |
+//| far price actually retraced, independent of the neckline's own slope.**       |
 //+------------------------------------------------------------------+
 bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const double &closes[],
                                const int depth, const int max_lookback, const double current_atr,
@@ -270,6 +283,8 @@ bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const
       return false;
    if(MathAbs(highs[h2] - highs[h3]) > current_atr * price_tolerance_atr)
       return false;
+   if(MathAbs(highs[h1] - highs[h3]) > current_atr * price_tolerance_atr)
+      return false;
 
    int trough1; // between h1 (newer) and h2
    if(!SE_FindNearestConfirmedSwingLowArray(lows, h1 + 1, depth, h2 - h1, trough1))
@@ -283,38 +298,50 @@ bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const
    if(trough2 >= h3)
       return false;
 
-   double neckline = MathMin(lows[trough1], lows[trough2]);
    double extreme = MathMax(highs[h1], MathMax(highs[h2], highs[h3]));
 
-   if(extreme - neckline < min_pullback_atr * current_atr)
+   if(extreme - lows[trough1] < min_pullback_atr * current_atr)
+      return false;
+   if(extreme - lows[trough2] < min_pullback_atr * current_atr)
       return false;
    if(!CPT_HasPriorTrend(closes, h3, trend_bars, true))
       return false;
 
-   int breakout_level_index = -1;
-   double breakout_level = neckline - current_atr * breakout_buffer_atr;
+   int extreme_index = h1;
+   if(highs[h2] > highs[extreme_index]) extreme_index = h2;
+   if(highs[h3] > highs[extreme_index]) extreme_index = h3;
+
+   int breakout_index = -1;
    for(int k = h1 - 1; k >= 0; k--)
      {
-      if(closes[k] < breakout_level)
+      double neck_k = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], k);
+      if(closes[k] < neck_k - current_atr * breakout_buffer_atr)
         {
-         breakout_level_index = k;
+         breakout_index = k;
          break;
         }
      }
 
+   double neckline_at_extreme = CPT_LinearInterpolate(trough1, lows[trough1], trough2,
+                                                         lows[trough2], extreme_index);
+   int target_reference = (breakout_index >= 0) ? breakout_index : h1;
+   double neckline_at_target = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2],
+                                                        target_reference);
+
    result.found = true;
    result.type = CPT_TRIPLE_TOP;
-   result.boundary_price = neckline;
+   result.boundary_price = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], h1);
    result.extreme_price = extreme;
-   result.target = neckline - (extreme - neckline);
+   result.target = neckline_at_target - (extreme - neckline_at_extreme);
    result.stop = highs[h1] + current_atr * breakout_buffer_atr;
-   result.breakout_index = breakout_level_index;
+   result.breakout_index = breakout_index;
    return true;
   }
 
 //+------------------------------------------------------------------+
-//| TASK-039 — triple bottom: mirror of CPT_DetectTripleTopArray on       |
-//| swing lows.                                                             |
+//| Triple bottom: mirror of CPT_DetectTripleTopArray on swing lows --   |
+//| see that function's own header for the seventh-round Codex review        |
+//| fix (three-way pairwise tolerance + sloped neckline) this mirrors.          |
 //+------------------------------------------------------------------+
 bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], const double &closes[],
                                   const int depth, const int max_lookback, const double current_atr,
@@ -347,6 +374,8 @@ bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], co
       return false;
    if(MathAbs(lows[l2] - lows[l3]) > current_atr * price_tolerance_atr)
       return false;
+   if(MathAbs(lows[l1] - lows[l3]) > current_atr * price_tolerance_atr)
+      return false;
 
    int peak1; // between l1 (newer) and l2
    if(!SE_FindNearestConfirmedSwingHighArray(highs, l1 + 1, depth, l2 - l1, peak1))
@@ -360,32 +389,43 @@ bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], co
    if(peak2 >= l3)
       return false;
 
-   double neckline = MathMax(highs[peak1], highs[peak2]);
    double extreme = MathMin(lows[l1], MathMin(lows[l2], lows[l3]));
 
-   if(neckline - extreme < min_pullback_atr * current_atr)
+   if(highs[peak1] - extreme < min_pullback_atr * current_atr)
+      return false;
+   if(highs[peak2] - extreme < min_pullback_atr * current_atr)
       return false;
    if(!CPT_HasPriorTrend(closes, l3, trend_bars, false))
       return false;
 
-   int breakout_level_index = -1;
-   double breakout_level = neckline + current_atr * breakout_buffer_atr;
+   int extreme_index = l1;
+   if(lows[l2] < lows[extreme_index]) extreme_index = l2;
+   if(lows[l3] < lows[extreme_index]) extreme_index = l3;
+
+   int breakout_index = -1;
    for(int k = l1 - 1; k >= 0; k--)
      {
-      if(closes[k] > breakout_level)
+      double neck_k = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], k);
+      if(closes[k] > neck_k + current_atr * breakout_buffer_atr)
         {
-         breakout_level_index = k;
+         breakout_index = k;
          break;
         }
      }
 
+   double neckline_at_extreme = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2],
+                                                         extreme_index);
+   int target_reference = (breakout_index >= 0) ? breakout_index : l1;
+   double neckline_at_target = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2],
+                                                        target_reference);
+
    result.found = true;
    result.type = CPT_TRIPLE_BOTTOM;
-   result.boundary_price = neckline;
+   result.boundary_price = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], l1);
    result.extreme_price = extreme;
-   result.target = neckline + (neckline - extreme);
+   result.target = neckline_at_target + (neckline_at_extreme - extreme);
    result.stop = lows[l1] - current_atr * breakout_buffer_atr;
-   result.breakout_index = breakout_level_index;
+   result.breakout_index = breakout_index;
    return true;
   }
 

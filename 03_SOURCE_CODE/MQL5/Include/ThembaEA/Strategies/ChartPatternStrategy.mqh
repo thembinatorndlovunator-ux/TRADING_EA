@@ -149,6 +149,31 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
         { r = rIhs; found_type = CPT_INV_HEAD_SHOULDERS; pattern_is_bullish_breakout = true; }
      }
 
+   // **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding
+   // 11): CPT_DetectTripleTopArray/CPT_DetectTripleBottomArray (TASK-039)
+   // were never called from any live strategy path -- module-only coverage,
+   // per the review's own wording. Wired in here (the same trend-breakout-
+   // retest setup double top/H&S already use); range-boundary deliberately
+   // stays double-top/bottom only, per that setup's own existing, separate
+   // scope note.**
+   if(found_type == CPT_NONE)
+     {
+      SChartPatternResult rTt;
+      if(CPT_DetectTripleTopArray(highs, lows, closes, cfg.depth, cfg.max_lookback, current_atr,
+                                   cfg.price_tolerance_atr, cfg.min_pullback_atr, cfg.trend_bars,
+                                   cfg.breakout_buffer_atr, rTt) && rTt.breakout_index >= 0)
+        { r = rTt; found_type = CPT_TRIPLE_TOP; pattern_is_bullish_breakout = false; }
+     }
+
+   if(found_type == CPT_NONE)
+     {
+      SChartPatternResult rTb;
+      if(CPT_DetectTripleBottomArray(highs, lows, closes, cfg.depth, cfg.max_lookback, current_atr,
+                                      cfg.price_tolerance_atr, cfg.min_pullback_atr, cfg.trend_bars,
+                                      cfg.breakout_buffer_atr, rTb) && rTb.breakout_index >= 0)
+        { r = rTb; found_type = CPT_TRIPLE_BOTTOM; pattern_is_bullish_breakout = true; }
+     }
+
    if(found_type == CPT_NONE)
       return false;
    if(pattern_is_bullish_breakout != want_bullish)

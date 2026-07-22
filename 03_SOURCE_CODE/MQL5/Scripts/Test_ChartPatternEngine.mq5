@@ -109,6 +109,46 @@ void OnStart()
       Check("triple bottom stop == 89.8 (90 - 2*0.1)", NearlyEqual(r.stop, 89.8));
    }
 
+   //--- 2c. **Added, 2026-07-22 (Codex review finding, seventh round, P1 ---
+   //--- finding 11): triple top must reject when the OUTER pair (h1-h3) ------
+   //--- exceeds price_tolerance_atr even though BOTH adjacent pairs (h1-h2, ----
+   //--- h2-h3) individually stay within it -- the previous version only --------
+   //--- checked the two adjacent pairs and would have wrongly ACCEPTED this. -----
+   //--- Cross-checked against pattern_validation.py's own -------------------------
+   //--- test_detect_triple_top_rejects_when_outer_pair_exceeds_tolerance. -----------
+   {
+      double highs[]  = {100,110,100,90,100,109,100,90,100,108,100,95,90,85};
+      double lows[]   = {95,100,95,80,95,100,95,80,95,100,95,85,80,75};
+      double closes[] = {98,105,97,85,97,105,97,85,97,105,97,90,85,80};
+      SChartPatternResult r;
+      bool ok = CPT_DetectTripleTopArray(highs, lows, closes, 1, 5, 2.0, 0.5, 1.0, 2, 0.1, r);
+      Check("triple top rejects when h1-h3 (2.0) exceeds tolerance (1.0) even though "
+            "h1-h2 (1.0) and h2-h3 (1.0) each individually satisfy it",
+            ok == false);
+   }
+
+   //--- 2d. **Added, 2026-07-22 (Codex review finding, seventh round, P1 ---
+   //--- finding 11): triple top's neckline must be SLOPED (linearly              ---
+   //--- interpolated through both troughs), not flattened to their minimum. ---------
+   //--- Cross-checked against pattern_validation.py's own -------------------------
+   //--- test_detect_triple_top_uses_sloped_neckline_not_flat_min (identical ---------
+   //--- fixture/hand-traced expected values -- see that test's own docstring -----
+   //--- for the full arithmetic). ---------------------------------------------------
+   {
+      double highs[]  = {100,110,100,90,100,110,100,90,100,110,100,95,90,85};
+      double lows[]   = {95,100,95,85,95,100,95,70,95,100,95,85,80,75};
+      double closes[] = {98,105,97,85,97,105,97,85,97,105,97,90,85,80};
+      SChartPatternResult r;
+      bool ok = CPT_DetectTripleTopArray(highs, lows, closes, 1, 5, 2.0, 0.5, 1.0, 2, 0.1, r);
+      Check("triple top (sloped neckline) detected", ok && r.found && r.type == CPT_TRIPLE_TOP);
+      Check("triple top boundary_price == 92.5 (sloped neckline at h1, NOT the flat "
+            "min(85,70)=70 the previous version would have reported)",
+            NearlyEqual(r.boundary_price, 92.5));
+      Check("triple top extreme_price == 110", NearlyEqual(r.extreme_price, 110.0));
+      Check("triple top target == 75 (92.5 - (110-92.5)), NOT the old flat formula's 30",
+            NearlyEqual(r.target, 75.0));
+   }
+
    //--- 3. Head and shoulders (sloped neckline, hand-traced interpolation) -
    {
       double highs[]  = {95,95,95,100,95,95,95,110,95,95,95,101,95,95,95,95,95,95,95,95};

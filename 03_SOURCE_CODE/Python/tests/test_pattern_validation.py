@@ -741,6 +741,159 @@ def test_detect_triple_top_not_found_when_atr_non_positive():
     assert result.found is False
 
 
+# **Added, 2026-07-22 Codex review finding (seventh round, P1 finding 11):**
+# same shape as _TT_HIGHS/_TT_LOWS, but h1=110.0, h2=109.0, h3=108.0 -- each
+# ADJACENT pair (h1-h2=1.0, h2-h3=1.0) is exactly at the tolerance
+# (price_tolerance_atr=0.5 * current_atr=2.0 = 1.0), yet h1-h3=2.0 exceeds
+# it. The previous version checked only the two adjacent pairs and would
+# have wrongly ACCEPTED this as a valid triple top.
+_TT_HIGHS_DIVERGING_OUTER_PAIR = [
+    100.0,
+    110.0,
+    100.0,
+    90.0,
+    100.0,
+    109.0,
+    100.0,
+    90.0,
+    100.0,
+    108.0,
+    100.0,
+    95.0,
+    90.0,
+    85.0,
+]
+
+
+def test_detect_triple_top_rejects_when_outer_pair_exceeds_tolerance():
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 11): TASK-002_PHASE2_SPECIFICATION.md section 6 requires
+    all THREE peaks pairwise within price_tolerance_atr of each other,
+    not just the two adjacent pairs -- h1 and h3 diverging by 2x the
+    adjacent-pair tolerance must be rejected."""
+
+    result = detect_triple_top(
+        _TT_HIGHS_DIVERGING_OUTER_PAIR,
+        _TT_LOWS,
+        _TT_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=2.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is False
+
+
+# **Added, 2026-07-22 Codex review finding (seventh round, P1 finding 11):**
+# same shape as _TT_LOWS, but trough1 (index 3) = 85.0 and trough2 (index 7)
+# = 70.0 -- a genuinely SLOPED neckline (the previous flat
+# min(85.0, 70.0)=70.0 neckline is a different, wrong value from the
+# correct sloped-at-h1 value hand-traced below).
+_TT_LOWS_SLOPED_NECKLINE = [
+    95.0,
+    100.0,
+    95.0,
+    85.0,
+    95.0,
+    100.0,
+    95.0,
+    70.0,
+    95.0,
+    100.0,
+    95.0,
+    85.0,
+    80.0,
+    75.0,
+]
+
+
+def test_detect_triple_top_uses_sloped_neckline_not_flat_min():
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 11): the neckline through trough1 (index 3, price 85.0) and
+    trough2 (index 7, price 70.0) must be LINEARLY INTERPOLATED/
+    EXTRAPOLATED (per TASK-002_PHASE2_SPECIFICATION.md section 6's
+    "possibly sloped neckline"), not flattened to min(85.0, 70.0)=70.0.
+
+    Hand-traced: h1=1, h2=5, h3=9 (unchanged from the base fixture, all
+    exactly 110.0 -- pairwise tolerance trivially satisfied). trough1=3
+    (85.0), trough2=7 (70.0). Sloped neckline at k:
+    linear_interpolate(3, 85.0, 7, 70.0, k) = 85.0 + (70.0-85.0)*(3-k)/(3-7)
+    = 85.0 + 15.0*(3-k)/4.0.
+
+    boundary_price is evaluated at h1=1:
+      85.0 + 15.0*(3-1)/4.0 = 85.0 + 7.5 = 92.5 -- NOT the flat 70.0 the
+      previous version would have reported.
+
+    No breakout is found (closes[0]=98.0 never drops below the neckline
+    minus the buffer at any scanned k), so target_reference=h1=1 too, and
+    neckline_at_extreme is ALSO evaluated at h1 (extreme_index==h1 here,
+    since all three peaks tie at 110.0 and ties never advance
+    extreme_index past the first/newest one): both equal 92.5, giving
+    target = 92.5 - (110.0 - 92.5) = 92.5 - 17.5 = 75.0 -- not the old
+    formula's 70.0 - (110.0-70.0) = 30.0.
+    """
+
+    result = detect_triple_top(
+        _TT_HIGHS,
+        _TT_LOWS_SLOPED_NECKLINE,
+        _TT_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=2.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is True
+    assert result.boundary_price == pytest.approx(92.5)
+    assert result.extreme_price == pytest.approx(110.0)
+    assert result.target == pytest.approx(75.0)
+
+
+# **Added, 2026-07-22 Codex review finding (seventh round, P1 finding 11):**
+# mirror of the outer-pair rejection test above, on swing lows.
+_TB_LOWS_DIVERGING_OUTER_PAIR = [
+    100.0,
+    90.0,
+    100.0,
+    110.0,
+    100.0,
+    91.0,
+    100.0,
+    110.0,
+    100.0,
+    92.0,
+    100.0,
+    105.0,
+    110.0,
+    115.0,
+]
+
+
+def test_detect_triple_bottom_rejects_when_outer_pair_exceeds_tolerance():
+    """Mirror of test_detect_triple_top_rejects_when_outer_pair_exceeds_tolerance
+    on swing lows: l1=90.0, l2=91.0, l3=92.0 -- each adjacent pair (1.0) is
+    exactly at tolerance, but l1-l3=2.0 exceeds it."""
+
+    result = detect_triple_bottom(
+        _TB_HIGHS,
+        _TB_LOWS_DIVERGING_OUTER_PAIR,
+        _TB_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=2.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is False
+
+
 # Head-and-shoulders fixture: three confirmed swing highs (RS newest, Head,
 # LS oldest) with the head strictly higher, roughly symmetric in time, and
 # two confirmed swing-low troughs between them for the (sloped) neckline.
@@ -944,6 +1097,66 @@ def test_run_writes_output_csv(tmp_path):
     assert out_csv.exists()
     assert len(pd.read_csv(out_csv)) == 2
     assert len(result) == 2
+
+
+def test_run_always_includes_three_bar_reversal_column(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 11): run()'s own CLI path previously exposed neither
+    atr_values nor swing_depth to detect_all_patterns(), so
+    three_bar_reversal (which needs only swing_depth, no extra CSV
+    column) could never be persisted through the advertised pipeline."""
+
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+        }
+    ).to_csv(path, index=False)
+
+    result = run(path)
+    assert "three_bar_reversal" in result.columns
+    assert "marubozu" not in result.columns  # no 'atr' column supplied -- correctly absent
+
+
+def test_run_includes_atr_dependent_columns_when_atr_column_present(tmp_path):
+    """An 'atr' column in ohlc_csv must enable the ATR-dependent pattern
+    columns (marubozu, tweezer_top, tweezer_bottom) through run()'s own
+    CLI path, per the same finding as
+    test_run_always_includes_three_bar_reversal_column."""
+
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+            "atr": [2.0, 2.0],
+        }
+    ).to_csv(path, index=False)
+
+    result = run(path)
+    for col in ("marubozu", "tweezer_top", "tweezer_bottom", "three_bar_reversal"):
+        assert col in result.columns
+
+
+def test_run_rejects_non_positive_atr(tmp_path):
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+            "atr": [2.0, 0.0],
+        }
+    ).to_csv(path, index=False)
+
+    with pytest.raises(CsvSchemaError):
+        run(path)
 
 
 def test_summary_json_auto_derived_when_omitted(tmp_path):

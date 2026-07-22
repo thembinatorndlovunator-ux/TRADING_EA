@@ -922,10 +922,22 @@ def detect_triple_top(
     trend_bars: int,
     breakout_buffer_atr: float,
 ) -> ChartPatternResult:
-    """Direct port of CPT_DetectTripleTopArray (TASK-039): three confirmed
-    swing highs each within price_tolerance_atr of its immediate neighbor,
-    separated by two confirmed swing-low troughs. Neckline is the LOWER of
-    the two troughs (a flat neckline, same as double top)."""
+    """Direct port of CPT_DetectTripleTopArray: three confirmed swing
+    highs PAIRWISE within price_tolerance_atr of EACH OTHER -- all three
+    pairs (h1-h2, h2-h3, AND h1-h3), per
+    TASK-002_PHASE2_SPECIFICATION.md section 6's own literal wording, not
+    just the two adjacent pairs. Separated by two confirmed swing-low
+    troughs forming a POSSIBLY SLOPED neckline through those two points
+    (linear_interpolate, the same machinery detect_head_and_shoulders
+    already uses).
+
+    **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    11): the previous version checked only the two ADJACENT pairwise
+    tolerances (h1-h2, h2-h3), letting h1 and h3 diverge by up to 2x the
+    stated tolerance, and used a flat MathMin(trough1,trough2) neckline
+    instead of the specified sloped neckline evaluated at the breakout
+    bar -- see CPT_DetectTripleTopArray's own header for the full
+    corrected geometry this mirrors exactly.**"""
 
     if current_atr <= 0.0:
         return _empty_chart_pattern_result()
@@ -944,6 +956,8 @@ def detect_triple_top(
         return _empty_chart_pattern_result()
     if abs(highs[h2] - highs[h3]) > current_atr * price_tolerance_atr:
         return _empty_chart_pattern_result()
+    if abs(highs[h1] - highs[h3]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
 
     trough1 = find_nearest_confirmed_swing_low(lows, h1 + 1, depth, h2 - h1)
     if trough1 is None or trough1 >= h2:
@@ -953,29 +967,42 @@ def detect_triple_top(
     if trough2 is None or trough2 >= h3:
         return _empty_chart_pattern_result()
 
-    neckline = min(lows[trough1], lows[trough2])
     extreme = max(highs[h1], highs[h2], highs[h3])
 
-    if extreme - neckline < min_pullback_atr * current_atr:
+    if extreme - lows[trough1] < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if extreme - lows[trough2] < min_pullback_atr * current_atr:
         return _empty_chart_pattern_result()
     if not has_prior_trend(closes, h3, trend_bars, True):
         return _empty_chart_pattern_result()
 
-    breakout_level_index = -1
-    breakout_level = neckline - current_atr * breakout_buffer_atr
+    extreme_index = h1
+    if highs[h2] > highs[extreme_index]:
+        extreme_index = h2
+    if highs[h3] > highs[extreme_index]:
+        extreme_index = h3
+
+    breakout_index = -1
     for k in range(h1 - 1, -1, -1):
-        if closes[k] < breakout_level:
-            breakout_level_index = k
+        neck_k = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], k)
+        if closes[k] < neck_k - current_atr * breakout_buffer_atr:
+            breakout_index = k
             break
+
+    neckline_at_extreme = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2],
+                                              extreme_index)
+    target_reference = breakout_index if breakout_index >= 0 else h1
+    neckline_at_target = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2],
+                                             target_reference)
 
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.TRIPLE_TOP,
-        boundary_price=neckline,
+        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], h1),
         extreme_price=extreme,
-        target=neckline - (extreme - neckline),
+        target=neckline_at_target - (extreme - neckline_at_extreme),
         stop=highs[h1] + current_atr * breakout_buffer_atr,
-        breakout_index=breakout_level_index,
+        breakout_index=breakout_index,
     )
 
 
@@ -991,7 +1018,10 @@ def detect_triple_bottom(
     trend_bars: int,
     breakout_buffer_atr: float,
 ) -> ChartPatternResult:
-    """Direct port of CPT_DetectTripleBottomArray (mirror of triple top)."""
+    """Direct port of CPT_DetectTripleBottomArray (mirror of triple top) --
+    see detect_triple_top's own docstring for the seventh-round Codex
+    review fix (three-way pairwise tolerance + sloped neckline) this
+    mirrors."""
 
     if current_atr <= 0.0:
         return _empty_chart_pattern_result()
@@ -1010,6 +1040,8 @@ def detect_triple_bottom(
         return _empty_chart_pattern_result()
     if abs(lows[l2] - lows[l3]) > current_atr * price_tolerance_atr:
         return _empty_chart_pattern_result()
+    if abs(lows[l1] - lows[l3]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
 
     peak1 = find_nearest_confirmed_swing_high(highs, l1 + 1, depth, l2 - l1)
     if peak1 is None or peak1 >= l2:
@@ -1019,29 +1051,42 @@ def detect_triple_bottom(
     if peak2 is None or peak2 >= l3:
         return _empty_chart_pattern_result()
 
-    neckline = max(highs[peak1], highs[peak2])
     extreme = min(lows[l1], lows[l2], lows[l3])
 
-    if neckline - extreme < min_pullback_atr * current_atr:
+    if highs[peak1] - extreme < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if highs[peak2] - extreme < min_pullback_atr * current_atr:
         return _empty_chart_pattern_result()
     if not has_prior_trend(closes, l3, trend_bars, False):
         return _empty_chart_pattern_result()
 
-    breakout_level_index = -1
-    breakout_level = neckline + current_atr * breakout_buffer_atr
+    extreme_index = l1
+    if lows[l2] < lows[extreme_index]:
+        extreme_index = l2
+    if lows[l3] < lows[extreme_index]:
+        extreme_index = l3
+
+    breakout_index = -1
     for k in range(l1 - 1, -1, -1):
-        if closes[k] > breakout_level:
-            breakout_level_index = k
+        neck_k = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], k)
+        if closes[k] > neck_k + current_atr * breakout_buffer_atr:
+            breakout_index = k
             break
+
+    neckline_at_extreme = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2],
+                                              extreme_index)
+    target_reference = breakout_index if breakout_index >= 0 else l1
+    neckline_at_target = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2],
+                                             target_reference)
 
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.TRIPLE_BOTTOM,
-        boundary_price=neckline,
+        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], l1),
         extreme_price=extreme,
-        target=neckline + (neckline - extreme),
+        target=neckline_at_target + (neckline_at_extreme - extreme),
         stop=lows[l1] - current_atr * breakout_buffer_atr,
-        breakout_index=breakout_level_index,
+        breakout_index=breakout_index,
     )
 
 
@@ -1258,17 +1303,25 @@ def detect_all_patterns(
     the array (Python negative-index semantics) and compare against an
     unrelated bar instead of raising.
 
-    **TASK-033: 'atr_values'/'swing_depth' are OPT-IN (default None),
-    deliberately NOT changing this function's default 4-column output --
-    `Export_PatternDetectorResults.mq5` (TASK-037) was built to match
-    exactly that default shape, and changing it silently would break that
-    already-built export's comparability. Passing atr_values adds the
-    ATR-dependent columns (marubozu, tweezer top/bottom); passing
-    swing_depth additionally adds three_bar_reversal. Every OTHER new
-    TASK-033 pattern (dragonfly/gravestone rejection, doji, spinning top,
+    **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    11): this docstring previously (and wrongly) still described a
+    "default 4-column output" -- that was true only of an early version
+    of this function; TASK-033 added twelve more always-included
+    patterns since (dragonfly/gravestone rejection, doji, spinning top,
     inside/outside bar, harami-detected/confirmed, morning/evening star,
-    three white soldiers/three black crows) needs neither and is always
-    included.**
+    three white soldiers/three black crows), so the DEFAULT output (no
+    atr_values/swing_depth) is actually 'k' plus SIXTEEN boolean pattern
+    columns, not four. 'Export_PatternDetectorResults.mq5' (TASK-037) has
+    also been extended this same round to match that full column set
+    exactly (see that file's own header), closing the schema-
+    incompatibility gap the stale docstring here was masking.**
+
+    'atr_values'/'swing_depth' remain OPT-IN (default None): passing
+    atr_values adds the ATR-dependent columns (marubozu, tweezer top/
+    bottom); passing swing_depth additionally adds three_bar_reversal.
+    `run()`'s own CLI path now always forwards both (see that function's
+    own docstring) so the full pattern set is reachable through the
+    advertised pipeline, not just by calling this function directly.
     """
 
     if trend_lookback < 1:
@@ -1368,6 +1421,7 @@ def run(
     *,
     trend_lookback: int = 5,
     size_window: int = 20,
+    swing_depth: int = 3,
     ascending_input: bool = False,
     symbol: Optional[str] = None,
     seed: Optional[int] = None,
@@ -1378,8 +1432,24 @@ def run(
     slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
-    """Reads 'ohlc_csv' (columns open/high/low/close) and detects every
-    ported pattern at every valid index.
+    """Reads 'ohlc_csv' (columns open/high/low/close, plus an OPTIONAL
+    'atr' column) and detects every ported pattern at every valid index.
+
+    **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    11): this public/CLI path previously exposed neither ATR values nor
+    swing depth to detect_all_patterns, so marubozu/tweezer top/tweezer
+    bottom/three_bar_reversal could never be persisted through the
+    advertised pipeline -- only by calling detect_all_patterns() directly
+    with those arguments, which no CLI path did. 'swing_depth' is now a
+    real, always-forwarded parameter (three_bar_reversal has no CSV data
+    dependency, so there is no reason it should ever be opt-out from this
+    path). ATR values are read from an OPTIONAL 'atr' column in
+    'ohlc_csv' if present (this project's own established discipline of
+    never re-deriving a live MQL5 indicator formula independently means
+    this function does not compute ATR itself from OHLC -- a caller
+    supplies it, e.g. from the same MT5 export that produced the OHLC
+    columns); if 'atr' is absent, marubozu/tweezer columns are simply not
+    produced, exactly as detect_all_patterns() itself already documents.**
 
     'ascending_input' makes the required array convention an explicit,
     caller-declared choice instead of a silent assumption (a Codex review
@@ -1431,6 +1501,11 @@ def run(
     assert_high_low_geometry(
         ohlc, "high", "low", ohlc_csv, open_column="open", close_column="close"
     )
+    has_atr = "atr" in ohlc.columns
+    if has_atr:
+        assert_finite_columns(ohlc, ["atr"], ohlc_csv)
+        if (ohlc["atr"] <= 0.0).any():
+            raise CsvSchemaError(f"{ohlc_csv}: 'atr' must be strictly positive on every row")
     if ascending_input:
         ohlc = ohlc.iloc[::-1].reset_index(drop=True)
 
@@ -1441,6 +1516,8 @@ def run(
         ohlc["close"].tolist(),
         trend_lookback=trend_lookback,
         size_window=size_window,
+        atr_values=ohlc["atr"].tolist() if has_atr else None,
+        swing_depth=swing_depth,
     )
 
     if output_csv is not None:
@@ -1464,6 +1541,8 @@ def run(
                 "n_bars": len(ohlc),
                 "trend_lookback": trend_lookback,
                 "size_window": size_window,
+                "swing_depth": swing_depth,
+                "atr_column_present": has_atr,
                 "ascending_input": ascending_input,
                 "n_detections": int(result.drop(columns=["k"]).sum().sum()),
             },
@@ -1480,6 +1559,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--trend-lookback", type=int, default=5)
     parser.add_argument("--size-window", type=int, default=20)
+    parser.add_argument("--swing-depth", type=int, default=3)
     parser.add_argument(
         "--ascending-input",
         action="store_true",
@@ -1502,6 +1582,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.summary_json,
             trend_lookback=args.trend_lookback,
             size_window=args.size_window,
+            swing_depth=args.swing_depth,
             ascending_input=args.ascending_input,
             symbol=args.symbol,
             seed=args.seed,
