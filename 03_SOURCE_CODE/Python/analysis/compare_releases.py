@@ -568,7 +568,7 @@ def run(
     )
 
     def _point_diff(
-        candidate_val: Optional[float], baseline_val: Optional[float]
+        candidate_val: Optional[float], baseline_val: Optional[float], label: str
     ) -> Optional[float]:
         # Point difference only (no CI) -- these are single-run
         # descriptive statistics, not resampled distributions; None
@@ -577,44 +577,68 @@ def run(
         # drawdown) rather than a misleading fabricated number.
         if candidate_val is None or baseline_val is None:
             return None
-        return candidate_val - baseline_val
+        diff = candidate_val - baseline_val
+        # **Added, 2026-07-22 Codex review finding (sixth round): two
+        # individually finite summary values (e.g. net_profit at opposite
+        # extreme magnitudes) can still overflow to a non-finite
+        # DIFFERENCE -- a reproduced probe produced surface_diff.
+        # net_profit == inf from finite baseline/candidate summaries with
+        # no error raised anywhere.**
+        if not math.isfinite(diff):
+            raise ValueError(
+                f"compare_releases: surface_diff.{label} overflowed to a non-finite value "
+                f"({diff!r}) from candidate={candidate_val!r}, baseline={baseline_val!r}"
+            )
+        return diff
 
-    surface_diff = {
-        "net_profit": _point_diff(candidate_summary["net_profit"], baseline_summary["net_profit"]),
-        "profit_factor": _point_diff(
-            candidate_summary["profit_factor"], baseline_summary["profit_factor"]
-        ),
-        "max_balance_drawdown_pct": _point_diff(
+    _SURFACE_DIFF_FIELDS: tuple[tuple[str, Optional[float], Optional[float]], ...] = (
+        ("net_profit", candidate_summary["net_profit"], baseline_summary["net_profit"]),
+        ("profit_factor", candidate_summary["profit_factor"], baseline_summary["profit_factor"]),
+        (
+            "max_balance_drawdown_pct",
             candidate_summary["max_balance_drawdown_pct"],
             baseline_summary["max_balance_drawdown_pct"],
         ),
-        "recovery_factor": _point_diff(
-            candidate_summary["recovery_factor"], baseline_summary["recovery_factor"]
+        (
+            "recovery_factor",
+            candidate_summary["recovery_factor"],
+            baseline_summary["recovery_factor"],
         ),
-        "balance_peak_giveback_n_trigger_events": _point_diff(
+        (
+            "balance_peak_giveback_n_trigger_events",
             candidate_summary["balance_peak_giveback"]["n_trigger_events"],
             baseline_summary["balance_peak_giveback"]["n_trigger_events"],
         ),
-        "balance_peak_giveback_max_giveback_pct": _point_diff(
+        (
+            "balance_peak_giveback_max_giveback_pct",
             candidate_summary["balance_peak_giveback"]["max_giveback_pct"],
             baseline_summary["balance_peak_giveback"]["max_giveback_pct"],
         ),
-        "longest_losing_streak": _point_diff(
-            candidate_summary["longest_losing_streak"], baseline_summary["longest_losing_streak"]
+        (
+            "longest_losing_streak",
+            candidate_summary["longest_losing_streak"],
+            baseline_summary["longest_losing_streak"],
         ),
-        "avg_winner_dollars": _point_diff(
-            candidate_summary["avg_winner_dollars"], baseline_summary["avg_winner_dollars"]
+        (
+            "avg_winner_dollars",
+            candidate_summary["avg_winner_dollars"],
+            baseline_summary["avg_winner_dollars"],
         ),
-        "avg_loser_dollars": _point_diff(
-            candidate_summary["avg_loser_dollars"], baseline_summary["avg_loser_dollars"]
+        (
+            "avg_loser_dollars",
+            candidate_summary["avg_loser_dollars"],
+            baseline_summary["avg_loser_dollars"],
         ),
-        "avg_trade_duration_minutes": _point_diff(
+        (
+            "avg_trade_duration_minutes",
             candidate_summary["avg_trade_duration_minutes"],
             baseline_summary["avg_trade_duration_minutes"],
         ),
-        "trades_per_day": _point_diff(
-            candidate_summary["trades_per_day"], baseline_summary["trades_per_day"]
-        ),
+        ("trades_per_day", candidate_summary["trades_per_day"], baseline_summary["trades_per_day"]),
+    )
+    surface_diff = {
+        label: _point_diff(cand_val, base_val, label)
+        for label, cand_val, base_val in _SURFACE_DIFF_FIELDS
     }
 
     summary = {

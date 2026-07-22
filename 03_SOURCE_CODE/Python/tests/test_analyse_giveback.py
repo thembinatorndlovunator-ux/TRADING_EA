@@ -836,6 +836,38 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
         run(trades_path, bars_path, output_csv=trades_path)
 
 
+def test_actual_final_r_overflow_is_a_row_error_not_silent_infinity(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    tiny-but-positive entry-to-stop risk distance combined with a large-
+    but-finite bar close previously produced actual_final_r == inf (and
+    v637_r_diff == nan, inf - inf) with NO row error anywhere --
+    compute_r_multiple's own division was never checked for overflow.
+    Must now be a row error, not silent infinity/NaN."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 1e300])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 100.0 - 1e-10,
+            }
+        ],
+    )
+
+    result = run(trades_path, bars_path, seed=1)
+    assert result.comparisons == []
+    assert len(result.row_errors) == 1
+    assert "overflow" in result.row_errors[0]["error"]
+
+
 def test_summary_json_auto_derived_when_omitted(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round): a
     caller requesting output_csv without summary_json previously got a

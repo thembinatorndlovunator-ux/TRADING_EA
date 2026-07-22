@@ -331,6 +331,44 @@ def test_incomplete_bar_coverage_captured_as_row_error(tmp_path):
     assert result.row_errors[0]["trade_id"] == "sparse-1"
 
 
+def test_mfe_r_overflow_is_a_row_error_not_silent_infinity(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    tiny-but-positive entry-to-stop risk distance combined with a large-
+    but-finite bar excursion previously produced mfe_r == inf with NO row
+    error anywhere -- compute_r_multiple's own division was never
+    checked for overflow. Must now be a row error, not silent infinity."""
+
+    bars_path = tmp_path / "bars.csv"
+    pd.DataFrame(
+        {
+            "symbol": ["XAUUSD", "XAUUSD"],
+            "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T01:00:00Z"],
+            "high": [1e300, 101.0],
+            "low": [100.0, 99.0],
+        }
+    ).to_csv(bars_path, index=False)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 100.0 - 1e-10,
+            }
+        ],
+    )
+
+    result = run(trades_path, bars_path, expected_cadence_minutes=60.0, seed=1)
+    assert result.results == []
+    assert len(result.row_errors) == 1
+    assert "overflow" in result.row_errors[0]["error"]
+
+
 def test_expected_cadence_minutes_is_required(tmp_path):
     """run() itself (not this test file's default-injecting wrapper) must
     reject a call with no cadence declared at all."""

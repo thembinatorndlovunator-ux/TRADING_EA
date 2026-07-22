@@ -31,6 +31,19 @@ def test_compute_r_multiple_negative_favors_is_negative_r():
     assert compute_r_multiple(True, 100.0, 98.0, 97.0) == pytest.approx(-1.5)
 
 
+def test_compute_r_multiple_rejects_overflow_to_non_finite():
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    tiny-but-positive risk_distance combined with a large-but-finite
+    favor_distance previously overflowed this division silently, with no
+    check anywhere in this shared primitive -- reproduced counterexamples
+    in calculate_mfe_mae.py (mfe_r == inf) and analyse_giveback.py
+    (actual_final_r == inf, v637_r_diff == nan) both traced back to this
+    exact gap."""
+
+    with pytest.raises(ValueError):
+        compute_r_multiple(True, 100.0, 100.0 - 1e-10, 1e300)
+
+
 # --- compute_mfe_mae --------------------------------------------------------
 
 

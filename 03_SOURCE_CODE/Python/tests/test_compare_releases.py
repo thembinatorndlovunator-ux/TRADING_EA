@@ -293,6 +293,43 @@ def test_n_resamples_and_confidence_forwarded_into_nested_summaries(tmp_path):
     assert summary["candidate_summary"]["expectancy_dollars"]["confidence"] == 0.90
 
 
+def test_surface_diff_net_profit_overflow_is_a_visible_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    two individually finite baseline/candidate net_profit summary values
+    at opposite extreme magnitudes previously produced
+    surface_diff.net_profit == inf with no error raised anywhere --
+    _point_diff never checked its own DIFFERENCE for finiteness."""
+
+    def _extreme_rows(profit: float) -> list[dict]:
+        return [
+            {
+                "trade_id": f"t{i}",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": profit,
+            }
+            for i in range(10)
+        ]
+
+    baseline_path = tmp_path / "baseline.csv"
+    pd.DataFrame(_extreme_rows(1.5e307)).to_csv(baseline_path, index=False)
+    candidate_path = tmp_path / "candidate.csv"
+    pd.DataFrame(_extreme_rows(-1.5e307)).to_csv(candidate_path, index=False)
+
+    with pytest.raises(ValueError, match="net_profit"):
+        run(
+            baseline_path,
+            candidate_path,
+            period_start=DEFAULT_PERIOD_START,
+            period_end=DEFAULT_PERIOD_END,
+        )
+
+
 def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round):
     'trade_id' was previously read via plain pandas type inference -- a

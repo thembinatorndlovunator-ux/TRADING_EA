@@ -20,7 +20,24 @@ def compute_r_multiple(
 ) -> float:
     """Mirrors ExitManager.mqh's EM_ComputeR exactly: R = favor_distance /
     risk_distance. Returns 0.0 (never divides by zero) if the initial risk
-    distance is non-positive, matching the MQL5 fail-safe behavior."""
+    distance is non-positive, matching the MQL5 fail-safe behavior.
+
+    Raises ValueError if the result overflows to a non-finite value --
+    **added, 2026-07-22 Codex review finding (sixth round): a tiny-but-
+    positive risk_distance combined with a large-but-finite
+    favor_distance previously overflowed this division silently, with no
+    check anywhere in this shared primitive. Reproduced counterexamples
+    traced back to this exact gap: calculate_mfe_mae.py's mfe_r == inf
+    with no row error from finite bar prices, and analyse_giveback.py's
+    actual_final_r == inf / v637_r_diff == nan (inf - inf) with no row
+    error from a finite exit_price. This is the one shared function every
+    affected caller already routes through (calculate_mfe_mae.py,
+    analyse_giveback.py, compare_releases.py, walk_forward.py), so fixing
+    it here closes the gap for all of them at once -- every caller
+    already either catches ValueError as a per-row error or lets it
+    propagate to its own CLI's existing ValueError handler, so this
+    raise does not change either pipeline's error-reporting shape.**
+    """
 
     risk_distance = (
         (entry_price - initial_stop_price) if is_long else (initial_stop_price - entry_price)
@@ -29,7 +46,13 @@ def compute_r_multiple(
         return 0.0
 
     favor_distance = (price - entry_price) if is_long else (entry_price - price)
-    return favor_distance / risk_distance
+    r_multiple = favor_distance / risk_distance
+    if not math.isfinite(r_multiple):
+        raise ValueError(
+            f"compute_r_multiple: result overflowed to a non-finite value ({r_multiple!r}) from "
+            f"favor_distance={favor_distance!r}, risk_distance={risk_distance!r}"
+        )
+    return r_multiple
 
 
 @dataclass(frozen=True)
