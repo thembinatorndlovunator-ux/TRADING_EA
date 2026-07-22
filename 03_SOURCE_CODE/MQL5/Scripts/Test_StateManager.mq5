@@ -106,6 +106,26 @@ void OnStart()
    Check("second Ensure call is idempotent on schema version",
          SM_GetAccountSchemaVersion() == SM_SCHEMA_VERSION);
 
+   //--- 6. SM_SetAccountDoublesBatch: multiple fields under ONE lock ----
+   //---    hold (Codex review finding, seventh round, P1 finding 14) ----
+   string batch_fields[2] = {"test_field_a", "test_field_b"};
+   double batch_values[2] = {111.0, 222.0};
+   bool batch_ok = SM_SetAccountDoublesBatch(batch_fields, batch_values);
+   Check("SM_SetAccountDoublesBatch returns true (lock acquired)", batch_ok);
+   Check("SM_SetAccountDoublesBatch sets the FIRST field",
+         SM_GetAccountDouble("test_field_a", default_val) == 111.0);
+   Check("SM_SetAccountDoublesBatch sets the SECOND field",
+         SM_GetAccountDouble("test_field_b", default_val) == 222.0);
+
+   string mismatched_fields[2] = {"test_field_a", "test_field_b"};
+   double mismatched_values[1] = {999.0};
+   bool mismatched_ok = SM_SetAccountDoublesBatch(mismatched_fields, mismatched_values);
+   Check("SM_SetAccountDoublesBatch refuses mismatched field/value array sizes",
+         mismatched_ok == false);
+   Check("a refused mismatched batch call touches NEITHER field",
+         SM_GetAccountDouble("test_field_a", default_val) == 111.0 &&
+         SM_GetAccountDouble("test_field_b", default_val) == 222.0);
+
    //--- Cleanup: leave no residue in the account-wide namespace -------
    SM_DeleteAccountField("test_field_a");
    SM_DeleteAccountField("test_field_b");

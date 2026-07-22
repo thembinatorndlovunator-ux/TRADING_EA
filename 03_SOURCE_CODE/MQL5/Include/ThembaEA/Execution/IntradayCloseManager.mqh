@@ -92,8 +92,20 @@ bool ICM_CloseAllOwnedPositions(const long magic, string &reasons[])
       // "keep retrying until a full success" guard design.**
       if(!ok || retcode != TRADE_RETCODE_DONE)
         {
-         string reason_tag = (retcode == TRADE_RETCODE_PLACED) ? "intraday_close_pending_confirmation"
-                                                                 : "intraday_close_failed";
+         // **Extended, 2026-07-22 (Codex review finding, seventh round, P1
+         // finding 14): TRADE_RETCODE_DONE_PARTIAL (a real partial
+         // completion -- only part of the position's volume actually
+         // closed) is now named explicitly rather than lumped under the
+         // generic "failed" reason. It still correctly leaves all_ok=false
+         // so this bar's close is retried on the position's own now-smaller
+         // remaining volume next tick, per this module's own retry design.**
+         string reason_tag;
+         if(retcode == TRADE_RETCODE_PLACED)
+            reason_tag = "intraday_close_pending_confirmation";
+         else if(retcode == TRADE_RETCODE_DONE_PARTIAL)
+            reason_tag = "intraday_close_partial_remainder_still_open";
+         else
+            reason_tag = "intraday_close_failed";
          ICM_AppendReason(reasons, StringFormat(
             "%s_ticket_%I64u_symbol_%s_retcode_%u",
             reason_tag, ticket, symbol, retcode));

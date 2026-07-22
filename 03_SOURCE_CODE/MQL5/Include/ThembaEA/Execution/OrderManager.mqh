@@ -309,8 +309,24 @@ bool OM_ClosePosition(const ulong position_ticket, const long magic, string &rej
    // failure or a success.**
    if(!ok || retcode != TRADE_RETCODE_DONE)
      {
-      string reason_tag = (retcode == TRADE_RETCODE_PLACED) ? "position_close_pending_confirmation"
-                                                              : "position_close_failed";
+      // **Extended, 2026-07-22 (Codex review finding, seventh round, P1
+      // finding 14): TRADE_RETCODE_DONE_PARTIAL is a real, documented
+      // MetaQuotes completion state -- the request executed, but only
+      // PARTIAL volume actually closed (the rest remains open). It was
+      // previously lumped under the generic "failed" reason, indistinguishable
+      // from a genuine rejection. It is still correctly treated as "not yet
+      // fully closed" (the caller's own retry-until-fully-closed loop, per
+      // this round's P0 finding 8 fix, keeps retrying on the position's own
+      // now-smaller remaining volume on the next tick/bar -- exactly the
+      // right behavior for a real partial completion) -- only the reported
+      // reason string now names it explicitly.**
+      string reason_tag;
+      if(retcode == TRADE_RETCODE_PLACED)
+         reason_tag = "position_close_pending_confirmation";
+      else if(retcode == TRADE_RETCODE_DONE_PARTIAL)
+         reason_tag = "position_close_partial_remainder_still_open";
+      else
+         reason_tag = "position_close_failed";
       rejection_reason = StringFormat("%s_retcode_%u", reason_tag, retcode);
       return false;
      }

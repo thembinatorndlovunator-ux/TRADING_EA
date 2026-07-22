@@ -28,6 +28,20 @@
 //| boundary detection, per section 8 — no exact-timestamp tick          |
 //| required). A never-initialized baseline (first run) also rebases.   |
 //| Idempotent within the same day — safe to call on every tick.         |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding    |
+//| 14):** the baseline value and its own reset timestamp are now written        |
+//| under ONE lock hold (SM_SetAccountDoublesBatch) instead of two               |
+//| separate SM_SetAccountDouble calls — a crash between the two previous            |
+//| writes could leave a fresh equity baseline persisted WITHOUT its own                 |
+//| reset timestamp advancing, so the very next tick would see                              |
+//| last_reset==(the OLD timestamp) and immediately re-rebase again, silently                  |
+//| discarding the intervening bar's real P/L from the loss-cap calculation.                       |
+//|                                                                    |
+//| **Caller contract (P1 finding 14): DWL_ApplyCashFlowAdjustments()            |
+//| MUST be called BEFORE this function on every bar** (see that                    |
+//| function's own header for why the ORDER matters, not just calling both              |
+//| eventually) — reversed from this project's earlier call order.                          |
 //+------------------------------------------------------------------+
 void DWL_EnsureDailyBaseline()
   {
@@ -36,12 +50,14 @@ void DWL_EnsureDailyBaseline()
       return; // already rebased for today — no-op
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   SM_SetAccountDouble("dwl_daily_start_equity", equity);
-   SM_SetAccountDouble("dwl_daily_reset_time", (double)SN_CurrentDailyBoundary());
+   string fields[2] = {"dwl_daily_start_equity", "dwl_daily_reset_time"};
+   double values[2] = {equity, (double)SN_CurrentDailyBoundary()};
+   SM_SetAccountDoublesBatch(fields, values);
   }
 
 //+------------------------------------------------------------------+
-//| Weekly analogue of DWL_EnsureDailyBaseline.                          |
+//| Weekly analogue of DWL_EnsureDailyBaseline. Same caller-order          |
+//| contract: DWL_ApplyCashFlowAdjustments() first.                          |
 //+------------------------------------------------------------------+
 void DWL_EnsureWeeklyBaseline()
   {
@@ -50,21 +66,52 @@ void DWL_EnsureWeeklyBaseline()
       return;
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   SM_SetAccountDouble("dwl_weekly_start_equity", equity);
-   SM_SetAccountDouble("dwl_weekly_reset_time", (double)SN_CurrentWeeklyBoundary());
+   string fields[2] = {"dwl_weekly_start_equity", "dwl_weekly_reset_time"};
+   double values[2] = {equity, (double)SN_CurrentWeeklyBoundary()};
+   SM_SetAccountDoublesBatch(fields, values);
   }
 
 //+------------------------------------------------------------------+
 //| Detects deposits/withdrawals/credits via the broker's own deal      |
-//| history (DEAL_TYPE_BALANCE) since the last-processed deal ticket,   |
-//| and rebases BOTH the daily and weekly start-equity baselines by      |
-//| the cash-flow amount immediately — per section 8, this prevents a   |
-//| cash event from distorting the loss percentage. Scans a bounded      |
-//| 8-day trailing window (not full account history) to keep the        |
-//| HistorySelect() call cheap on every invocation — 8 days comfortably  |
-//| covers "since the last weekly reset" even after a multi-day EA       |
-//| outage; see Implementation notes in TASK-008_DAILY_WEEKLY_LIMITS.md  |
-//| for why a longer/unbounded window was not used.                      |
+//| history (DEAL_TYPE_BALANCE and DEAL_TYPE_CREDIT) since the last-     |
+//| processed deal ticket, and rebases BOTH the daily and weekly         |
+//| start-equity baselines by the cash-flow amount immediately — per     |
+//| section 8, this prevents a cash event from distorting the loss       |
+//| percentage. Scans a bounded 8-day trailing window (not full account  |
+//| history) to keep the HistorySelect() call cheap on every invocation  |
+//| — 8 days comfortably covers "since the last weekly reset" even       |
+//| after a multi-day EA outage; see Implementation notes in             |
+//| TASK-008_DAILY_WEEKLY_LIMITS.md for why a longer/unbounded window     |
+//| was not used.                                                        |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding    |
+//| 14): this MUST be called BEFORE DWL_EnsureDailyBaseline/                     |
+//| DWL_EnsureWeeklyBaseline on every bar, never after** (the previous                 |
+//| call order in ThembaAdaptiveIntradayEA.mq5's EvaluateAndJournal). The                   |
+//| bug this closes: on a FRESH baseline capture (first-ever run, or any                       |
+//| later day/week boundary rebase), the new baseline is set to CURRENT                           |
+//| equity, which ALREADY reflects every historical cash flow up to that                             |
+//| moment. If the cash-flow cursor (dwl_last_balance_deal_ticket) is not                               |
+//| ALSO caught up to "now" at that exact same moment, the next call to THIS                               |
+//| function re-applies those same already-reflected cash flows on top of                                    |
+//| the fresh baseline, double-counting them (a real, since-2026-07-21                                          |
+//| deposit made the daily/weekly loss percentage read as though the account                                      |
+//| had lost the deposit amount a second time). Calling this function FIRST                                          |
+//| means the cursor is always caught up to "now" by the time either Ensure*                                            |
+//| function captures a fresh baseline from current equity immediately                                                     |
+//| afterward -- that fresh baseline needs no further cash-flow adjustment                                                    |
+//| because it already just happened.                                                                                            |
+//|                                                                    |
+//| Also fixed this round: this function's own header long claimed          |
+//| "deposit/withdrawal/credit" detection, but the code only ever checked        |
+//| DEAL_TYPE_BALANCE, never DEAL_TYPE_CREDIT -- a genuine credit operation          |
+//| (bonus/rebate) silently did not adjust either baseline. And: a ulong            |
+//| deal ticket is stored in a double (StateManager.mqh's only storage             |
+//| format) -- a double can represent every integer up to 2^53 exactly, so             |
+//| this is not a practical risk at today's real ticket-number scale, but a               |
+//| ticket that would NOT round-trip exactly through a double is now refused                 |
+//| outright (with a Print warning) rather than silently persisting a                           |
+//| corrupted cursor value.                                                                         |
 //+------------------------------------------------------------------+
 void DWL_ApplyCashFlowAdjustments()
   {
@@ -85,24 +132,36 @@ void DWL_ApplyCashFlowAdjustments()
       if(ticket == 0 || ticket <= last_ticket)
          continue;
 
+      // A ticket that cannot round-trip exactly through a double must
+      // never silently corrupt the persisted cursor -- refuse it and
+      // leave the cursor where it was (this deal, and anything after it,
+      // will be retried on the next call once/if this ever becomes a
+      // real concern at this account's actual ticket scale).
+      if((ulong)(double)ticket != ticket)
+        {
+         PrintFormat("DailyWeeklyLimits: WARNING deal ticket %I64u does not round-trip exactly "
+                     "through a double -- refusing to advance the cash-flow cursor past it.",
+                     ticket);
+         break;
+        }
+
       long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
-      if(deal_type == DEAL_TYPE_BALANCE)
+      if(deal_type == DEAL_TYPE_BALANCE || deal_type == DEAL_TYPE_CREDIT)
          cash_flow_sum += HistoryDealGetDouble(ticket, DEAL_PROFIT);
 
       if(ticket > max_ticket_seen)
          max_ticket_seen = ticket;
      }
 
-   if(cash_flow_sum != 0.0)
-     {
-      double daily  = SM_GetAccountDouble("dwl_daily_start_equity", 0.0);
-      double weekly = SM_GetAccountDouble("dwl_weekly_start_equity", 0.0);
-      SM_SetAccountDouble("dwl_daily_start_equity", daily + cash_flow_sum);
-      SM_SetAccountDouble("dwl_weekly_start_equity", weekly + cash_flow_sum);
-     }
-
    if(max_ticket_seen != last_ticket)
-      SM_SetAccountDouble("dwl_last_balance_deal_ticket", (double)max_ticket_seen);
+     {
+      double daily  = SM_GetAccountDouble("dwl_daily_start_equity", 0.0) + cash_flow_sum;
+      double weekly = SM_GetAccountDouble("dwl_weekly_start_equity", 0.0) + cash_flow_sum;
+      string fields[3] = {"dwl_daily_start_equity", "dwl_weekly_start_equity",
+                           "dwl_last_balance_deal_ticket"};
+      double values[3] = {daily, weekly, (double)max_ticket_seen};
+      SM_SetAccountDoublesBatch(fields, values);
+     }
   }
 
 //+------------------------------------------------------------------+

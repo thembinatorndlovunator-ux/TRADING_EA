@@ -138,6 +138,38 @@ bool SM_SetAccountDouble(const string field, const double value,
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding  |
+//| 14):** sets MULTIPLE account-wide double fields under ONE lock            |
+//| acquisition — the single-field SM_SetAccountDouble above acquires and       |
+//| releases the lock PER CALL, so a caller updating several logically-           |
+//| related fields (e.g. a baseline value alongside its own reset                    |
+//| timestamp, or a cash-flow-adjusted baseline alongside the cursor that                |
+//| tracks which deals have already been applied) leaves a real crash-window                |
+//| between those separate writes — a restart between them can leave the                       |
+//| account-wide state inconsistent (one field updated, a logically-paired                        |
+//| one not). This performs every (field, value) pair in 'fields'/'values' as                        |
+//| ONE lock hold, so a crash either sees none of them applied or all of                                 |
+//| them.                                                                                                    |
+//+------------------------------------------------------------------+
+bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
+                                 const int lock_timeout_ms = 500)
+  {
+   int n = ArraySize(fields);
+   if(n != ArraySize(values) || n == 0)
+      return false;
+
+   if(!SM_AcquireAccountLock(lock_timeout_ms))
+      return false;
+   SM_StampAccountLockHeld();
+
+   for(int i = 0; i < n; i++)
+      GlobalVariableSet(SM_AccountKey(fields[i]), values[i]);
+
+   SM_ReleaseAccountLock();
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| Read one account-wide double field. Returns default_value if the   |
 //| field has never been set. Reads are not lock-guarded (a torn read  |
 //| is impossible — GlobalVariableGet returns one already-committed    |

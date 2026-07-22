@@ -167,6 +167,14 @@ long                    g_signal_counter = 0; // TASK-036: in-process counter fe
 
 int OnInit()
   {
+   // **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding
+   // 14): this EA never called SM_EnsureAccountSchema() anywhere -- the
+   // schema-migration routine StateManager.mqh already provides (and
+   // documents as the mechanism a later schema bump's additive migration
+   // depends on) was simply dead code as far as this EA's own runtime was
+   // concerned.**
+   SM_EnsureAccountSchema();
+
    // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
    // 3): the input comment claims InpRiskPercentTarget/InpRiskCapPercent
    // enforce both per-trade and total-open risk, but nothing previously
@@ -324,6 +332,27 @@ void LogAsyncFillResolution(const string original_signal_id, const bool filled,
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding    |
+//| 14):** true iff a position carrying POSITION_IDENTIFIER == 'position_id'    |
+//| is still open on this account, on ANY symbol/magic — used to distinguish       |
+//| "this closing deal fully closed the position" from "a broker-side              |
+//| partial fill left a smaller remainder still open under the same                  |
+//| position_id" before clearing that position's own tracked exit state.               |
+//+------------------------------------------------------------------+
+bool PositionStillOpenById(const ulong position_id)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((ulong)PositionGetInteger(POSITION_IDENTIFIER) == position_id)
+         return true;
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| Feeds CooldownManager.mqh/PositionStateTracker.mqh on a confirmed     |
 //| closing deal (TASK-034/TASK-041), and resolves TASK-036's                |
 //| asynchronous fill correlation: a DEAL_ENTRY_IN deal whose order matches       |
@@ -343,21 +372,49 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
 
-      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
+      // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding
+      // 14): DEAL_ENTRY_INOUT (a reversal -- one deal that closes the
+      // existing position AND opens a new one in the opposite direction)
+      // was previously ignored entirely here, so neither the cooldown P/L
+      // ledger nor position-state cleanup ever saw it. This EA's own
+      // no-add-on/no-concurrent-position gate (AttemptOrderSubmission)
+      // never produces a reversal under its own magic, but a foreign
+      // EA/manual reversal sharing this magic+symbol is still possible in
+      // principle -- treating it identically to an ordinary close is
+      // correct from THIS position's own perspective (its exposure did
+      // end here), matching TradeHistoryAggregator.mqh's own P0 finding 9
+      // treatment of the same deal type.**
+      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY || entry == DEAL_ENTRY_INOUT)
         {
          if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) == InpMagicNumber &&
             HistoryDealGetString(trans.deal, DEAL_SYMBOL) == g_symbol)
            {
+            // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1
+            // finding 14): DEAL_FEE was previously omitted from the
+            // cooldown P/L figure -- a real fee-bearing closing deal
+            // understated its own true net loss/gain, which could change
+            // whether CDM_ShouldTriggerCooldown's own "all 3 losses AND
+            // sum negative" test fires.**
             double pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
                          HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
-                         HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+                         HistoryDealGetDouble(trans.deal, DEAL_COMMISSION) +
+                         HistoryDealGetDouble(trans.deal, DEAL_FEE);
             CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(), InpCooldownMinutes);
 
-            // TASK-041: no partial-close functionality exists anywhere in
-            // this project yet, so a closing deal always means the
-            // position is genuinely gone, never a still-open remainder.
+            // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1
+            // finding 14): a closing deal does not always mean the
+            // position is genuinely gone -- a broker-side partial fill of
+            // this EA's own "close the full position" request (the same
+            // partial-fill phenomenon TradeHistoryAggregator.mqh's own P0
+            // finding 9 fix already handles on the entry side) can leave
+            // a smaller remainder still open under the SAME position_id.
+            // Clearing PositionStateTracker.mqh's own per-position exit
+            // state (trailing-stop history, break-even/profit-lock armed
+            // flags) while a remainder is still open would silently
+            // discard that history for the position's own remaining
+            // life. Only clear it once the position is CONFIRMED gone.**
             ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
-            if(closed_position_id != 0)
+            if(closed_position_id != 0 && !PositionStillOpenById(closed_position_id))
                PST_Clear(closed_position_id);
            }
          return;
@@ -1176,9 +1233,15 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    // decision outcome, per section 8 — equity tracking must not skip a
    // bar just because regime classification later fails or no strategy
    // fires.
+   //
+   // **Reordered, 2026-07-22 (Codex review finding, seventh round, P1
+   // finding 14): DWL_ApplyCashFlowAdjustments() MUST run BEFORE either
+   // DWL_Ensure*Baseline() call, never after (see
+   // DWL_ApplyCashFlowAdjustments' own header for why the previous order
+   // double-counted a fresh baseline's own already-reflected cash flows).**
+   DWL_ApplyCashFlowAdjustments();
    DWL_EnsureDailyBaseline();
    DWL_EnsureWeeklyBaseline();
-   DWL_ApplyCashFlowAdjustments();
    EPM_UpdateDailyPeak();
    EPM_UpdateAccountPeak();
 

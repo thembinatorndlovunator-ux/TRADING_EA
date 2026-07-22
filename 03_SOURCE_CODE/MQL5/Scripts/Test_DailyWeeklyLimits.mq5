@@ -122,6 +122,25 @@ void OnStart()
    DWL_ApplyCashFlowAdjustments();
    Check("DWL_ApplyCashFlowAdjustments completes without crashing", true);
 
+   //--- 7b. Ordering contract (Codex review finding, seventh round, P1 -
+   //--- finding 14): DWL_ApplyCashFlowAdjustments() BEFORE a fresh --------
+   //--- baseline rebase must leave the cursor caught up to "now", so a ------
+   //--- SUBSEQUENT call finds nothing new to apply and does not disturb -----
+   //--- the just-captured baseline -- the exact invariant that closes the -----
+   //--- double-counting bug (a fresh baseline already reflects every cash --------
+   //--- flow up to the moment it was captured; re-applying any of them on top -----
+   //--- of it would double-count them). -------------------------------------------
+   CleanupTestFields();
+   DWL_ApplyCashFlowAdjustments(); // catches the cursor up to "now" first
+   DWL_EnsureDailyBaseline();      // fresh capture from CURRENT (already
+                                    // cash-flow-inclusive) equity
+   double fresh_daily_start = SM_GetAccountDouble("dwl_daily_start_equity", -1.0);
+   DWL_ApplyCashFlowAdjustments(); // re-running immediately afterward must be a no-op
+   double daily_start_after_reapply = SM_GetAccountDouble("dwl_daily_start_equity", -1.0);
+   Check("re-running DWL_ApplyCashFlowAdjustments immediately after a fresh "
+         "baseline capture does NOT change the baseline (no double-counting)",
+         NearlyEqual(fresh_daily_start, daily_start_after_reapply, 0.0001));
+
    //--- 8. EquityPeakManager: daily peak ---------------------------------
    EPM_UpdateDailyPeak();
    double daily_peak_1 = SM_GetAccountDouble("epm_daily_peak_equity", -1.0);
