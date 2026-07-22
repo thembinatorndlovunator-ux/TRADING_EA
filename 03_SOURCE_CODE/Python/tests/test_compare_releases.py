@@ -717,3 +717,94 @@ def test_cli_main_missing_file(tmp_path, capsys):
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
+
+
+# --- required side-by-side comparison surface (Codex review finding, ---------
+# --- 2026-07-22, fifth round) -------------------------------------------------
+
+
+def test_surface_diff_hand_computed_all_winners_vs_all_losers(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    this script previously compared ONLY win rate and R-expectancy --
+    TEST_PLAN.md's required side-by-side surface (profit, profit factor,
+    drawdowns, recovery, giveback, streaks, duration, frequency) is now
+    computed for both datasets and diffed. Hand-traced: baseline is 12
+    trades all winning $10 (all same entry/exit instant, so they collapse
+    into ONE balance step each); candidate is 12 trades all losing $5."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [95.0] * 12, [-5.0] * 12)
+
+    summary = run(
+        baseline_path,
+        candidate_path,
+        period_start=DEFAULT_PERIOD_START,
+        period_end=DEFAULT_PERIOD_END,
+    )
+
+    baseline_summary = summary["baseline_summary"]
+    candidate_summary = summary["candidate_summary"]
+    diff = summary["surface_diff"]
+
+    # baseline: balance_curve=[1000, 1120] (12*10 summed into one step,
+    # all same exit instant) -- monotonically rising, no drawdown, no
+    # losers, so profit_factor/recovery_factor/avg_loser are all None.
+    assert baseline_summary["net_profit"] == pytest.approx(120.0)
+    assert baseline_summary["profit_factor"] is None
+    assert baseline_summary["max_balance_drawdown_pct"] == pytest.approx(0.0)
+    assert baseline_summary["recovery_factor"] is None
+    assert baseline_summary["longest_losing_streak"] == 0
+    assert baseline_summary["avg_winner_dollars"] == pytest.approx(10.0)
+    assert baseline_summary["avg_loser_dollars"] is None
+
+    # candidate: balance_curve=[1000, 940] -- one 6% drawdown, all losers,
+    # so profit_factor is defined (0.0, gross_profit=0) but
+    # avg_winner/None since there are no winners.
+    assert candidate_summary["net_profit"] == pytest.approx(-60.0)
+    assert candidate_summary["profit_factor"] == pytest.approx(0.0)
+    assert candidate_summary["max_balance_drawdown_pct"] == pytest.approx(60.0 / 1000.0)
+    assert candidate_summary["recovery_factor"] == pytest.approx(-1.0)
+    assert candidate_summary["longest_losing_streak"] == 12
+    assert candidate_summary["avg_winner_dollars"] is None
+    assert candidate_summary["avg_loser_dollars"] == pytest.approx(-5.0)
+
+    # surface_diff: candidate - baseline, None whenever either side is
+    # undefined (not fabricated as 0 or silently dropped).
+    assert diff["net_profit"] == pytest.approx(-180.0)
+    assert diff["profit_factor"] is None  # baseline's is None
+    assert diff["max_balance_drawdown_pct"] == pytest.approx(60.0 / 1000.0)
+    assert diff["recovery_factor"] is None  # baseline's is None
+    assert diff["longest_losing_streak"] == 12
+    assert diff["avg_winner_dollars"] is None  # candidate's is None
+    assert diff["avg_loser_dollars"] is None  # baseline's is None
+    assert diff["avg_trade_duration_minutes"] == pytest.approx(0.0)
+
+
+def test_surface_not_covered_present_in_real_summary(tmp_path):
+    """Every comparison-surface gap this script does not (yet) close --
+    MFE/MAE, dimensional breakdowns, cost sensitivity, and a genuine
+    equity-based (not balance-based) peak giveback -- must have a
+    concrete, non-empty explanation naming what still needs to happen,
+    not a silent absence."""
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    summary = run(
+        baseline_path,
+        candidate_path,
+        period_start=DEFAULT_PERIOD_START,
+        period_end=DEFAULT_PERIOD_END,
+    )
+    gaps = summary["surface_not_covered"]
+    for key in (
+        "mfe_mae",
+        "dimensional_breakdowns",
+        "cost_sensitivity",
+        "account_or_daily_equity_peak_giveback",
+    ):
+        assert key in gaps
+        assert isinstance(gaps[key], str) and len(gaps[key]) > 0

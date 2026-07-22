@@ -363,12 +363,15 @@ def test_baseline_comparison_metrics_hand_computed(tmp_path):
     # Period spans 7 hours (00:00 to 07:00) = 7/24 days; 4 trades.
     assert summary["trades_per_day"] == pytest.approx(4 / (7.0 / 24.0))
 
-    # Equity-peak giveback (default arm=1.0%, floor=0.5%) -- hand-traced
-    # against the same [1000, 1040, 1020, 1070, 1050] balance curve: arms
-    # at index 1 (4% >= 1%), triggers at index 2 (1.923% giveback from
-    # peak 1040), recovers at the new peak (index 3), triggers again at
-    # index 4 (1.869% giveback from peak 1070).
-    giveback = summary["equity_peak_giveback"]
+    # Balance-peak giveback (default arm=1.0%, floor=0.5%) -- renamed from
+    # "equity_peak_giveback" (Codex review finding, 2026-07-22, fifth
+    # round: this is a balance-based proxy, not the master-prompt equity
+    # metric) -- hand-traced against the same [1000, 1040, 1020, 1070,
+    # 1050] balance curve: arms at index 1 (4% >= 1%), triggers at index 2
+    # (1.923% giveback from peak 1040), recovers at the new peak
+    # (index 3), triggers again at index 4 (1.869% giveback from peak
+    # 1070).
+    giveback = summary["balance_peak_giveback"]
     assert giveback["armed"] is True
     assert giveback["n_trigger_events"] == 2
     assert giveback["trigger_indices"] == [2, 4]

@@ -86,23 +86,42 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    mode-routing logic already knows at decision time (these are
    presumably already computed somewhere in the strategy-routing chain;
    this task wires the existing value into the journal record, it does
-   not invent new classification logic).
+   not invent new classification logic). **Corrected, 2026-07-22 Codex
+   review finding (fifth round): no such mode-routing/`market_family`
+   classifier logic actually exists in the current EA source --
+   `TASK-006_SESSION_MANAGER.md` explicitly deferred it, and
+   `analysis/schema.py`'s own docstring already documents that
+   `ThembaAdaptiveIntradayEA.mq5` never sets either field today.** This
+   item is therefore BLOCKED on a still-unregistered future task to
+   build that classifier first; this task's own scope is limited to
+   wiring an ALREADY-COMPUTED value into the journal record once that
+   classifier exists, not inventing one here.
 3. Populate `news_state`/`session_state` from `NewsManager.mqh`'s actual
    blackout check and `SessionManager.mqh`'s actual session-remaining
    computation respectively, at decision time. **Session-state bucket
-   mapping, defined explicitly (added, 2026-07-22 Codex review finding,
-   fourth round -- previously left completely unspecified, despite
-   `session_state` being a documented `str` field with no enum of its
-   own anywhere in this project):** `SessionManager.mqh`'s
-   `SN_GetSessionMinutesRemaining` returns a continuous `remaining_ratio`
-   in `[0, 1]`, not a discrete label. Map it to one of three buckets:
-   `remaining_ratio >= 0.5` -> `"OPEN"`; `0.1 <= remaining_ratio < 0.5`
-   -> `"CLOSING_SOON"`; `remaining_ratio < 0.1`, OR
-   `SN_GetSessionMinutesRemaining` returns `false` (no session today) ->
-   `"CLOSED"`. These three exact string values are what
-   `analysis/performance_breakdown.py`'s `session_state` dimension and
-   notebook 04's synthetic session breakdown already assume -- use them
-   verbatim, not a different or ad hoc set.
+   mapping, corrected 2026-07-22 (Codex review finding, fifth round: the
+   fourth-round `OPEN`/`CLOSING_SOON`/`CLOSED` mapping below was
+   source-invalid -- `SN_GetSessionMinutesRemaining` returns `1.0`
+   *before the first session even opens*, not only while genuinely
+   mid-session, so labelling high-ratio time as `"OPEN"` mislabels
+   pre-open time and inter-session gaps as open; mapping every `false`
+   return to `"CLOSED"` turned a genuine "no session today / unreadable
+   data" failure into a fabricated closed-session observation, violating
+   that function's own documented "exclude it, never default it" rule):**
+   `SessionManager.mqh`'s `SN_GetSessionMinutesRemaining` returns a
+   continuous `remaining_ratio` in `[0, 1]`, not a discrete label, and
+   returns `false` (never a ratio) for no session today or unreadable
+   session data. Map it to one of three buckets, none of which claim an
+   open/closed judgement the ratio cannot support: `remaining_ratio >= 0.5`
+   -> `"SESSION_TIME_REMAINING_HIGH"`; `remaining_ratio < 0.5` ->
+   `"SESSION_TIME_REMAINING_LOW"`; `SN_GetSessionMinutesRemaining` returns
+   `false` -> `"SESSION_TIME_REMAINING_UNKNOWN"` (excluded from any
+   HIGH/LOW judgement, never defaulted into either). These three exact
+   string values are what `analysis/performance_breakdown.py`'s
+   `session_state` dimension and notebook 04's synthetic session
+   breakdown already assume -- use them verbatim, not a different or ad
+   hoc set (and not the superseded `OPEN`/`CLOSING_SOON`/`CLOSED` set
+   from the fourth round).
 4. Add `order_id`/`deal_id` (nullable -- a decision that was rejected
    before order submission has neither) to `STradeDecision` and populate
    them once `OrderManager.mqh` confirms a fill. (The Python-side field

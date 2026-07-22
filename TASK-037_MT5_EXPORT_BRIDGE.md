@@ -57,7 +57,24 @@ must not be modified.
    specifically must be the real MT5 deal ticket for that fill, unique
    per row -- a partial fill produces multiple deals against the same
    order, and `join_signal_to_outcome.py` requires exactly that
-   cardinality to aggregate them into one position)**.
+   cardinality to aggregate them into one position)**. `order_id` must be
+   populated from MT5's **position ticket** (`SOrderOpenResult
+   .position_ticket` in `OrderManager.mqh`), the identifier stable across
+   every fill of one position -- NOT the literal order ticket, which is
+   consumed once filled (added, 2026-07-22 Codex review finding, fifth
+   round, matching `join_signal_to_outcome.py`'s own documented identity
+   semantics).
+   **Net P/L formula must be specified and verified, not assumed (added,
+   2026-07-22 Codex review finding, fifth round):** `analyse_baseline.py`
+   requires `profit` to already be NET of commission/swap/fees, but this
+   task previously never defined how to derive that from MT5's own Deals
+   fields (`profit`, `commission`, `swap`, `fee` are separate columns in
+   MT5's history, and whether `profit` already includes any of the others
+   is unverified). This export must document and TEST the exact
+   aggregation formula (e.g. `net = profit + commission + swap + fee`)
+   against a real small MT5 export before this bridge is accepted --
+   `analyse_baseline.py`'s docstring now states this as a requirement on
+   this task's export, not a fact about MT5's format.
 2. **News-calendar export**: a script producing the `news_events.csv`
    schema `join_news_events.py` documents (`event_id, event_name,
    currency, importance, scheduled_utc`), sourced from MT5's built-in
@@ -111,11 +128,63 @@ must not be modified.
    contract (explicit paths, no hidden state, visible failures on
    malformed source data) -- these are pipelines like any other, not a
    special exemption.
+6. **OHLC/close-bar and per-trade R-path export (added, 2026-07-22 Codex
+   review finding, fifth round -- previously entirely missing, so
+   `calculate_mfe_mae.py`, `analyse_giveback.py`, and
+   `parameter_stability.py` have no real-data input at all despite each
+   documenting a required CSV shape):** a script exporting per-symbol OHLC
+   bars at a DECLARED, fixed cadence (e.g. M1) covering every trade's
+   `[entry_time, exit_time]` window with NO gaps (`calculate_mfe_mae.py`'s
+   `bars.csv` schema), and a separate per-trade R-path export (one row per
+   `path_id, bar_index, r_value`, `parameter_stability.py`'s schema,
+   `r_value` computed from the SAME live `ExitManager.mqh`/
+   `RiskManager.mqh` R-multiple formula the EA itself uses at each bar,
+   not reimplemented in the export script). One canonical bar-boundary
+   convention (entry-bar-close vs. bar-open) must be picked and used
+   consistently by both the export and every Python consumer -- see the
+   cross-file inconsistency `analysis/analyse_giveback.py` and
+   `analysis/parameter_stability.py` currently have.
+7. **Account equity-tick export (added, 2026-07-22 Codex review finding,
+   fifth round):** a script exporting a genuine intratrade, mark-to-market
+   EQUITY time series (`symbol-agnostic account-level timestamp, equity`
+   rows) -- the input the real "Account equity-peak giveback" and "Daily
+   equity-peak giveback" master-prompt metrics require and
+   `analysis.metrics.compute_balance_peak_giveback` explicitly does NOT
+   provide (that function is a closed-trade BALANCE proxy only, see its
+   own docstring). Without this export, neither required equity-based
+   giveback metric can ever be computed from real data.
+8. **Cost-scenario export (added, 2026-07-22 Codex review finding, fifth
+   round):** the SAME trade set run/re-priced under multiple explicit
+   spread/slippage assumptions (not just `spread_note`/`slippage_note`
+   provenance strings, which record a single caller-asserted assumption,
+   never vary it) -- the input `compare_releases.py`'s `surface_diff`
+   currently reports as an explicit, unimplemented gap
+   (`surface_not_covered.cost_sensitivity`).
+9. **Session/news evidence export (added, 2026-07-22 Codex review
+   finding, fifth round):** a script exporting, per trade or per bar, the
+   LIVE `SessionManager.mqh` (`SN_GetSessionMinutesRemaining`'s actual
+   `remaining_ratio`/`false`-for-unreadable value, not a re-derived
+   OPEN/CLOSED bucket) and `NewsManager.mqh` (real event status/blackout/
+   trigger-ID fields, not an invented vocabulary) state at that instant --
+   the source-faithful input `notebook 04`'s session/mode/news analysis
+   needs to stop being a manually-labelled synthetic fixture.
+10. **The actual joined, composed pipeline run (added, 2026-07-22 Codex
+    review finding, fifth round):** once items 1-2 and 9 above produce
+    real `trades.csv`/journal/`news_events.csv`/session-evidence exports,
+    this task's acceptance includes actually running the composed chain
+    `join_trade_journal.py` -> `join_signal_to_outcome.py` ->
+    `join_news_events.py` -> `performance_breakdown.py` end to end against
+    them and reporting the result -- neither TASK-036 nor this task
+    previously owned that composed run; notebook 04's own closing cell
+    admits it is still pending.
 
 ## Files affected
 
 - New MQL5 export scripts/functions under `03_SOURCE_CODE/MQL5/Scripts/`
-  or added to the relevant `Include/` modules.
+  or added to the relevant `Include/` modules, including OHLC/R-path
+  export, account equity-tick export, cost-scenario export, and
+  session/news evidence export (Specification items 6-9, added
+  2026-07-22 Codex review finding, fifth round).
 - `TASKS.md` and this task file.
 
 No file under `01_BASELINE/` may be modified.
@@ -145,8 +214,14 @@ No file under `01_BASELINE/` may be modified.
    confirm the output matches its documented schema exactly.
 3. Feed each export into its corresponding Python pipeline
    (`analyse_baseline.py`, `join_news_events.py`,
-   `pattern_validation.compare_to_mql5_export`) and confirm it runs
+   `pattern_validation.compare_to_mql5_export`,
+   `calculate_mfe_mae.py`, `parameter_stability.py`) and confirm it runs
    without a schema error -- the first genuine "Real-data run" for each.
+4. Verify the net-P/L aggregation formula (Specification item 1) against
+   a real small MT5 Deals export field-by-field (added, 2026-07-22 Codex
+   review finding, fifth round).
+5. Run the full composed chain (Specification item 10) end to end and
+   report the result.
 
 ## Acceptance criteria
 
@@ -168,6 +243,27 @@ No file under `01_BASELINE/` may be modified.
       `regime_validation.build_confusion_matrix` is actually run against
       it with the result reported (this closes the real-evidence
       obligation `TASK-031` explicitly deferred here).
+- [ ] Net-P/L aggregation formula specified and verified against a real
+      MT5 Deals export (Specification item 1; added, 2026-07-22 Codex
+      review finding, fifth round).
+- [ ] OHLC/close-bar export and per-trade R-path export produced and
+      consumed by `calculate_mfe_mae.py`/`parameter_stability.py` without
+      a schema error (Specification item 6; added, 2026-07-22 Codex
+      review finding, fifth round).
+- [ ] Account equity-tick export produced (Specification item 7; added,
+      2026-07-22 Codex review finding, fifth round) -- unblocks a real
+      account/daily equity-peak-giveback measurement.
+- [ ] Cost-scenario export produced and consumed by a cost-sensitivity
+      comparison (Specification item 8; added, 2026-07-22 Codex review
+      finding, fifth round).
+- [ ] Session/news evidence export produced using source-faithful states
+      (Specification item 9; added, 2026-07-22 Codex review finding,
+      fifth round) -- unblocks notebook 04's real composed run.
+- [ ] The composed `join_trade_journal.py` -> `join_signal_to_outcome.py`
+      -> `join_news_events.py` -> `performance_breakdown.py` chain is run
+      end to end against real exports with the result reported
+      (Specification item 10; added, 2026-07-22 Codex review finding,
+      fifth round).
 - [ ] Independent review completed and findings resolved.
 
 ## Rejection criteria

@@ -113,6 +113,20 @@ def test_sweep_rejects_out_of_range_giveback_percent():
         sweep_giveback_percent([PATH_B], [95.0])  # above 90
 
 
+def test_sweep_rejects_overflowing_mean_r_diff():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    each individual r_diff (trigger_r - actual_final_r) is finite, but
+    summing many extreme-but-finite r_diffs can still overflow -- two
+    paths [2.0, 0.01, -1e308] each trigger early (trigger_r=0.01) against
+    an actual_final_r of -1e308, giving a per-path diff of roughly 1e308;
+    summing both previously produced a silent infinite mean with no
+    guard."""
+
+    extreme_path = [2.0, 0.01, -1e308]
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([extreme_path, extreme_path], [60.0], arm_rr=1.25)
+
+
 # --- run() (CSV wrapper) ------------------------------------------------------
 
 

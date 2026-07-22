@@ -260,7 +260,20 @@ def expectancy(
             seed=None,
         )
 
-    variance = sum((x - mean) ** 2 for x in pnl) / (n - 1)
+    # **Fixed, 2026-07-22 Codex review finding (fifth round):** Python's
+    # float ``**`` raises ``OverflowError`` outright (not a silent inf)
+    # when the squared magnitude exceeds float range -- a probe with
+    # ``[1e308, -1e308]`` raised an UNCAUGHT OverflowError here, before
+    # the post-compute finiteness check below ever ran. Caught explicitly
+    # and converted to the same visible-failure contract as every other
+    # overflow in this module.
+    try:
+        variance = sum((x - mean) ** 2 for x in pnl) / (n - 1)
+    except OverflowError as exc:
+        raise ValueError(
+            f"expectancy: variance calculation overflowed ({exc}) -- the input pnl values are "
+            "finite individually but their squared deviation from the mean is not"
+        ) from exc
     std_dev = math.sqrt(variance)
     boot = bootstrap_confidence_interval(
         pnl, statistic="mean", n_resamples=n_resamples, confidence=confidence, seed=seed
@@ -402,6 +415,18 @@ def bootstrap_confidence_interval(
     upper = float(np.quantile(resample_stats, 1.0 - alpha / 2))
     point = float(stat_fn(arr))
 
+    # **Added, 2026-07-22 Codex review finding (fifth round):** every
+    # individual value is checked finite above, but the resampled mean/
+    # median can still overflow -- a probe with ``[1e308, -1e308]``
+    # returned a NUMPY-SILENT point estimate of ``0.0`` with
+    # ``ci=[NaN, NaN]`` rather than a visible failure.
+    if not (math.isfinite(point) and math.isfinite(lower) and math.isfinite(upper)):
+        raise ValueError(
+            f"bootstrap_confidence_interval: computed statistic overflowed to a non-finite "
+            f"value (point={point}, ci=[{lower}, {upper}]) -- the input data values are finite "
+            "individually but their resampled statistic is not"
+        )
+
     return BootstrapCiResult(
         point_estimate=point,
         ci_lower=lower,
@@ -465,6 +490,17 @@ def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
 
         dd_abs = peak - value
         dd_pct = dd_abs / peak  # peak is always > 0: starts > 0, only ever increases
+        # **Added, 2026-07-22 Codex review finding (fifth round):** every
+        # individual value is checked finite above, but 'peak - value' can
+        # still overflow to inf when the two are huge and opposite-signed
+        # -- a probe with [1e308, -1e308] produced an infinite absolute
+        # AND percentage drawdown with no guard at all in this function.
+        if not (math.isfinite(dd_abs) and math.isfinite(dd_pct)):
+            raise ValueError(
+                f"compute_max_drawdown: drawdown overflowed to a non-finite value at index {i} "
+                f"(peak={peak!r}, value={value!r}) -- the input values are finite individually "
+                "but their difference is not"
+            )
 
         if dd_abs > max_dd_abs:
             max_dd_abs = dd_abs
@@ -487,14 +523,13 @@ def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
 
 
 @dataclass(frozen=True)
-class EquityPeakGivebackResult:
-    """See ``compute_equity_peak_giveback``'s own docstring for the exact
-    arm/trigger formula (ported from ``TASK-002_PHASE2_SPECIFICATION.md``'s
-    "Daily equity-peak giveback" definition, applied here at ACCOUNT scope
-    -- see that function's docstring for why no daily-reset variant exists
-    yet). This is DESCRIPTIVE (offline analysis of a historical curve),
-    never a live control -- matches every other module in this project
-    that ports a live guard formula for retrospective simulation only.
+class BalancePeakGivebackResult:
+    """See ``compute_balance_peak_giveback``'s own docstring for the exact
+    arm/trigger formula and, critically, for why this is NOT the master-
+    prompt-required account/daily equity-peak-giveback metric. This is
+    DESCRIPTIVE (offline analysis of a historical curve), never a live
+    control -- matches every other module in this project that ports a
+    live guard formula for retrospective simulation only.
     """
 
     arm_percent: float
@@ -506,21 +541,34 @@ class EquityPeakGivebackResult:
     max_giveback_pct_index: int
 
 
-def compute_equity_peak_giveback(
+def compute_balance_peak_giveback(
     balance_curve: Sequence[float], arm_percent: float = 1.0, floor_percent: float = 0.5
-) -> EquityPeakGivebackResult:
-    """Simulates ``TASK-002_PHASE2_SPECIFICATION.md``'s equity-peak-giveback
-    guard formula against a chronologically-ordered balance/equity curve --
-    the master-prompt-required "Equity-peak giveback" metric, DISTINCT from
-    ``compute_max_drawdown`` (a single global worst-case peak-to-trough
-    figure): this reports how many times a peak-relative giveback guard
-    would have TRIGGERED, not just the single worst decline.
+) -> BalancePeakGivebackResult:
+    """Simulates ``TASK-002_PHASE2_SPECIFICATION.md``'s giveback-guard
+    ARM/TRIGGER formula against a chronologically-ordered CLOSED-TRADE
+    BALANCE curve -- reports how many times a peak-relative giveback guard
+    would have TRIGGERED, not just the single worst decline
+    (``compute_max_drawdown`` reports that instead).
 
-    Ported formula (spec's "Daily equity-peak giveback", applied here at
-    ACCOUNT scope -- a genuine daily-resetting variant needs real
-    intraday equity ticks this project does not have yet, same "Balance,
-    not equity" limitation ``analyse_baseline.py`` already discloses):
-    the running peak arms the guard once
+    **Renamed from ``compute_equity_peak_giveback``, and re-scoped
+    explicitly (Codex review finding, 2026-07-22, fifth round): this is
+    NOT a measurement of either master-prompt-required equity-peak-
+    giveback metric.** The spec defines TWO real metrics this function
+    does not compute: an "Account equity-peak giveback" (needs a genuine
+    intratrade, mark-to-market EQUITY series -- this project has no
+    intraday equity ticks yet, only closed-trade balance, see
+    ``analyse_baseline.py``'s "Balance, not equity" disclosure) and a
+    "Daily equity-peak giveback" (needs a DAILY reset of the running peak
+    at a genuine calendar-day boundary -- this function's peak never
+    resets, it runs over the WHOLE curve). It is also a different
+    quantity from ``analyse_giveback.py``'s own guard simulation (which
+    operates per-TRADE on an R-multiple path, not per-BAR on an account
+    curve). Closing the real account/daily equity-peak-giveback gap needs
+    an account equity-tick export -- an unimplemented TASK-037 input (see
+    that task's Files-affected list) -- not a relabeling of this
+    function; do not report this result under an "equity" name anywhere.
+
+    The running peak arms the guard once
     ``(peak - start) / start >= arm_percent / 100``; once armed, a trigger
     event fires the first time
     ``(peak - current) / peak >= floor_percent / 100`` after the guard was
@@ -530,19 +578,22 @@ def compute_equity_peak_giveback(
 
     Raises InsufficientSampleError if empty. Raises ValueError if any
     value is non-finite, if the first value is not strictly positive
-    (percent-based, same requirement as ``compute_max_drawdown``), or if
-    'arm_percent'/'floor_percent' is not finite and > 0.
+    (percent-based, same requirement as ``compute_max_drawdown``), if
+    'arm_percent'/'floor_percent' is not finite and > 0, or if the
+    computed giveback percentage overflows to a non-finite value (Codex
+    review finding, 2026-07-22, fifth round: ``[5e307, 1e308, -1e308]``
+    previously produced an infinite ``max_giveback_pct``).
     """
 
     if not balance_curve:
-        raise InsufficientSampleError("compute_equity_peak_giveback: empty balance curve")
+        raise InsufficientSampleError("compute_balance_peak_giveback: empty balance curve")
     if not all(math.isfinite(v) for v in balance_curve):
         raise ValueError(
-            "compute_equity_peak_giveback: balance_curve contains a non-finite (NaN/inf) value"
+            "compute_balance_peak_giveback: balance_curve contains a non-finite (NaN/inf) value"
         )
     if balance_curve[0] <= 0:
         raise ValueError(
-            f"compute_equity_peak_giveback: the first value ({balance_curve[0]!r}) must be > 0"
+            f"compute_balance_peak_giveback: the first value ({balance_curve[0]!r}) must be > 0"
         )
     if not math.isfinite(arm_percent) or arm_percent <= 0:
         raise ValueError(f"arm_percent must be finite and > 0, got {arm_percent}")
@@ -567,6 +618,11 @@ def compute_equity_peak_giveback(
 
         if armed:
             giveback_pct = (peak - value) / peak
+            if not math.isfinite(giveback_pct):
+                raise ValueError(
+                    f"compute_balance_peak_giveback: giveback percentage overflowed to a "
+                    f"non-finite value at index {i} (peak={peak!r}, value={value!r})"
+                )
             if giveback_pct > max_giveback_pct:
                 max_giveback_pct = giveback_pct
                 max_giveback_pct_index = i
@@ -579,7 +635,7 @@ def compute_equity_peak_giveback(
             else:
                 currently_triggered = False
 
-    return EquityPeakGivebackResult(
+    return BalancePeakGivebackResult(
         arm_percent=arm_percent,
         floor_percent=floor_percent,
         armed=armed,

@@ -5,7 +5,7 @@ import pytest
 from analysis.metrics import (
     InsufficientSampleError,
     bootstrap_confidence_interval,
-    compute_equity_peak_giveback,
+    compute_balance_peak_giveback,
     compute_max_drawdown,
     expectancy,
     profit_factor,
@@ -118,6 +118,18 @@ def test_expectancy_rejects_overflow_to_non_finite_from_finite_inputs():
 
     with pytest.raises(ValueError):
         expectancy([1e308, 1e308], n_resamples=100)
+
+
+def test_expectancy_rejects_overflow_error_during_variance_calculation():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    expectancy([1e308, -1e308], n_resamples=100, seed=1) previously raised
+    an UNCAUGHT OverflowError during the variance calculation (Python's
+    float ``**`` raises outright rather than returning inf) -- the
+    post-compute finiteness check never even ran. The mean (0.0) is
+    finite here; only the squared-deviation sum overflows."""
+
+    with pytest.raises(ValueError):
+        expectancy([1e308, -1e308], n_resamples=100, seed=1)
 
 
 def test_expectancy_single_observation_has_no_estimable_uncertainty():
@@ -265,6 +277,17 @@ def test_bootstrap_ci_rejects_unknown_statistic():
         bootstrap_confidence_interval([1.0, 2.0, 3.0], statistic="mode", n_resamples=10, seed=1)
 
 
+def test_bootstrap_ci_rejects_overflow_to_non_finite_from_finite_inputs():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    every individual data value is finite, but the resampled statistic can
+    still overflow -- bootstrap_confidence_interval([1e308, -1e308], 100,
+    seed=1) previously returned a silent point estimate of 0.0 with
+    ci=[NaN, NaN] instead of raising."""
+
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1e308, -1e308], n_resamples=100, seed=1)
+
+
 # --- compute_max_drawdown ----------------------------------------------------
 
 
@@ -329,6 +352,17 @@ def test_max_drawdown_rejects_non_finite_value_anywhere_in_curve():
         compute_max_drawdown([100.0, 120.0, float("nan"), 80.0])
 
 
+def test_max_drawdown_rejects_overflow_to_non_finite_from_finite_inputs():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    both curve values are individually finite, but 'peak - value' can
+    still overflow when they are huge and opposite-signed --
+    compute_max_drawdown([1e308, -1e308]) previously returned an infinite
+    absolute and percentage drawdown with no guard at all."""
+
+    with pytest.raises(ValueError):
+        compute_max_drawdown([1e308, -1e308])
+
+
 def test_max_drawdown_monotonically_rising_is_zero():
     result = compute_max_drawdown([100.0, 110.0, 120.0, 130.0])
     assert result.max_drawdown_abs == 0.0
@@ -351,7 +385,7 @@ def test_max_drawdown_pct_can_exceed_one_when_balance_goes_negative():
     assert result.max_drawdown_pct_trough_index == 1
 
 
-# --- compute_equity_peak_giveback -------------------------------------------
+# --- compute_balance_peak_giveback -------------------------------------------
 # Regression for a Codex review finding (2026-07-22, fourth round): no
 # Python code computed the master-prompt-required "Equity-peak giveback"
 # metric at all (distinct from compute_max_drawdown -- a single global
@@ -359,29 +393,39 @@ def test_max_drawdown_pct_can_exceed_one_when_balance_goes_negative():
 # TASK-002_PHASE2_SPECIFICATION.md's own guard formula).
 
 
-def test_equity_peak_giveback_empty_raises():
+def test_balance_peak_giveback_empty_raises():
     with pytest.raises(InsufficientSampleError):
-        compute_equity_peak_giveback([])
+        compute_balance_peak_giveback([])
 
 
-def test_equity_peak_giveback_rejects_non_positive_first_value():
+def test_balance_peak_giveback_rejects_non_positive_first_value():
     with pytest.raises(ValueError):
-        compute_equity_peak_giveback([0.0, 10.0])
+        compute_balance_peak_giveback([0.0, 10.0])
 
 
-def test_equity_peak_giveback_rejects_non_finite_value():
+def test_balance_peak_giveback_rejects_non_finite_value():
     with pytest.raises(ValueError):
-        compute_equity_peak_giveback([100.0, float("nan")])
+        compute_balance_peak_giveback([100.0, float("nan")])
 
 
-def test_equity_peak_giveback_rejects_non_positive_arm_or_floor_percent():
+def test_balance_peak_giveback_rejects_overflow_to_non_finite_giveback_pct():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    compute_balance_peak_giveback([5e307, 1e308, -1e308], ...) previously
+    produced an infinite max_giveback_pct with no guard -- every curve
+    value is individually finite, but 'peak - value' can still overflow."""
+
     with pytest.raises(ValueError):
-        compute_equity_peak_giveback([100.0, 110.0], arm_percent=0.0)
+        compute_balance_peak_giveback([5e307, 1e308, -1e308], arm_percent=1.0, floor_percent=0.5)
+
+
+def test_balance_peak_giveback_rejects_non_positive_arm_or_floor_percent():
     with pytest.raises(ValueError):
-        compute_equity_peak_giveback([100.0, 110.0], floor_percent=-1.0)
+        compute_balance_peak_giveback([100.0, 110.0], arm_percent=0.0)
+    with pytest.raises(ValueError):
+        compute_balance_peak_giveback([100.0, 110.0], floor_percent=-1.0)
 
 
-def test_equity_peak_giveback_hand_computed():
+def test_balance_peak_giveback_hand_computed():
     # start=1000, arm_percent=1.0%, floor_percent=0.5%.
     # i=0 value=1000 peak=1000 -- not armed ((1000-1000)/1000=0%).
     # i=1 value=1010 peak=1010 -- arms ((1010-1000)/1000=1.0% >= 1.0%);
@@ -395,7 +439,7 @@ def test_equity_peak_giveback_hand_computed():
     #     -> recovers below floor, currently_triggered resets.
     # i=6 value=1025 peak=1025 (new peak) -- giveback=0%.
     curve = [1000.0, 1010.0, 1020.0, 1005.0, 1000.0, 1015.0, 1025.0]
-    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    result = compute_balance_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
     assert result.armed is True
     assert result.n_trigger_events == 1
     assert result.trigger_indices == [3]
@@ -403,15 +447,15 @@ def test_equity_peak_giveback_hand_computed():
     assert result.max_giveback_pct_index == 4
 
 
-def test_equity_peak_giveback_never_arms_if_peak_never_rises_enough():
+def test_balance_peak_giveback_never_arms_if_peak_never_rises_enough():
     curve = [1000.0, 1002.0, 998.0, 1001.0]  # never reaches 1% above start
-    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    result = compute_balance_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
     assert result.armed is False
     assert result.n_trigger_events == 0
     assert result.max_giveback_pct == 0.0
 
 
-def test_equity_peak_giveback_two_separate_declines_count_as_two_events():
+def test_balance_peak_giveback_two_separate_declines_count_as_two_events():
     # Two independent arm->trigger->recover->re-trigger cycles must be
     # counted as two separate events, not merged into one.
     curve = [
@@ -422,7 +466,7 @@ def test_equity_peak_giveback_two_separate_declines_count_as_two_events():
         1040.0,  # new peak
         1025.0,  # giveback=(1040-1025)/1040=1.44% -> trigger #2
     ]
-    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    result = compute_balance_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
     assert result.n_trigger_events == 2
     assert result.trigger_indices == [2, 5]
 

@@ -364,3 +364,99 @@ re-executed via `jupyter execute`, all exit 0.
    `readline(MAX_LINE_BYTES + 1)` approach genuinely bounds memory for an
    oversized line with no trailing newline, and that subsequent lines in
    the same file are still read correctly afterward (not desynced).
+
+## UPDATE — fifth independent review round, remediation IN PROGRESS (2026-07-22)
+
+**Correction first (2026-07-22 Codex review finding, fifth round, finding
+18): your fifth review read the fourth-round update above as claiming
+"the remaining minimum comparison surface is now built" and that
+"giveback resampling controls are exposed" — both disproven by findings 1
+and 10 of that same review. Neither claim was intended that broadly (item
+1 above only ever claimed `analyse_baseline.py`'s OWN single-dataset
+surface, and item 3 of the "what changed" list only claimed
+`walk_forward.py`/`performance_breakdown.py` exposure, not
+`analyse_giveback.py`/`parameter_stability.py`), but the wording was not
+careful enough to prevent that reading, and neither claim's real scope
+was ever true for `compare_releases.py`'s side-by-side surface. This
+section corrects the record rather than re-editing the prior claims in
+place.**
+
+Your fifth review (18 findings: 3 P0/11 P1/4 P2, reviewed against
+`750443d`) is being remediated with regression tests per finding. As of
+this update, resolved:
+
+- **Findings 2/4/5 (all `join_signal_to_outcome.py`):** `deal_id` is no
+  longer compared as a journal/trade shared-field invariant (it is
+  fill-scoped, a journal decision legitimately has none yet) — this
+  closes both the false-conflict-on-real-deal_id and the
+  rejected-second-partial-fill counterexamples your review reproduced. A
+  `direction`/`is_long` cross-schema invariant check was added (a
+  probe with `direction=BUY`/`is_long=False` previously joined
+  successfully). A whole position is now rejected as a unit if any
+  constituent fill fails integrity, not just the literally-conflicting
+  fill. The validated numeric `profit` series is now actually assigned
+  back before summation (string profits `"30"`/`"20"` now correctly sum
+  to `50.0`, not `3020.0`). Per-fill fields with no defined
+  position-level aggregation (`entry_price`/`exit_price`/`stop_price`/
+  `r_multiple`) are now explicitly `None` for a genuine multi-fill
+  position instead of silently leaking the first fill's value. The
+  sidecar-overwrite defect (errors_json derived after the collision
+  check) is fixed via the same derive-before-check pattern already used
+  elsewhere. Identity semantics (`order_id` = MT5 position ticket,
+  `deal_id` = deal ticket, `trade_id` = this project's own per-fill CSV
+  row identity) are now stated explicitly in the module docstring.
+- **Finding 3 (session/mode/news):** the source-invalid
+  `ratio >= 0.5` → `"OPEN"` / else → `"CLOSED"` mapping (which mislabelled
+  pre-open time as open and turned a genuine `SN_GetSessionMinutesRemaining`
+  data failure into a fabricated closed observation) is replaced by
+  `SESSION_TIME_REMAINING_HIGH`/`LOW`/`UNKNOWN`, honestly describing what
+  the ratio actually measures. Notebook 04 now runs the REAL composed
+  chain (`join_news_events.py` → `join_signal_to_outcome.py` →
+  `performance_breakdown.py`) against synthetic-but-realistic fixtures
+  instead of a single hand-labelled "already unified" CSV. `news_state`
+  still has no defined real vocabulary — the breakdown now groups by the
+  independently-computed `in_news_blackout` instead of inventing one. The
+  still-unowned `market_family`/`intraday_mode` mode-router/classifier gap
+  is now named explicitly in `TASK-036_JOURNAL_PRODUCER_COMPLETION.md`
+  rather than silently assumed to exist.
+- **Finding 1 (equity-giveback/comparison mislabeling):**
+  `compute_equity_peak_giveback` is renamed to `compute_balance_peak_giveback`
+  and its docstring now states explicitly why it is NOT either
+  master-prompt-required equity-peak-giveback metric.
+  `compare_releases.py` now computes the full `TEST_PLAN.md` side-by-side
+  surface (profit, profit factor, drawdowns, recovery, giveback, streaks,
+  duration, frequency) for both datasets via a shared
+  `analyse_baseline.compute_trade_summary`, returned as
+  `baseline_summary`/`candidate_summary`/`surface_diff`, plus an explicit
+  `surface_not_covered` field naming exactly which parts (MFE/MAE,
+  dimensional breakdowns, cost sensitivity, real equity-based giveback)
+  are still missing and which task owns closing each gap.
+  `TASK-037_MT5_EXPORT_BRIDGE.md` gained five new Specification items
+  (account equity-tick export, cost-scenario export, OHLC/R-path export,
+  session/news evidence export, and the composed end-to-end run) so every
+  one of those gaps now has a concrete numbered owner.
+- **Finding 8 (overflow gaps):** `expectancy`'s variance calculation,
+  `bootstrap_confidence_interval`, `compute_max_drawdown`, and
+  `compute_balance_peak_giveback` (in `metrics.py`), `run_monte_carlo`
+  (aggregate mean/CI overflow across resamples), and
+  `parameter_stability.sweep_giveback_percent`'s mean-r-diff aggregation
+  all now explicitly reject a finite-inputs-but-overflowing-result, each
+  with a regression test reproducing the review's own counterexample.
+- **Finding 13 (net-P/L contradiction):** `analyse_baseline.py`'s
+  docstring no longer ASSERTS that an MT5 Deals export's profit column
+  normally already nets commission/swap — it now states this as a
+  REQUIREMENT on whatever produces `trades_csv`, and
+  `TASK-037_MT5_EXPORT_BRIDGE.md`'s Specification item 1 now requires
+  specifying and testing the actual net-P/L aggregation formula against
+  real MT5 Deals fields before the bridge is accepted.
+
+**Still pending (not yet remediated):** findings 6, 7, 9, 10, 11, 12, 14,
+15, 16, 17, and the remainder of finding 18 (exact commit-count
+verification). Do not treat this update as a request for a sixth review
+yet — that request will follow once the remaining findings are resolved.
+
+**Current, real state (verify independently, don't trust this line):**
+477 tests passing, `ruff check .` all checks passed, `ruff format
+--check .` all files already formatted, `mypy analysis data_collection
+--ignore-missing-imports` success (24 source files). All 11 notebooks
+re-executed via `jupyter execute`, all exit 0.

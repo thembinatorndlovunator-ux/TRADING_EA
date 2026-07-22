@@ -189,18 +189,49 @@ def run_monte_carlo(
         ruin_ci_lower = None
         ruin_ci_upper = None
 
+    final_balance_mean = float(np.mean(final_balances))
+    final_balance_ci_lower = float(np.quantile(final_balances, alpha / 2))
+    final_balance_ci_upper = float(np.quantile(final_balances, 1.0 - alpha / 2))
+    max_drawdown_pct_mean = float(np.mean(max_dd_pcts))
+    max_drawdown_pct_ci_lower = float(np.quantile(max_dd_pcts, alpha / 2))
+    max_drawdown_pct_ci_upper = float(np.quantile(max_dd_pcts, 1.0 - alpha / 2))
+    # **Added, 2026-07-22 Codex review finding (fifth round):** each
+    # individual resampled final balance is finite (accumulated one trade
+    # at a time from finite pnl values), but AGGREGATING many large-but-
+    # finite values across 'n_resamples' resamples (mean/quantile) can
+    # still overflow -- a probe with pnl=[5e306]*20, n_resamples=100
+    # produced an infinite final_balance_mean even though every individual
+    # resampled final balance was finite.
+    if not all(
+        math.isfinite(v)
+        for v in (
+            final_balance_mean,
+            final_balance_ci_lower,
+            final_balance_ci_upper,
+            max_drawdown_pct_mean,
+            max_drawdown_pct_ci_lower,
+            max_drawdown_pct_ci_upper,
+        )
+    ):
+        raise ValueError(
+            "run_monte_carlo: an aggregate statistic (mean/CI) over the resampled distribution "
+            "overflowed to a non-finite value -- individual resampled outcomes are finite but "
+            f"their aggregate is not (final_balance_mean={final_balance_mean}, "
+            f"max_drawdown_pct_mean={max_drawdown_pct_mean})"
+        )
+
     return MonteCarloResult(
         n_trades=n,
         n_resamples=n_resamples,
         seed=seed,
         starting_balance=starting_balance,
         confidence=confidence,
-        final_balance_mean=float(np.mean(final_balances)),
-        final_balance_ci_lower=float(np.quantile(final_balances, alpha / 2)),
-        final_balance_ci_upper=float(np.quantile(final_balances, 1.0 - alpha / 2)),
-        max_drawdown_pct_mean=float(np.mean(max_dd_pcts)),
-        max_drawdown_pct_ci_lower=float(np.quantile(max_dd_pcts, alpha / 2)),
-        max_drawdown_pct_ci_upper=float(np.quantile(max_dd_pcts, 1.0 - alpha / 2)),
+        final_balance_mean=final_balance_mean,
+        final_balance_ci_lower=final_balance_ci_lower,
+        final_balance_ci_upper=final_balance_ci_upper,
+        max_drawdown_pct_mean=max_drawdown_pct_mean,
+        max_drawdown_pct_ci_lower=max_drawdown_pct_ci_lower,
+        max_drawdown_pct_ci_upper=max_drawdown_pct_ci_upper,
         ruin_threshold=ruin_threshold,
         prob_ruin=prob_ruin,
         prob_ruin_ci_lower=ruin_ci_lower,

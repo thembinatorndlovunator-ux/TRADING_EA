@@ -28,6 +28,18 @@ PAIRED data (the same underlying market periods/trades re-evaluated under
 two configurations), a paired-difference test would be more powerful and
 is NOT implemented here -- using this unpaired test on paired data would
 discard the pairing and understate the true precision.
+
+**Extended, 2026-07-22 Codex review finding (fifth round): this script
+previously compared ONLY win rate and R-expectancy** -- TEST_PLAN.md's
+required minimum side-by-side surface (profit, profit factor, drawdowns,
+recovery, giveback, streaks, duration, frequency) is now computed for
+BOTH datasets via ``analyse_baseline.compute_trade_summary`` (the exact
+function ``analyse_baseline.py`` itself uses) and returned as
+``baseline_summary``/``candidate_summary``, with a ``surface_diff`` point
+comparison for the key scalars. MFE/MAE, dimensional (session/regime/
+news) breakdowns, and cost sensitivity are explicitly NOT included --
+see the returned ``surface_not_covered`` field for exactly why and which
+task/pipeline owns closing each gap; they are not silently absent.
 """
 
 from __future__ import annotations
@@ -43,7 +55,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from analysis.analyse_baseline import REQUIRED_COLUMNS
+from analysis.analyse_baseline import REQUIRED_COLUMNS, compute_trade_summary
 from analysis.csv_io import (
     CsvSchemaError,
     assert_chronological_order,
@@ -217,6 +229,19 @@ def run(
     seed: int = 42,
     confidence: float = 0.95,
     symbol: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fifth round): this script
+    # previously reported ONLY win-rate/R-expectancy differences --
+    # TEST_PLAN.md's required side-by-side surface (profit, profit
+    # factor, drawdowns, recovery, giveback, streaks, duration,
+    # frequency) is now computed for BOTH datasets via
+    # analyse_baseline.compute_trade_summary (the same function
+    # analyse_baseline.py itself uses), so a fix or new field there
+    # reaches this comparison automatically. 'starting_balance'/
+    # 'giveback_arm_percent'/'giveback_floor_percent' feed that shared
+    # computation; defaults match analyse_baseline.py's own.**
+    starting_balance: float = 1000.0,
+    giveback_arm_percent: float = 1.0,
+    giveback_floor_percent: float = 0.5,
     # **Fixed, 2026-07-22 Codex review finding (fourth round): period_start/
     # period_end are now REQUIRED, not optional -- the comparability
     # contract ("use identical symbols, periods, data, costs, and broker
@@ -364,6 +389,76 @@ def run(
         confidence,
     )
 
+    # **Added, 2026-07-22 Codex review finding (fifth round): the required
+    # side-by-side comparison surface (profit, profit factor, drawdowns,
+    # recovery, giveback, streaks, duration, frequency) -- computed via
+    # the SAME function analyse_baseline.py itself uses, so this and that
+    # module can never silently diverge on what these numbers mean.**
+    baseline_summary = compute_trade_summary(
+        baseline.sort_values("exit_time"),
+        starting_balance=starting_balance,
+        seed=seed,
+        giveback_arm_percent=giveback_arm_percent,
+        giveback_floor_percent=giveback_floor_percent,
+    )
+    candidate_summary = compute_trade_summary(
+        candidate.sort_values("exit_time"),
+        starting_balance=starting_balance,
+        seed=seed,
+        giveback_arm_percent=giveback_arm_percent,
+        giveback_floor_percent=giveback_floor_percent,
+    )
+
+    def _point_diff(
+        candidate_val: Optional[float], baseline_val: Optional[float]
+    ) -> Optional[float]:
+        # Point difference only (no CI) -- these are single-run
+        # descriptive statistics, not resampled distributions; None
+        # propagates when either side has an undefined statistic (e.g.
+        # profit_factor with zero losses, recovery_factor with zero
+        # drawdown) rather than a misleading fabricated number.
+        if candidate_val is None or baseline_val is None:
+            return None
+        return candidate_val - baseline_val
+
+    surface_diff = {
+        "net_profit": _point_diff(candidate_summary["net_profit"], baseline_summary["net_profit"]),
+        "profit_factor": _point_diff(
+            candidate_summary["profit_factor"], baseline_summary["profit_factor"]
+        ),
+        "max_balance_drawdown_pct": _point_diff(
+            candidate_summary["max_balance_drawdown_pct"],
+            baseline_summary["max_balance_drawdown_pct"],
+        ),
+        "recovery_factor": _point_diff(
+            candidate_summary["recovery_factor"], baseline_summary["recovery_factor"]
+        ),
+        "balance_peak_giveback_n_trigger_events": _point_diff(
+            candidate_summary["balance_peak_giveback"]["n_trigger_events"],
+            baseline_summary["balance_peak_giveback"]["n_trigger_events"],
+        ),
+        "balance_peak_giveback_max_giveback_pct": _point_diff(
+            candidate_summary["balance_peak_giveback"]["max_giveback_pct"],
+            baseline_summary["balance_peak_giveback"]["max_giveback_pct"],
+        ),
+        "longest_losing_streak": _point_diff(
+            candidate_summary["longest_losing_streak"], baseline_summary["longest_losing_streak"]
+        ),
+        "avg_winner_dollars": _point_diff(
+            candidate_summary["avg_winner_dollars"], baseline_summary["avg_winner_dollars"]
+        ),
+        "avg_loser_dollars": _point_diff(
+            candidate_summary["avg_loser_dollars"], baseline_summary["avg_loser_dollars"]
+        ),
+        "avg_trade_duration_minutes": _point_diff(
+            candidate_summary["avg_trade_duration_minutes"],
+            baseline_summary["avg_trade_duration_minutes"],
+        ),
+        "trades_per_day": _point_diff(
+            candidate_summary["trades_per_day"], baseline_summary["trades_per_day"]
+        ),
+    }
+
     summary = {
         "n_baseline_trades": len(baseline),
         "n_candidate_trades": len(candidate),
@@ -382,6 +477,39 @@ def run(
             "confidence": win_rate_diff.confidence,
         },
         "expectancy_r_diff": expectancy_r_diff.__dict__,
+        "baseline_summary": baseline_summary,
+        "candidate_summary": candidate_summary,
+        "surface_diff": surface_diff,
+        # **Added, 2026-07-22 Codex review finding (fifth round): names
+        # exactly what this comparison surface still cannot cover and why
+        # -- every gap has a concrete numbered owner rather than being
+        # silently absent.** MFE/MAE and dimensional (session/regime/
+        # news/hour) breakdowns need calculate_mfe_mae.py's bars.csv and
+        # performance_breakdown.py's joined dimensional CSV respectively
+        # -- both are separate, already-implemented pipelines a caller
+        # can run against the same baseline_csv/candidate_csv once those
+        # additional inputs exist; they are not duplicated here. Cost-
+        # sensitivity (the SAME trades run through multiple assumed
+        # spread/slippage scenarios) and a genuine account/daily equity-
+        # peak-giveback (needs real intratrade equity ticks) both require
+        # inputs TASK-037_MT5_EXPORT_BRIDGE.md does not export yet (see
+        # that task's Files-affected list).
+        "surface_not_covered": {
+            "mfe_mae": "run calculate_mfe_mae.py separately once bars.csv exists for both releases",
+            "dimensional_breakdowns": (
+                "run performance_breakdown.py separately once a joined signal/outcome/session/"
+                "news CSV exists for both releases"
+            ),
+            "cost_sensitivity": (
+                "not implemented -- needs TASK-037 to export multiple cost scenarios per release, "
+                "not just spread_note/slippage_note provenance"
+            ),
+            "account_or_daily_equity_peak_giveback": (
+                "not implemented -- needs TASK-037 to export an intratrade equity-tick series; "
+                "balance_peak_giveback in baseline_summary/candidate_summary is a different, "
+                "balance-based proxy, see analysis.metrics.compute_balance_peak_giveback"
+            ),
+        },
         "n_resamples": n_resamples,
         "seed": seed,
         "confidence": confidence,
@@ -445,6 +573,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
+    parser.add_argument("--starting-balance", type=float, default=1000.0)
+    parser.add_argument("--giveback-arm-percent", type=float, default=1.0)
+    parser.add_argument("--giveback-floor-percent", type=float, default=0.5)
     # **Fixed, 2026-07-22 Codex review finding (fourth round): period-start/
     # period-end are now required, not optional -- see run()'s own comment.**
     parser.add_argument("--period-start", required=True)
@@ -477,6 +608,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             seed=args.seed,
             confidence=args.confidence,
             symbol=args.symbol,
+            starting_balance=args.starting_balance,
+            giveback_arm_percent=args.giveback_arm_percent,
+            giveback_floor_percent=args.giveback_floor_percent,
             period_start=args.period_start,
             period_end=args.period_end,
             baseline_broker=args.baseline_broker,

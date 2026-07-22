@@ -12,57 +12,95 @@ already-unified CSV but never builds one, and TASK-036/037 each excluded
 the consuming join from their own scope while their test plans implied
 one existed. This script is that missing, explicit owner.
 
+**Identity semantics, stated explicitly (Codex review finding, 2026-07-22,
+fifth round -- previously left undefined, which the review demonstrated
+produces incoherent results):**
+
+- ``order_id`` here means MT5's **position ticket**
+  (``SOrderOpenResult.position_ticket`` in ``OrderManager.mqh``), the
+  identifier that stays STABLE across every fill of one position -- NOT
+  a literal MT5 "order ticket" (a pending/market order request that is
+  consumed once filled and is not a durable position-lifetime key). This
+  is the join key precisely because it is what stays constant across
+  partial fills; `TASK-036_JOURNAL_PRODUCER_COMPLETION.md` must populate
+  it from ``position_ticket``, not ``order_ticket``.
+- ``deal_id`` means MT5's **deal ticket** (``deal_ticket``), a distinct
+  identifier PER FILL. A journal decision (recorded before any fill
+  exists) legitimately has no real ``deal_id`` yet -- ``deal_id`` is
+  therefore treated as FILL-scoped data, never compared as a
+  journal/trade invariant (see ``deal_id``'s exclusion from
+  ``shared_cols`` below; this closes a real bug where a null journal
+  ``deal_id`` against a real trade ``deal_id`` was reported as a
+  conflict, and a second partial fill's ``deal_id`` was rejected as
+  disagreeing with the first).
+- ``trade_id`` is this project's own CSV-row identity (one row per FILL
+  in ``trades.csv``, matching ``analyse_baseline.py``'s schema) --
+  independent of, and just as fill-scoped as, ``deal_id``. A normalized
+  export MUST assign a distinct ``trade_id`` per fill row for a
+  multi-fill position (this script's ``trade_id`` uniqueness check
+  enforces that); ``deal_id`` is the separate, MT5-native fill identity
+  used for cross-referencing back to the real deal history.
+
 **Corrected, 2026-07-22 Codex review finding (fourth round): the round-3
 implementation contradicted its own stated rules in several ways, all
+fixed then:** a null/blank journal ``order_id`` is filtered as a normal
+unsubmitted decision rather than aborting the whole journal;
+``deal_id``/``trade_id`` are read as ``str`` (never pandas' inferred
+numeric type) and checked for null/duplicate values; ``profit`` is
+checked for finiteness; partial fills are aggregated into one output row
+per position.
+
+**Corrected, 2026-07-22 Codex review finding (fifth round): several of
+those round-4 fixes were themselves incomplete or newly broken, all
 fixed here:**
 
-1. **A null/blank journal ``order_id`` is a NORMAL, EXPECTED state**
-   (a decision rejected before submission, or not yet filled) -- the
-   round-3 code instead aborted the ENTIRE journal with a schema error
-   the moment any row had a null ``order_id``, directly contradicting
-   this module's own documented cardinality rules. Such rows are now
-   filtered out of consideration (never matched, never erroring) rather
-   than raising.
-2. **``deal_id`` is now actually read and used**, not silently ignored --
-   each trade outcome's ``deal_id`` must be its own non-null, unique
-   identifier (a real MT5 deal ticket is unique per fill), checked the
-   same way ``trade_id`` is.
-3. **Durable identifiers are read as ``str``, never pandas' inferred
-   numeric type** -- an in-memory probe of ``9007199254740992``,
-   ``9007199254740993``, and a blank ID previously loaded the column as
-   ``float64`` and collapsed the first two (distinct) IDs to the SAME
-   value; leading zeroes (``"001"``) were also silently discarded.
-4. **``trade_id``/``deal_id`` are checked for null and duplicate values,
-   and ``profit`` is checked for finiteness** -- none of these were
-   checked before.
-5. **Shared fields (e.g. ``symbol``) are no longer merged with silent
-   trade-row precedence.** If a column exists on BOTH the journal and
-   trade record for a matched pair, the two values must agree; a
-   disagreement is now a row-level error (data corruption or a
-   mismatched join), not a silent overwrite that could mask it.
-6. **Partial fills are now aggregated into ONE output row per
-   ``order_id``** (position), not one row per individual fill --
-   downstream statistical pipelines (``performance_breakdown.py``) treat
-   each output row as one independent trade observation; leaving
-   multiple CORRELATED fill-rows per position previously inflated
-   ``n_trades`` and understated confidence-interval width. ``profit`` is
-   summed across a position's fills; ``entry_time``/``exit_time`` (when
-   present) take the earliest/latest across fills; the full set of
-   constituent ``trade_id``/``deal_id`` values is preserved in
-   ``fill_trade_ids``/``fill_deal_ids`` for traceability, and ``n_fills``
-   records how many fills were aggregated.
+1. **``deal_id`` excluded from the shared-field conflict check** (see
+   identity semantics above) -- previously caused two reproduced
+   failures: a null journal ``deal_id`` against a real trade ``deal_id``
+   was flagged as a conflict (rejecting the whole match), and a second
+   partial fill's different ``deal_id`` was rejected as "disagreeing"
+   with the first fill's, rather than being aggregated.
+2. **A cross-schema invariant check for ``direction``/``is_long``
+   added** -- these are the SAME underlying fact under different names
+   (journal ``direction`` is ``BUY``/``SELL``; trade ``is_long`` is
+   boolean) and were previously never compared at all; a probe with
+   journal ``direction=BUY`` and trade ``is_long=False`` joined
+   successfully before this fix.
+3. **A whole POSITION is now rejected as a unit if ANY constituent fill
+   fails integrity** -- the round-4 version checked each fill
+   independently and silently kept the other, non-conflicting fills of
+   the same position, which is invalid evidence (a partial, silently
+   incomplete position reported as if it were the whole thing).
+4. **The validated, coerced ``profit`` series is now actually assigned
+   back** to the working frame before any arithmetic -- round 4 computed
+   a validated ``profit_numeric`` series but discarded it, so the
+   ORIGINAL (possibly string-typed) ``profit`` column was what actually
+   got summed: two string profits ``"30"``/``"20"`` produced the
+   concatenated ``3020.0``, not ``50.0``.
+5. **Per-fill fields with no defined position-level aggregation are now
+   explicitly dropped (set to ``None``) for multi-fill positions, not
+   silently taken from the first fill** -- ``entry_price``/
+   ``exit_price``/``stop_price``/``r_multiple`` have no volume/lot
+   column to weight them across fills, so round 4's ``group.iloc[0]``
+   silently reported the FIRST fill's R-multiple as the entire
+   position's R outcome (fills of profit 30/20 and R 1/4 produced
+   position profit 50 but R 1). A single-fill position (the common
+   case until real partial fills exist) still reports these fields
+   normally, since there is no aggregation ambiguity for it.
 
 **Cardinality/duplicate rules, stated explicitly:**
 
 - A submitted (non-null ``order_id``) journal decision's ``order_id``
   must be UNIQUE among journal decisions -- a decision legitimately
-  submits at most one order, so a duplicate SUBMITTED journal
-  ``order_id`` is a schema error, not a valid multi-decision order.
+  submits at most one order/position, so a duplicate SUBMITTED journal
+  ``order_id`` is a schema error, not a valid multi-decision position.
 - A journal decision with a null/blank ``order_id`` is normal (rejected
   before submission, or not yet filled) -- filtered out, never an error.
 - A ``order_id`` may appear MULTIPLE TIMES among trade outcomes -- this
-  is the normal partial-fill case (one order, several deals/fills). All
-  such fills are aggregated into ONE output row (see point 6 above).
+  is the normal partial-fill case (one position, several deals/fills).
+  All such fills are aggregated into ONE output row, or the whole
+  position is rejected as a unit if any fill fails integrity (see point
+  3 above).
 - A trade outcome whose ``order_id`` matches no SUBMITTED journal
   decision is an orphaned outcome (a fill with no recorded decision) --
   a row-level error, never silently dropped or silently joined to
@@ -80,10 +118,17 @@ Required input formats:
 ``trades.csv`` -- ``analyse_baseline.py``'s normalized schema
 (``trade_id, symbol, is_long, entry_time, exit_time, entry_price,
 exit_price, stop_price, profit``) PLUS ``order_id``/``deal_id`` columns
-linking each fill back to the journal decision that produced it. No MQL5
-export or journal producer populates ``order_id``/``deal_id`` in either
-file yet (see ``TASK-036_JOURNAL_PRODUCER_COMPLETION.md``) -- this script
-is ready to run the moment one does.
+linking each fill back to the journal decision that produced it. **Only
+``trade_id``/``order_id``/``deal_id``/``profit`` are structurally
+REQUIRED** (corrected, 2026-07-22 Codex review finding, fifth round:
+this previously implied the full schema was enforced, which it is
+not) -- every other column (symbol, direction/is_long, entry_time,
+exit_time, entry_price, exit_price, stop_price) is used if present, same
+"genuinely optional" convention ``performance_breakdown.py`` already
+documents. No MQL5 export or journal producer populates ``order_id``/
+``deal_id`` in either file yet (see
+``TASK-036_JOURNAL_PRODUCER_COMPLETION.md``) -- this script is ready to
+run the moment one does.
 """
 
 from __future__ import annotations
@@ -111,8 +156,25 @@ from analysis.report_metadata import atomic_write_text, build_report_metadata
 REQUIRED_JOURNAL_COLUMNS = {"order_id"}
 REQUIRED_TRADE_COLUMNS = {"trade_id", "order_id", "deal_id", "profit"}
 # Durable identifiers must never be inferred as numeric -- see module
-# docstring point 3.
+# docstring's identity-semantics section.
 IDENTITY_DTYPE = {"order_id": str, "deal_id": str, "trade_id": str}
+# Per-fill fields with no defined position-level aggregation (no volume/
+# lot column exists to weight them across partial fills) -- dropped
+# (set to None) for a multi-fill position, kept as-is for a single-fill
+# position (Codex review finding, 2026-07-22, fifth round). 'trade_id'/
+# 'deal_id' are included here too: for n_fills==1 they unambiguously
+# identify the one fill and are kept for convenience/backward
+# compatibility; for a real multi-fill position they are superseded by
+# 'fill_trade_ids'/'fill_deal_ids' (comma-joined, every fill) and are set
+# to None rather than silently reporting only the first fill's identity.
+_AMBIGUOUS_MULTI_FILL_FIELDS = (
+    "entry_price",
+    "exit_price",
+    "stop_price",
+    "r_multiple",
+    "trade_id",
+    "deal_id",
+)
 
 
 def _is_blank(value: object) -> bool:
@@ -123,14 +185,49 @@ def _is_blank(value: object) -> bool:
     )
 
 
+def _values_equal(a: object, b: object) -> bool:
+    if _is_blank(a) and _is_blank(b):
+        return True
+    return a == b
+
+
+def _direction_matches_is_long(direction: object, is_long: object) -> bool:
+    """Cross-schema invariant: journal 'direction' (BUY/SELL) and trade
+    'is_long' (bool) describe the SAME underlying fact under different
+    names -- added, 2026-07-22 Codex review finding (fifth round): a
+    probe with direction=BUY and is_long=False previously joined
+    successfully since the generic same-name shared-column check never
+    compares differently-named fields."""
+
+    if _is_blank(direction) or _is_blank(is_long):
+        return True  # nothing to cross-check if either side is absent
+    direction_str = str(direction).strip().upper()
+    if direction_str not in ("BUY", "SELL"):
+        return True  # not a recognized direction value -- not this check's job to validate
+    is_long_bool = (
+        bool(is_long)
+        if not isinstance(is_long, str)
+        else is_long.strip().lower()
+        in (
+            "true",
+            "1",
+            "yes",
+            "long",
+        )
+    )
+    return (direction_str == "BUY") == is_long_bool
+
+
 def join_signal_to_outcome(
     journal_df: pd.DataFrame, trades_df: pd.DataFrame
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Returns (joined_df, row_errors), one row of 'joined_df' per
-    aggregated POSITION (order_id), not per individual fill (see module
-    docstring point 6). 'row_errors' entries have shape
-    {"trade_id": ..., "order_id": ..., "error": ...} for an orphaned trade
-    outcome or a journal/trade shared-field conflict.
+    aggregated POSITION (order_id == MT5 position_ticket), not per
+    individual fill (see module docstring's identity-semantics section).
+    'row_errors' entries have shape {"trade_id": ..., "order_id": ...,
+    "error": ...} for an orphaned trade outcome, or for EVERY fill of a
+    position that fails an integrity check (the whole position is
+    rejected as a unit -- see module docstring point 3).
 
     Raises CsvSchemaError if any SUBMITTED (non-null order_id) journal
     decision has a duplicate order_id, if any trade_id/deal_id is null or
@@ -142,7 +239,7 @@ def join_signal_to_outcome(
     submitted = journal_df[~order_id_blank]
     # Unsubmitted (null/blank order_id) decisions are normal -- rejected
     # before submission, or not yet filled -- and are simply excluded
-    # from matching, never raised as an error (module docstring point 1).
+    # from matching, never raised as an error.
 
     dup_submitted = submitted[submitted.duplicated(subset=["order_id"], keep=False)]
     if not dup_submitted.empty:
@@ -169,62 +266,90 @@ def join_signal_to_outcome(
             f"{sorted(dup_deal_id['deal_id'].unique())}"
         )
 
-    profit_numeric = pd.to_numeric(trades_df["profit"], errors="coerce")
-    if not profit_numeric.apply(lambda v: pd.notna(v) and math.isfinite(v)).all():
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): the
+    # validated, numerically-coerced series was previously computed but
+    # never assigned back to 'trades_df' -- the ORIGINAL (possibly
+    # string-typed) 'profit' column was what actually got summed later,
+    # so two string profits "30"/"20" produced the concatenated 3020.0,
+    # not 50.0.**
+    trades_df = trades_df.copy()
+    trades_df["profit"] = pd.to_numeric(trades_df["profit"], errors="coerce")
+    if not trades_df["profit"].apply(lambda v: pd.notna(v) and math.isfinite(v)).all():
         raise CsvSchemaError("join_signal_to_outcome: trades has a non-finite/missing profit value")
 
-    # Shared-field conflict detection (module docstring point 5): any
-    # column present on BOTH sides (other than the join key itself) must
-    # agree for a matched pair, or the row is a conflict error rather than
-    # a silent trade-row-wins overwrite.
-    shared_cols = (set(journal_df.columns) & set(trades_df.columns)) - {"order_id"}
+    # Shared-field conflict detection: any column present on BOTH sides
+    # (other than 'order_id', the join key, and 'deal_id', which is
+    # FILL-scoped data a journal decision never legitimately has a real
+    # value for -- see module docstring's identity-semantics section)
+    # must agree for a matched pair, or the row is a conflict error
+    # rather than a silent trade-row-wins overwrite.
+    shared_cols = (set(journal_df.columns) & set(trades_df.columns)) - {"order_id", "deal_id"}
+    check_direction = "direction" in journal_df.columns and "is_long" in trades_df.columns
 
     submitted_by_order = submitted.set_index("order_id")
     journal_order_ids = set(submitted_by_order.index)
 
-    fill_rows: list[dict] = []
     row_errors: list[dict] = []
-    for _, trade_row in trades_df.iterrows():
+    position_rows: list[dict] = []
+
+    orphan_mask = trades_df["order_id"].apply(lambda v: _is_blank(v) or v not in journal_order_ids)
+    for _, trade_row in trades_df[orphan_mask].iterrows():
         order_id = trade_row["order_id"]
-        if _is_blank(order_id) or order_id not in journal_order_ids:
-            row_errors.append(
-                {
-                    "trade_id": str(trade_row.get("trade_id", "")),
-                    "order_id": None if _is_blank(order_id) else str(order_id),
-                    "error": "order_id matches no SUBMITTED journal decision (orphaned trade outcome)",
-                }
-            )
-            continue
+        row_errors.append(
+            {
+                "trade_id": str(trade_row.get("trade_id", "")),
+                "order_id": None if _is_blank(order_id) else str(order_id),
+                "error": "order_id matches no SUBMITTED journal decision (orphaned trade outcome)",
+            }
+        )
+
+    matched = trades_df[~orphan_mask]
+    for order_id, group in matched.groupby("order_id", sort=False):
         journal_row = submitted_by_order.loc[order_id]
-        conflicts = [
-            col for col in shared_cols if not _values_equal(journal_row[col], trade_row[col])
-        ]
-        if conflicts:
-            row_errors.append(
-                {
-                    "trade_id": str(trade_row.get("trade_id", "")),
-                    "order_id": str(order_id),
-                    "error": (
-                        f"journal/trade shared field(s) disagree: {sorted(conflicts)} -- "
-                        "refusing to silently let the trade row's value win"
-                    ),
-                }
-            )
+
+        # **Fixed, 2026-07-22 Codex review finding (fifth round): a
+        # position must be rejected AS A WHOLE if any constituent fill
+        # fails integrity -- the round-4 version checked each fill
+        # independently and silently kept the other, non-conflicting
+        # fills of the same position, which is invalid (a silently
+        # incomplete position reported as if it were the whole thing).
+        # Every fill in the group becomes a row error, not only the
+        # literally-conflicting one(s), since none of them may be
+        # aggregated once the position as a whole is rejected.**
+        conflicts_by_trade_id: dict[str, list[str]] = {}
+        for _, trade_row in group.iterrows():
+            conflicts = [
+                col for col in shared_cols if not _values_equal(journal_row[col], trade_row[col])
+            ]
+            if check_direction and not _direction_matches_is_long(
+                journal_row["direction"], trade_row["is_long"]
+            ):
+                conflicts.append("direction/is_long")
+            if conflicts:
+                conflicts_by_trade_id[str(trade_row.get("trade_id", ""))] = conflicts
+
+        if conflicts_by_trade_id:
+            for _, trade_row in group.iterrows():
+                trade_id_str = str(trade_row.get("trade_id", ""))
+                own_conflicts = conflicts_by_trade_id.get(trade_id_str)
+                if own_conflicts is not None:
+                    detail = f"journal/trade shared field(s) disagree: {sorted(own_conflicts)}"
+                else:
+                    detail = "a sibling fill in this position failed integrity"
+                row_errors.append(
+                    {
+                        "trade_id": trade_id_str,
+                        "order_id": str(order_id),
+                        "error": (
+                            f"{detail} -- the whole position is rejected as a unit, "
+                            "not just the fill(s) that conflicted"
+                        ),
+                    }
+                )
             continue
-        combined = {**journal_row.to_dict(), **trade_row.to_dict()}
-        fill_rows.append(combined)
 
-    if not fill_rows:
-        return pd.DataFrame(), row_errors
-
-    fills_df = pd.DataFrame(fill_rows)
-
-    # Aggregate every position's fills into ONE output row (module
-    # docstring point 6) -- downstream statistical pipelines must see one
-    # row per independent trade observation, not one per correlated fill.
-    aggregated_rows = []
-    for order_id, group in fills_df.groupby("order_id", sort=False):
-        agg = group.iloc[0].to_dict()
+        agg: dict = {**journal_row.to_dict()}
+        agg["order_id"] = order_id
         agg["profit"] = float(group["profit"].sum())
         agg["n_fills"] = len(group)
         agg["fill_trade_ids"] = ",".join(str(v) for v in group["trade_id"])
@@ -233,16 +358,24 @@ def join_signal_to_outcome(
             agg["entry_time"] = group["entry_time"].min()
         if "exit_time" in group.columns:
             agg["exit_time"] = group["exit_time"].max()
-        aggregated_rows.append(agg)
+        if "is_long" in group.columns:
+            # Direction must already be internally consistent within one
+            # real position -- report it if uniform, else leave absent
+            # (data-quality signal, not a value to silently pick from).
+            unique_is_long = group["is_long"].unique()
+            agg["is_long"] = unique_is_long[0] if len(unique_is_long) == 1 else None
 
-    joined_df = pd.DataFrame(aggregated_rows)
+        single_fill = len(group) == 1
+        first = group.iloc[0]
+        for field in _AMBIGUOUS_MULTI_FILL_FIELDS:
+            if field not in group.columns:
+                continue
+            agg[field] = first[field] if single_fill else None
+
+        position_rows.append(agg)
+
+    joined_df = pd.DataFrame(position_rows)
     return joined_df, row_errors
-
-
-def _values_equal(a: object, b: object) -> bool:
-    if _is_blank(a) and _is_blank(b):
-        return True
-    return a == b
 
 
 def run(
@@ -257,6 +390,18 @@ def run(
     slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): the implicit
+    # errors_json sidecar was previously derived AFTER the collision
+    # checks below already ran (and after the input had been read and
+    # output_csv written) -- a run with the journal input named
+    # 'out.errors.json' and output 'out.csv' completed and REPLACED the
+    # journal CSV with JSON metadata. This exact defect was already fixed
+    # in join_trade_journal.py/join_news_events.py; the same fix applies
+    # here -- derive every implicit path FIRST, then validate the
+    # complete final path set once, before any I/O.**
+    if errors_json is None and output_csv is not None:
+        errors_json = output_csv.parent / f"{output_csv.stem}.errors.json"
+
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, errors_json):
@@ -278,14 +423,6 @@ def run(
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_dataframe_csv(sanitize_dataframe_for_csv(joined_df), output_csv)
-
-    # **Fixed, 2026-07-22 Codex review finding (fourth round): provenance
-    # was previously written ONLY when 'errors_json' was explicitly
-    # supplied -- a caller who requested only output_csv got a data file
-    # with zero provenance record anywhere, unlike every other pipeline in
-    # this layer.**
-    if errors_json is None and output_csv is not None:
-        errors_json = output_csv.parent / f"{output_csv.stem}.errors.json"
 
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)

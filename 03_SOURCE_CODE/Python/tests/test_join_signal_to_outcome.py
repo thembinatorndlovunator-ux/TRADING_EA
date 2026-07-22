@@ -394,3 +394,221 @@ def test_cli_main_missing_file(tmp_path, capsys):
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
+
+
+# --- round-5 regressions --------------------------------------------------
+
+
+def test_null_journal_deal_id_against_real_trade_deal_id_is_not_a_conflict():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    'deal_id' was previously treated as a shared-field invariant between
+    journal and trade rows. A journal decision (recorded before any fill
+    exists) legitimately has a blank deal_id, so a real trade deal_id
+    ("d1") was compared against that blank and reported as a false
+    "journal/trade shared field(s) disagree" conflict -- rejecting every
+    legitimate real fill the moment deal_id starts being genuinely
+    populated on the trade side. deal_id must never be compared as a
+    journal/trade invariant (it is fill-scoped, not decision-scoped)."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "deal_id": None}])
+    trades = pd.DataFrame([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "deal_id": "d1"}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    assert len(joined) == 1
+    assert joined.iloc[0]["profit"] == pytest.approx(30.0)
+
+
+def test_second_partial_fill_with_different_deal_id_is_aggregated_not_rejected():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    if a journal row happens to also carry a real (non-blank) deal_id
+    (e.g. copied from the first fill), a SECOND partial fill's different
+    deal_id was previously rejected as "disagreeing" with the journal's,
+    even though partial fills legitimately have distinct deal_ids. Both
+    fills must be aggregated into one position."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "deal_id": "d1"}])
+    trades = pd.DataFrame(
+        [
+            {"trade_id": "t1", "order_id": "o1", "profit": 30.0, "deal_id": "d1"},
+            {"trade_id": "t2", "order_id": "o1", "profit": 20.0, "deal_id": "d2"},
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    assert len(joined) == 1
+    row = joined.iloc[0]
+    assert row["profit"] == pytest.approx(50.0)
+    assert row["n_fills"] == 2
+    assert row["fill_deal_ids"] == "d1,d2"
+
+
+def test_direction_is_long_cross_schema_mismatch_is_a_conflict():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    journal 'direction' (BUY/SELL) and trade 'is_long' (bool) describe
+    the SAME underlying fact under different column names, so the
+    generic same-name shared-column check never compared them -- a probe
+    with direction=BUY and is_long=False previously joined successfully.
+    This must now be a row error."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "BUY"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": False}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 1
+    assert "direction/is_long" in row_errors[0]["error"]
+
+
+def test_direction_is_long_agreement_does_not_error():
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "SELL"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": False}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    assert len(joined) == 1
+
+
+def test_string_profits_summed_numerically_not_concatenated():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a validated, numerically-coerced 'profit_numeric' series was computed
+    but never assigned back to the working frame -- the ORIGINAL
+    (string-typed) 'profit' column was what actually got summed, so
+    string profits "30"/"20" produced the concatenated string-then-float
+    3020.0, not the numeric sum 50.0."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE"}])
+    trades = pd.DataFrame(
+        [
+            {"trade_id": "t1", "order_id": "o1", "profit": "30", "deal_id": "d1"},
+            {"trade_id": "t2", "order_id": "o1", "profit": "20", "deal_id": "d2"},
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    row = joined.iloc[0]
+    assert row["profit"] == pytest.approx(50.0)
+    assert row["profit"] != pytest.approx(3020.0)
+
+
+def test_multi_fill_position_drops_ambiguous_first_fill_only_fields():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    entry_price/exit_price/stop_price/r_multiple have no volume/lot
+    column to weight them across partial fills -- the round-4
+    implementation silently reported the FIRST fill's values (e.g. its
+    own r_multiple) as if they described the whole position, even though
+    'profit' was a genuine sum across all fills (position profit=50 but
+    r_multiple=1, the first fill's own R). These fields must now be
+    explicitly undefined (None) for a genuine multi-fill position rather
+    than silently first-fill-leaked. A single-fill position still
+    reports them normally (no aggregation ambiguity)."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE"}])
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_id": "t1",
+                "order_id": "o1",
+                "profit": 30.0,
+                "deal_id": "d1",
+                "r_multiple": 1.0,
+                "entry_price": 100.0,
+            },
+            {
+                "trade_id": "t2",
+                "order_id": "o1",
+                "profit": 20.0,
+                "deal_id": "d2",
+                "r_multiple": 4.0,
+                "entry_price": 100.5,
+            },
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    row = joined.iloc[0]
+    assert row["profit"] == pytest.approx(50.0)
+    assert row["n_fills"] == 2
+    assert pd.isna(row["r_multiple"])
+    assert pd.isna(row["entry_price"])
+    assert pd.isna(row["trade_id"])
+    assert pd.isna(row["deal_id"])
+
+
+def test_single_fill_position_keeps_r_multiple_and_price_fields():
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE"}])
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_id": "t1",
+                "order_id": "o1",
+                "profit": 30.0,
+                "deal_id": "d1",
+                "r_multiple": 1.5,
+                "entry_price": 100.0,
+            }
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    row = joined.iloc[0]
+    assert row["n_fills"] == 1
+    assert row["r_multiple"] == pytest.approx(1.5)
+    assert row["entry_price"] == pytest.approx(100.0)
+
+
+def test_one_bad_fill_rejects_the_whole_position_not_just_that_fill():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    each fill was previously checked for shared-field conflicts
+    INDEPENDENTLY, so if only one of a position's several fills
+    conflicted with the journal row, the OTHER, non-conflicting fills
+    were still silently aggregated -- an invalid, silently-incomplete
+    position reported as if it were the whole thing. A position must now
+    be rejected as a unit (every fill becomes a row error, none are
+    aggregated) if ANY constituent fill fails integrity."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "symbol": "XAUUSD"}])
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_id": "t1",
+                "order_id": "o1",
+                "profit": 30.0,
+                "deal_id": "d1",
+                "symbol": "XAUUSD",
+            },
+            {
+                "trade_id": "t2",
+                "order_id": "o1",
+                "profit": 20.0,
+                "deal_id": "d2",
+                "symbol": "EURUSD",
+            },
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 2
+    assert {e["trade_id"] for e in row_errors} == {"t1", "t2"}
+
+
+def test_sidecar_errors_json_path_does_not_overwrite_journal_input(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    the implicit errors_json sidecar was previously derived from
+    output_csv AFTER the input/output collision check already ran (and
+    after the CSV write itself) -- a journal input literally named
+    'out.errors.json' alongside an output_csv 'out.csv' would have its
+    derived errors_json path never checked against the journal input at
+    all, silently overwriting the journal CSV with JSON metadata. The
+    derived path must now be included in the collision check before any
+    I/O happens."""
+
+    journal_csv = tmp_path / "out.errors.json"
+    pd.DataFrame([{"order_id": "o1", "strategy": "SR_BOUNCE"}]).to_csv(journal_csv, index=False)
+    trades_csv = tmp_path / "trades.csv"
+    pd.DataFrame([{"trade_id": "t1", "order_id": "o1", "deal_id": "d1", "profit": 30.0}]).to_csv(
+        trades_csv, index=False
+    )
+    output_csv = tmp_path / "out.csv"
+
+    original_journal_bytes = journal_csv.read_bytes()
+    with pytest.raises(CsvSchemaError):
+        run(journal_csv, trades_csv, output_csv=output_csv, repo_path=REPO_ROOT)
+    assert journal_csv.read_bytes() == original_journal_bytes

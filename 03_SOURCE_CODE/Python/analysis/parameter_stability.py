@@ -211,6 +211,17 @@ def sweep_giveback_percent(
                 r_diffs.append(0.0)  # same "no effect" convention as analyse_giveback.py
 
         mean_r_diff = sum(r_diffs) / len(r_diffs)
+        # **Added, 2026-07-22 Codex review finding (fifth round):** each
+        # individual r_diff is finite (a bounded R-multiple difference in
+        # ordinary use), but summing many extreme values can still
+        # overflow to +/-inf -- two finite stability paths ending at
+        # -1e308 previously produced an infinite mean with no guard here.
+        if not math.isfinite(mean_r_diff):
+            raise ValueError(
+                f"sweep_giveback_percent: mean_r_diff_over_all_paths overflowed to a non-finite "
+                f"value ({mean_r_diff}) at giveback_percent={pct} -- individual r_diffs are "
+                "finite but their sum/mean is not"
+            )
         ci_lower = ci_upper = None
         # **Fixed, 2026-07-22 Codex review finding (third round): a
         # constant-r_diffs sample (e.g. the guard never triggers on any

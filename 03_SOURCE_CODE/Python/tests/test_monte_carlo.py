@@ -76,6 +76,17 @@ def test_below_minimum_n_resamples_rejected():
     assert MIN_N_RESAMPLES > 1
 
 
+def test_rejects_aggregate_overflow_even_when_individual_resamples_are_finite():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    run_monte_carlo([5e306] * 20, 100, 1) previously returned an infinite
+    final_balance_mean even though every individual resampled final
+    balance was finite -- aggregating (mean/quantile) many large-but-
+    finite resampled outcomes across n_resamples can itself overflow."""
+
+    with pytest.raises(ValueError):
+        run_monte_carlo([5e306] * 20, n_resamples=100, seed=1)
+
+
 def test_confidence_out_of_range_raises():
     with pytest.raises(ValueError):
         run_monte_carlo(VALID_PNL_20, n_resamples=100, seed=1, confidence=1.5)
