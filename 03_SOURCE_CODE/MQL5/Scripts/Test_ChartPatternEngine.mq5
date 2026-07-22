@@ -74,6 +74,41 @@ void OnStart()
       Check("double bottom breakout_index == 1", r.breakout_index == 1);
    }
 
+   //--- 2a. TASK-039: Triple top (natural 3-peak extension of double top) --
+   //--- Cross-checked against pattern_validation.py's own hand-verified ----
+   //--- test_detect_triple_top_found (identical fixture/expected values). --
+   {
+      double highs[]  = {100,110,100,90,100,110,100,90,100,110,100,95,90,85};
+      double lows[]   = {95,100,95,80,95,100,95,80,95,100,95,85,80,75};
+      double closes[] = {98,105,97,85,97,105,97,85,97,105,97,90,85,80};
+      SChartPatternResult r;
+      bool ok = CPT_DetectTripleTopArray(highs, lows, closes, 1, 5, 2.0, 0.5, 1.0, 2, 0.1, r);
+      Check("triple top detected", ok && r.found && r.type == CPT_TRIPLE_TOP);
+      Check("triple top boundary_price == 80 (lower of the two troughs)",
+            NearlyEqual(r.boundary_price, 80.0));
+      Check("triple top extreme_price == 110 (highest peak)", NearlyEqual(r.extreme_price, 110.0));
+      Check("triple top target == 50 (80 - (110-80))", NearlyEqual(r.target, 50.0));
+      Check("triple top stop == 110.2 (110 + 2*0.1)", NearlyEqual(r.stop, 110.2));
+   }
+
+   //--- 2b. TASK-039: Triple bottom (mirror) ---------------------------------
+   //--- Cross-checked against pattern_validation.py's own
+   //--- test_detect_triple_bottom_found (identical fixture/expected values).
+   {
+      double highs[]  = {105,100,105,120,105,100,105,120,105,100,105,115,120,125};
+      double lows[]   = {100,90,100,110,100,90,100,110,100,90,100,105,110,115};
+      double closes[] = {102,95,103,115,103,95,103,115,103,95,103,110,115,120};
+      SChartPatternResult r;
+      bool ok = CPT_DetectTripleBottomArray(highs, lows, closes, 1, 5, 2.0, 0.5, 1.0, 2, 0.1, r);
+      Check("triple bottom detected", ok && r.found && r.type == CPT_TRIPLE_BOTTOM);
+      Check("triple bottom boundary_price == 120 (higher of the two peaks)",
+            NearlyEqual(r.boundary_price, 120.0));
+      Check("triple bottom extreme_price == 90 (lowest trough)",
+            NearlyEqual(r.extreme_price, 90.0));
+      Check("triple bottom target == 150 (120 + (120-90))", NearlyEqual(r.target, 150.0));
+      Check("triple bottom stop == 89.8 (90 - 2*0.1)", NearlyEqual(r.stop, 89.8));
+   }
+
    //--- 3. Head and shoulders (sloped neckline, hand-traced interpolation) -
    {
       double highs[]  = {95,95,95,100,95,95,95,110,95,95,95,101,95,95,95,95,95,95,95,95};

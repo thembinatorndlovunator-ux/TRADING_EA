@@ -756,6 +756,8 @@ class ChartPatternType(str, Enum):
     DOUBLE_BOTTOM = "DOUBLE_BOTTOM"
     HEAD_SHOULDERS = "HEAD_SHOULDERS"
     INV_HEAD_SHOULDERS = "INV_HEAD_SHOULDERS"
+    TRIPLE_TOP = "TRIPLE_TOP"  # TASK-039
+    TRIPLE_BOTTOM = "TRIPLE_BOTTOM"  # TASK-039
 
 
 @dataclass(frozen=True)
@@ -900,6 +902,141 @@ def detect_double_bottom(
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.DOUBLE_BOTTOM,
+        boundary_price=neckline,
+        extreme_price=extreme,
+        target=neckline + (neckline - extreme),
+        stop=lows[l1] - current_atr * breakout_buffer_atr,
+        breakout_index=breakout_level_index,
+    )
+
+
+def detect_triple_top(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    min_pullback_atr: float,
+    trend_bars: int,
+    breakout_buffer_atr: float,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectTripleTopArray (TASK-039): three confirmed
+    swing highs each within price_tolerance_atr of its immediate neighbor,
+    separated by two confirmed swing-low troughs. Neckline is the LOWER of
+    the two troughs (a flat neckline, same as double top)."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    h1 = find_nearest_confirmed_swing_high(highs, 0, depth, max_lookback)
+    if h1 is None:
+        return _empty_chart_pattern_result()
+    h2 = find_nearest_confirmed_swing_high(highs, h1 + 1, depth, max_lookback)
+    if h2 is None:
+        return _empty_chart_pattern_result()
+    h3 = find_nearest_confirmed_swing_high(highs, h2 + 1, depth, max_lookback)
+    if h3 is None:
+        return _empty_chart_pattern_result()
+
+    if abs(highs[h1] - highs[h2]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+    if abs(highs[h2] - highs[h3]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    trough1 = find_nearest_confirmed_swing_low(lows, h1 + 1, depth, h2 - h1)
+    if trough1 is None or trough1 >= h2:
+        return _empty_chart_pattern_result()
+
+    trough2 = find_nearest_confirmed_swing_low(lows, h2 + 1, depth, h3 - h2)
+    if trough2 is None or trough2 >= h3:
+        return _empty_chart_pattern_result()
+
+    neckline = min(lows[trough1], lows[trough2])
+    extreme = max(highs[h1], highs[h2], highs[h3])
+
+    if extreme - neckline < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if not has_prior_trend(closes, h3, trend_bars, True):
+        return _empty_chart_pattern_result()
+
+    breakout_level_index = -1
+    breakout_level = neckline - current_atr * breakout_buffer_atr
+    for k in range(h1 - 1, -1, -1):
+        if closes[k] < breakout_level:
+            breakout_level_index = k
+            break
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.TRIPLE_TOP,
+        boundary_price=neckline,
+        extreme_price=extreme,
+        target=neckline - (extreme - neckline),
+        stop=highs[h1] + current_atr * breakout_buffer_atr,
+        breakout_index=breakout_level_index,
+    )
+
+
+def detect_triple_bottom(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    min_pullback_atr: float,
+    trend_bars: int,
+    breakout_buffer_atr: float,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectTripleBottomArray (mirror of triple top)."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    l1 = find_nearest_confirmed_swing_low(lows, 0, depth, max_lookback)
+    if l1 is None:
+        return _empty_chart_pattern_result()
+    l2 = find_nearest_confirmed_swing_low(lows, l1 + 1, depth, max_lookback)
+    if l2 is None:
+        return _empty_chart_pattern_result()
+    l3 = find_nearest_confirmed_swing_low(lows, l2 + 1, depth, max_lookback)
+    if l3 is None:
+        return _empty_chart_pattern_result()
+
+    if abs(lows[l1] - lows[l2]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+    if abs(lows[l2] - lows[l3]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    peak1 = find_nearest_confirmed_swing_high(highs, l1 + 1, depth, l2 - l1)
+    if peak1 is None or peak1 >= l2:
+        return _empty_chart_pattern_result()
+
+    peak2 = find_nearest_confirmed_swing_high(highs, l2 + 1, depth, l3 - l2)
+    if peak2 is None or peak2 >= l3:
+        return _empty_chart_pattern_result()
+
+    neckline = max(highs[peak1], highs[peak2])
+    extreme = min(lows[l1], lows[l2], lows[l3])
+
+    if neckline - extreme < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if not has_prior_trend(closes, l3, trend_bars, False):
+        return _empty_chart_pattern_result()
+
+    breakout_level_index = -1
+    breakout_level = neckline + current_atr * breakout_buffer_atr
+    for k in range(l1 - 1, -1, -1):
+        if closes[k] > breakout_level:
+            breakout_level_index = k
+            break
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.TRIPLE_BOTTOM,
         boundary_price=neckline,
         extreme_price=extreme,
         target=neckline + (neckline - extreme),

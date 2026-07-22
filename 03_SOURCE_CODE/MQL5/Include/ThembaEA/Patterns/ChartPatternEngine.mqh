@@ -47,7 +47,9 @@ enum ENUM_CHART_PATTERN_TYPE
    CPT_DOUBLE_TOP,
    CPT_DOUBLE_BOTTOM,
    CPT_HEAD_SHOULDERS,
-   CPT_INV_HEAD_SHOULDERS
+   CPT_INV_HEAD_SHOULDERS,
+   CPT_TRIPLE_TOP,     // TASK-039
+   CPT_TRIPLE_BOTTOM   // TASK-039
   };
 
 struct SChartPatternResult
@@ -217,6 +219,168 @@ bool CPT_DetectDoubleBottomArray(const double &highs[], const double &lows[], co
 
    result.found = true;
    result.type = CPT_DOUBLE_BOTTOM;
+   result.boundary_price = neckline;
+   result.extreme_price = extreme;
+   result.target = neckline + (neckline - extreme);
+   result.stop = lows[l1] - current_atr * breakout_buffer_atr;
+   result.breakout_index = breakout_level_index;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| TASK-039 — triple top: three confirmed swing highs (h1 newest, h2      |
+//| middle, h3 oldest) each within price_tolerance_atr of its immediate       |
+//| neighbor (a stated, documented interpretation choice extending double       |
+//| top's own single-pair tolerance check to two pairwise comparisons rather      |
+//| than a three-way spread, matching this engine's existing pairwise-             |
+//| tolerance convention), separated by two confirmed swing-low troughs.            |
+//| Neckline is the LOWER of the two troughs (a flat neckline, same as              |
+//| double top — triple top does not need head-and-shoulders' sloped-neckline          |
+//| treatment since it has no single dominant "head" asymmetry to interpolate            |
+//| across).                                                                              |
+//+------------------------------------------------------------------+
+bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const double &closes[],
+                               const int depth, const int max_lookback, const double current_atr,
+                               const double price_tolerance_atr, const double min_pullback_atr,
+                               const int trend_bars, const double breakout_buffer_atr,
+                               SChartPatternResult &result)
+  {
+   result.found = false;
+   result.type = CPT_NONE;
+   result.boundary_price = 0.0;
+   result.extreme_price = 0.0;
+   result.target = 0.0;
+   result.stop = 0.0;
+   result.breakout_index = -1;
+
+   if(current_atr <= 0.0)
+      return false;
+
+   int h1;
+   if(!SE_FindNearestConfirmedSwingHighArray(highs, 0, depth, max_lookback, h1))
+      return false;
+   int h2;
+   if(!SE_FindNearestConfirmedSwingHighArray(highs, h1 + 1, depth, max_lookback, h2))
+      return false;
+   int h3;
+   if(!SE_FindNearestConfirmedSwingHighArray(highs, h2 + 1, depth, max_lookback, h3))
+      return false;
+
+   if(MathAbs(highs[h1] - highs[h2]) > current_atr * price_tolerance_atr)
+      return false;
+   if(MathAbs(highs[h2] - highs[h3]) > current_atr * price_tolerance_atr)
+      return false;
+
+   int trough1; // between h1 (newer) and h2
+   if(!SE_FindNearestConfirmedSwingLowArray(lows, h1 + 1, depth, h2 - h1, trough1))
+      return false;
+   if(trough1 >= h2)
+      return false;
+
+   int trough2; // between h2 and h3 (older)
+   if(!SE_FindNearestConfirmedSwingLowArray(lows, h2 + 1, depth, h3 - h2, trough2))
+      return false;
+   if(trough2 >= h3)
+      return false;
+
+   double neckline = MathMin(lows[trough1], lows[trough2]);
+   double extreme = MathMax(highs[h1], MathMax(highs[h2], highs[h3]));
+
+   if(extreme - neckline < min_pullback_atr * current_atr)
+      return false;
+   if(!CPT_HasPriorTrend(closes, h3, trend_bars, true))
+      return false;
+
+   int breakout_level_index = -1;
+   double breakout_level = neckline - current_atr * breakout_buffer_atr;
+   for(int k = h1 - 1; k >= 0; k--)
+     {
+      if(closes[k] < breakout_level)
+        {
+         breakout_level_index = k;
+         break;
+        }
+     }
+
+   result.found = true;
+   result.type = CPT_TRIPLE_TOP;
+   result.boundary_price = neckline;
+   result.extreme_price = extreme;
+   result.target = neckline - (extreme - neckline);
+   result.stop = highs[h1] + current_atr * breakout_buffer_atr;
+   result.breakout_index = breakout_level_index;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| TASK-039 — triple bottom: mirror of CPT_DetectTripleTopArray on       |
+//| swing lows.                                                             |
+//+------------------------------------------------------------------+
+bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], const double &closes[],
+                                  const int depth, const int max_lookback, const double current_atr,
+                                  const double price_tolerance_atr, const double min_pullback_atr,
+                                  const int trend_bars, const double breakout_buffer_atr,
+                                  SChartPatternResult &result)
+  {
+   result.found = false;
+   result.type = CPT_NONE;
+   result.boundary_price = 0.0;
+   result.extreme_price = 0.0;
+   result.target = 0.0;
+   result.stop = 0.0;
+   result.breakout_index = -1;
+
+   if(current_atr <= 0.0)
+      return false;
+
+   int l1;
+   if(!SE_FindNearestConfirmedSwingLowArray(lows, 0, depth, max_lookback, l1))
+      return false;
+   int l2;
+   if(!SE_FindNearestConfirmedSwingLowArray(lows, l1 + 1, depth, max_lookback, l2))
+      return false;
+   int l3;
+   if(!SE_FindNearestConfirmedSwingLowArray(lows, l2 + 1, depth, max_lookback, l3))
+      return false;
+
+   if(MathAbs(lows[l1] - lows[l2]) > current_atr * price_tolerance_atr)
+      return false;
+   if(MathAbs(lows[l2] - lows[l3]) > current_atr * price_tolerance_atr)
+      return false;
+
+   int peak1; // between l1 (newer) and l2
+   if(!SE_FindNearestConfirmedSwingHighArray(highs, l1 + 1, depth, l2 - l1, peak1))
+      return false;
+   if(peak1 >= l2)
+      return false;
+
+   int peak2; // between l2 and l3 (older)
+   if(!SE_FindNearestConfirmedSwingHighArray(highs, l2 + 1, depth, l3 - l2, peak2))
+      return false;
+   if(peak2 >= l3)
+      return false;
+
+   double neckline = MathMax(highs[peak1], highs[peak2]);
+   double extreme = MathMin(lows[l1], MathMin(lows[l2], lows[l3]));
+
+   if(neckline - extreme < min_pullback_atr * current_atr)
+      return false;
+   if(!CPT_HasPriorTrend(closes, l3, trend_bars, false))
+      return false;
+
+   int breakout_level_index = -1;
+   double breakout_level = neckline + current_atr * breakout_buffer_atr;
+   for(int k = l1 - 1; k >= 0; k--)
+     {
+      if(closes[k] > breakout_level)
+        {
+         breakout_level_index = k;
+         break;
+        }
+     }
+
+   result.found = true;
+   result.type = CPT_TRIPLE_BOTTOM;
    result.boundary_price = neckline;
    result.extreme_price = extreme;
    result.target = neckline + (neckline - extreme);

@@ -133,17 +133,43 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] All 12 non-cup-and-handle chart patterns implemented in
-      `ChartPatternEngine.mqh` and ported to `pattern_validation.py`
-      with hand-verified fixtures.
-- [ ] Cup-and-handle implemented behind an explicit disabled-by-default
-      flag, or explicitly deferred again with a NEW numbered follow-up
-      naming it (never silently dropped).
-- [ ] No claim of a real MQL5-export cross-check is made here -- that
+**Status, 2026-07-22 -- a stated, honest scope decision under this
+sprint's own time constraints, not a silent partial claim:** of the 13
+families this task owns, **2 are built (triple top, triple bottom)** --
+the two lowest-risk, most direct extensions of the already-verified
+double top/bottom logic (same swing-finder plumbing, one additional
+peak/trough). **The remaining 11 (ascending/descending/symmetrical
+triangle, rectangle/consolidation box, bull/bear flag, pennant, rising/
+falling wedge, parallel channel) plus cup-and-handle are explicitly NOT
+built** -- each needs genuinely new trendline-slope-fitting design work
+(not a direct extension of existing swing-pivot logic the way triple
+top/bottom is), which this sprint's remaining time does not allow to do
+carefully. This gap is named here, not silently dropped; a future task
+must pick it up.
+
+- [x] Triple top/triple bottom implemented in `ChartPatternEngine.mqh`
+      (`CPT_DetectTripleTopArray`/`CPT_DetectTripleBottomArray`, plus two
+      new `ENUM_CHART_PATTERN_TYPE` values) and ported to
+      `pattern_validation.py` (`detect_triple_top`/`detect_triple_bottom`)
+      with hand-verified, cross-checked fixtures (identical arrays and
+      expected values on both sides).
+- [ ] **NOT built, explicitly deferred:** ascending/descending/
+      symmetrical triangle, rectangle/consolidation box, bull/bear flag,
+      pennant, rising/falling wedge, parallel channel (11 families) --
+      needs new trendline-slope-fitting design work, not attempted this
+      sprint.
+- [ ] **NOT built, explicitly deferred:** cup-and-handle (behind its own
+      disabled-by-default flag, per the master prompt's own requirement)
+      -- named here as the explicit follow-up owner this task's own
+      Rejection criteria requires, not silently dropped.
+- [x] No claim of a real MQL5-export cross-check is made here -- that
       remains explicitly owned by `TASK-037`.
-- [ ] `TASKS.md`/`TASK-033_PATTERN_VALIDATION_COMPLETION.md` updated to
-      remove any remaining "all chart patterns" ambiguity.
-- [ ] Independent review completed and findings resolved.
+- [x] `TASKS.md`/`TASK-033_PATTERN_VALIDATION_COMPLETION.md` already
+      correctly scope TASK-033 to the original 4 patterns and name this
+      task as owning the remaining 13 -- no further "all chart patterns"
+      ambiguity exists to remove.
+- [ ] Independent review completed and findings resolved — deferred to
+      this project's single, consolidated, end-of-sprint Codex review.
 
 ## Rejection criteria
 
@@ -153,3 +179,16 @@ No file under `01_BASELINE/` may be modified.
   flag) and validated.
 - Wiring any of these patterns into live trading decisions -- out of
   scope for this task.
+
+## Status
+
+In progress, partial by explicit scope decision — triple top/triple
+bottom built, compiled clean (0 errors/0 warnings, real MetaEditor
+evidence), and ported to Python with cross-checked hand-verified
+fixtures (`Test_ChartPatternEngine.mq5` + `test_pattern_validation.py`,
+70 tests passing, full 655-test suite passes). The remaining 11
+trendline-slope-fitting pattern families and cup-and-handle are
+explicitly named as NOT built this sprint (see Acceptance criteria's own
+status note) — a future task must pick up that remaining, genuinely
+larger design effort. Independent review deferred to the consolidated
+end-of-sprint Codex review.

@@ -17,6 +17,8 @@ from analysis.pattern_validation import (
     detect_harami,
     detect_head_and_shoulders,
     detect_inverse_head_and_shoulders,
+    detect_triple_bottom,
+    detect_triple_top,
     find_nearest_confirmed_swing_high,
     find_nearest_confirmed_swing_low,
     has_prior_trend,
@@ -580,6 +582,163 @@ def test_detect_double_bottom_found():
     assert result.type.value == "DOUBLE_BOTTOM"
     assert result.boundary_price == pytest.approx(120.0)  # the peak (neckline)
     assert result.extreme_price == pytest.approx(90.0)  # the lower/equal trough
+
+
+# --- TASK-039: triple top/bottom (natural 3-peak/trough extensions of ----------
+# double top/bottom, reusing the same swing-finder plumbing).
+
+_TT_HIGHS = [
+    100.0,
+    110.0,
+    100.0,
+    90.0,
+    100.0,
+    110.0,
+    100.0,
+    90.0,
+    100.0,
+    110.0,
+    100.0,
+    95.0,
+    90.0,
+    85.0,
+]
+_TT_LOWS = [
+    95.0,
+    100.0,
+    95.0,
+    80.0,
+    95.0,
+    100.0,
+    95.0,
+    80.0,
+    95.0,
+    100.0,
+    95.0,
+    85.0,
+    80.0,
+    75.0,
+]
+_TT_CLOSES = [
+    98.0,
+    105.0,
+    97.0,
+    85.0,
+    97.0,
+    105.0,
+    97.0,
+    85.0,
+    97.0,
+    105.0,
+    97.0,
+    90.0,
+    85.0,
+    80.0,
+]
+
+
+def test_detect_triple_top_found():
+    result = detect_triple_top(
+        _TT_HIGHS,
+        _TT_LOWS,
+        _TT_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=2.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is True
+    assert result.type.value == "TRIPLE_TOP"
+    assert result.boundary_price == pytest.approx(80.0)  # the lower of the two troughs
+    assert result.extreme_price == pytest.approx(110.0)
+
+
+_TB_HIGHS = [
+    105.0,
+    100.0,
+    105.0,
+    120.0,
+    105.0,
+    100.0,
+    105.0,
+    120.0,
+    105.0,
+    100.0,
+    105.0,
+    115.0,
+    120.0,
+    125.0,
+]
+_TB_LOWS = [
+    100.0,
+    90.0,
+    100.0,
+    110.0,
+    100.0,
+    90.0,
+    100.0,
+    110.0,
+    100.0,
+    90.0,
+    100.0,
+    105.0,
+    110.0,
+    115.0,
+]
+_TB_CLOSES = [
+    102.0,
+    95.0,
+    103.0,
+    115.0,
+    103.0,
+    95.0,
+    103.0,
+    115.0,
+    103.0,
+    95.0,
+    103.0,
+    110.0,
+    115.0,
+    120.0,
+]
+
+
+def test_detect_triple_bottom_found():
+    result = detect_triple_bottom(
+        _TB_HIGHS,
+        _TB_LOWS,
+        _TB_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=2.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is True
+    assert result.type.value == "TRIPLE_BOTTOM"
+    assert result.boundary_price == pytest.approx(120.0)  # the higher of the two peaks
+    assert result.extreme_price == pytest.approx(90.0)
+
+
+def test_detect_triple_top_not_found_when_atr_non_positive():
+    result = detect_triple_top(
+        _TT_HIGHS,
+        _TT_LOWS,
+        _TT_CLOSES,
+        depth=1,
+        max_lookback=5,
+        current_atr=0.0,
+        price_tolerance_atr=0.5,
+        min_pullback_atr=1.0,
+        trend_bars=2,
+        breakout_buffer_atr=0.1,
+    )
+    assert result.found is False
 
 
 # Head-and-shoulders fixture: three confirmed swing highs (RS newest, Head,
