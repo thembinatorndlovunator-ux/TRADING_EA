@@ -176,14 +176,35 @@ int OnInit()
                IMR_MarketFamilyToString(g_market_family), g_symbol,
                SymbolInfoString(g_symbol, SYMBOL_PATH));
 
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 1): the create-if-absent bootstrap for this symbol+magic's durable-
+   // intent lock now runs exactly once here, before any order-submission
+   // logic can ever call IM_BeginIntent — see IntentManager.mqh's own
+   // header for why this closes the practical multi-instance creation
+   // race that living inside IM_BeginIntent's own hot path could not.**
+   IM_EnsureInitialized(g_symbol, InpMagicNumber);
+
    // TASK-034: reconcile any durable-intent record orphaned by a crash/restart between
    // "about to submit" and "confirmed filled or rejected" — before resuming normal operation.
-   bool orphaned_intent_was_filled;
-   if(IM_ReconcileOnRestart(g_symbol, InpMagicNumber, orphaned_intent_was_filled))
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 1):
+   // a matching PENDING ORDER (accepted at the broker, not yet filled/
+   // cancelled) now leaves the intent deliberately ACTIVE rather than
+   // clearing it and resuming as if nothing were outstanding.**
+   bool orphaned_intent_was_filled, orphaned_intent_still_pending;
+   if(IM_ReconcileOnRestart(g_symbol, InpMagicNumber, orphaned_intent_was_filled,
+                             orphaned_intent_still_pending))
+     {
+      string reconcile_outcome;
+      if(orphaned_intent_still_pending)
+         reconcile_outcome = "a pending order still exists at the broker — intent left ACTIVE "
+                              "until OnTradeTransaction observes its terminal outcome";
+      else if(orphaned_intent_was_filled)
+         reconcile_outcome = "a matching position exists (order had filled)";
+      else
+         reconcile_outcome = "no matching position or pending order exists (order never filled)";
       PrintFormat("ThembaEA: reconciled an orphaned durable-intent record on restart for '%s' "
-                  "magic %I64d — %s.", g_symbol, InpMagicNumber,
-                  orphaned_intent_was_filled ? "a matching position exists (order had filled)" :
-                                               "no matching position exists (order never filled)");
+                  "magic %I64d — %s.", g_symbol, InpMagicNumber, reconcile_outcome);
+     }
 
    if(InpEnableOrderSubmission)
       PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
@@ -197,44 +218,34 @@ int OnInit()
   }
 
 //+------------------------------------------------------------------+
-//| TASK-036 — journals a correlated follow-up record for a PLACED order   |
-//| whose resolution (filled, or cancelled/expired without ever filling)      |
-//| only became known later via OnTradeTransaction — see                          |
-//| AsyncFillCorrelator.mqh's own header for why this is a NEW appended             |
-//| record (linked back to the original decision via signal_id) rather               |
-//| than an in-place rewrite of the original JSONL line.                                |
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 2): this used to APPEND a synthetic STradeDecision journal row for an       |
+//| async fill/cancellation outcome. The review found that record was            |
+//| schema-invalid on multiple axes at once -- market_family/intraday_mode/       |
+//| regime left empty (the Python schema requires a recognized enum value           |
+//| for each), direction="NONE" combined with a real order_id confusing the          |
+//| outcome join's direction/is_long check, and the reused signal_id                    |
+//| colliding with the original decision's own journal-uniqueness                          |
+//| expectations. Rather than patch each individual defect (the review's own                 |
+//| own suggestion is a genuinely separate submission/order/fill EVENT                          |
+//| schema, distinct from STradeDecision, which is real, larger design work                        |
+//| this fix does not attempt to invent under review pressure), this now                             |
+//| logs the resolution for operator visibility ONLY -- it does not write a                            |
+//| journal row claiming to be a trade decision. The safety-critical half of                             |
+//| async correlation (never submitting a duplicate order) does not depend                                 |
+//| on any journal write at all -- it is IntentManager.mqh's own durable                                     |
+//| intent flag, cleared here on definitive resolution. A real, schema-                                        |
+//| correct async event record remains a genuine, named follow-up.**              |
 //+------------------------------------------------------------------+
-void JournalAsyncFillFollowUp(const string original_signal_id, const bool filled,
-                               const ulong resolved_position_id, const ulong resolved_deal_ticket,
-                               const string outcome_note)
+void LogAsyncFillResolution(const string original_signal_id, const bool filled,
+                             const ulong resolved_position_id, const string outcome_note)
   {
-   STradeDecision follow_up = DJ_NewDecision();
-   follow_up.signal_id = original_signal_id; // correlation key back to the original decision
-   follow_up.timestamp = TimeCurrent();
-   follow_up.symbol = g_symbol;
-   follow_up.direction = "NONE";
-   follow_up.strategy = "AsyncFillCorrelation";
-   follow_up.setup = filled ? "order_filled_async" : "order_never_filled_async";
-   follow_up.ea_version = "1.01-task027-order-submission-optional";
    if(filled)
-     {
-      if(resolved_position_id != 0)
-         follow_up.order_id = IntegerToString((long)resolved_position_id);
-      if(resolved_deal_ticket != 0)
-         follow_up.deal_id = IntegerToString((long)resolved_deal_ticket);
-     }
-
-   string reason_arr[];
-   AppendReason(reason_arr, outcome_note);
-   if(filled)
-      follow_up.reasons_passed_json = BuildJsonStringArray(reason_arr);
+      PrintFormat("ThembaEA: async fill resolved for signal_id=%s -- position_id=%I64u (%s).",
+                  original_signal_id, resolved_position_id, outcome_note);
    else
-      follow_up.reasons_rejected_json = BuildJsonStringArray(reason_arr);
-
-   string journal_error;
-   if(!DJ_AppendDecision(follow_up, journal_error))
-      PrintFormat("ThembaEA: failed to journal async-fill-correlation follow-up for "
-                  "signal_id=%s: %s", original_signal_id, journal_error);
+      PrintFormat("ThembaEA: async order resolved WITHOUT filling for signal_id=%s (%s).",
+                  original_signal_id, outcome_note);
   }
 
 //+------------------------------------------------------------------+
@@ -285,8 +296,12 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
            {
             ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
             AFC_RemovePending(pending_index);
-            JournalAsyncFillFollowUp(pending_signal_id, true, resolved_position_id, trans.deal,
-                                      "async_fill_confirmed");
+            // Definitive terminal resolution -- safe to clear the durable
+            // intent now (see AttemptOrderSubmission's own step 7 comment
+            // for why it was deliberately left active until this point).
+            IM_ClearIntent(g_symbol, InpMagicNumber);
+            LogAsyncFillResolution(pending_signal_id, true, resolved_position_id,
+                                    "async_fill_confirmed");
            }
         }
       return;
@@ -302,9 +317,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
          if(state != ORDER_STATE_FILLED)
            {
             AFC_RemovePending(pending_index);
-            JournalAsyncFillFollowUp(pending_signal_id, false, 0, 0,
-                                      StringFormat("async_order_never_filled_state_%s",
-                                                    EnumToString(state)));
+            IM_ClearIntent(g_symbol, InpMagicNumber); // cancelled/expired/rejected -- terminal
+            LogAsyncFillResolution(pending_signal_id, false, 0,
+                                    StringFormat("async_order_never_filled_state_%s",
+                                                  EnumToString(state)));
            }
         }
       return;
@@ -647,16 +663,25 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    bool opened = OM_OpenPosition(g_symbol, is_long, sizing.volume, final_stop,
                                    resolution.winner.target_price, InpMagicNumber, comment,
                                    open_result);
-   // Confirmed fill or confirmed rejection either way — clear the intent now
-   // rather than waiting for a later tick, per TASK-034's durable-intent spec.
-   IM_ClearIntent(g_symbol, InpMagicNumber);
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 1):
+   // the intent is CONFIRMED-terminal only when the order was rejected
+   // outright, or a synchronous fill resolved a real position_id. A
+   // TRADE_RETCODE_PLACED result whose position could not be resolved
+   // synchronously is NOT terminal -- clearing the intent here (the
+   // previous behavior) discarded the one durable, restart-safe record of
+   // an order that may still be live at the broker. The intent now stays
+   // ACTIVE until OnTradeTransaction observes the order's actual terminal
+   // outcome (fill confirmed, or cancelled/expired).
    if(!opened)
      {
+      IM_ClearIntent(g_symbol, InpMagicNumber); // rejected outright -- definitively terminal
       AppendReason(rejected, "order_" + open_result.rejection_reason);
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
       return;
      }
+   if(open_result.position_id != 0)
+      IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
 
    // Success — reflect the ACTUAL submitted stop back into the journal
    // record (a floor widening in step 4 may have moved it from the
@@ -665,13 +690,25 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    decision.risk_percent = 100.0 * sizing.risk_cash_actual / equity;
    // TASK-036: order_id is the DURABLE position_id (POSITION_IDENTIFIER),
    // never position_ticket -- see OrderManager.mqh's own SOrderOpenResult
-   // comment for why. deal_id is the per-fill DEAL_TICKET. Both stay ""
-   // (JSON null) if the position could not be resolved synchronously --
-   // the TRADE_RETCODE_PLACED-not-yet-filled case, handled below.
+   // comment for why. "" (JSON null) if the position could not be resolved
+   // synchronously -- the TRADE_RETCODE_PLACED-not-yet-filled case, handled
+   // below.
+   //
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 2):
+   // decision.deal_id is deliberately left unset (null) here, not populated
+   // from open_result.deal_ticket (the OPENING deal). Export_TradeHistory.mq5
+   // exports one row per CLOSING deal only (its own deal_id column is a
+   // closing-deal ticket), so a journal deal_id populated from the OPENING
+   // deal can never be a member of any real trade's exported deal_id set --
+   // join_signal_to_outcome.py's own membership check
+   // (journal deal_id must be among a matched position's fill deal_ids)
+   // would then reject EVERY ordinary, legitimately-filled position as a
+   // conflict. order_id (position_id) remains the correct, sole join key;
+   // a real per-fill deal_id contract (open vs. close, or a proper event
+   // schema per the review's own suggestion) is a genuine follow-up, not
+   // silently faked here.**
    if(open_result.position_id != 0)
       decision.order_id = IntegerToString((long)open_result.position_id);
-   if(open_result.deal_ticket != 0)
-      decision.deal_id = IntegerToString((long)open_result.deal_ticket);
 
    AppendReason(passed, StringFormat(
       "order_submitted_ticket_%I64u_position_id_%I64u_volume_%.2f_fill_%.5f",
@@ -804,6 +841,49 @@ void ManageOpenPositions()
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 7):** on regime-classification or required-data-read failure,             |
+//| EvaluateAndJournal previously returned before DJ_AppendDecision was ever      |
+//| called at all, contradicting this EA's own "journal every bar" claim.          |
+//| The approved behavior is a journaled transition-state record with zero            |
+//| confidence and an immediate hysteresis bypass to TRANSITION_OR_UNCERTAIN             |
+//| (so a subsequent good read does not have to fight through stale pending                |
+//| hysteresis state left over from the failure bar).                                        |
+//+------------------------------------------------------------------+
+void JournalDataFailureDecision(const string failure_reason)
+  {
+   MRE_ApplyHysteresis(g_hysteresis_state, REGIME_TRANSITION_OR_UNCERTAIN, true,
+                        InpHysteresisRequiredBars);
+
+   g_signal_counter++;
+   string signal_id = StringFormat("%s_%I64d_%I64d", g_symbol, (long)TimeCurrent(),
+                                    g_signal_counter);
+
+   STradeDecision decision = DJ_NewDecision();
+   decision.signal_id = signal_id;
+   decision.timestamp = DJ_ServerTimeToUtc(TimeCurrent());
+   decision.symbol = g_symbol;
+   decision.market_family = IMR_MarketFamilyToString(g_market_family);
+   decision.intraday_mode = IMR_IntradayModeToString(INTRADAY_MODE_SCALP); // unknown -- conservative default
+   decision.regime = EnumToString(REGIME_TRANSITION_OR_UNCERTAIN);
+   decision.regime_confidence = 0.0;
+   decision.direction = "NONE";
+   decision.strategy = "NoTrade";
+   decision.setup = "data_failure";
+   decision.news_state = "CLEAR"; // unknown -- not evaluated this bar, never fabricate BLACKOUT
+   decision.session_state = "SESSION_TIME_REMAINING_UNKNOWN";
+   decision.ea_version = "1.01-task027-order-submission-optional";
+
+   string reason_arr[];
+   AppendReason(reason_arr, failure_reason);
+   decision.reasons_rejected_json = BuildJsonStringArray(reason_arr);
+
+   string journal_error;
+   if(!DJ_AppendDecision(decision, journal_error))
+      PrintFormat("ThembaEA: failed to journal a data-failure decision: %s", journal_error);
+  }
+
+//+------------------------------------------------------------------+
 //| Classifies the regime once, reads the shared OHLC/ATR window once,   |
 //| computes structure once, evaluates all five strategies against that   |
 //| SAME data, routes, resolves, journals the outcome, and — only when     |
@@ -841,12 +921,14 @@ void EvaluateAndJournal()
      {
       Print("ThembaEA: regime classification failed this bar (insufficient data or "
             "indicator failure) — skipping evaluation.");
+      JournalDataFailureDecision("regime_classification_failed");
       return;
      }
 
    if(!g_md.HasBars(InpSharedWindowBars))
      {
       Print("ThembaEA: insufficient history for the shared evaluation window — skipping.");
+      JournalDataFailureDecision("insufficient_shared_window_history");
       return;
      }
 
@@ -862,9 +944,23 @@ void EvaluateAndJournal()
          !g_md.GetClose(i, closes[i]) || !g_md.GetATR(i, atr_values[i], 14))
         {
          Print("ThembaEA: a required price/ATR read failed — skipping this bar's evaluation.");
+         JournalDataFailureDecision("price_or_atr_read_failed");
          return;
         }
      }
+
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 7):
+   // MRE_ClassifyArray's own low_confidence_override (confidence < 0.5) was
+   // computed but never consumed downstream -- a low-confidence trend/range/
+   // expansion/compression read still traded exactly like a high-confidence
+   // one. The approved spec requires TRANSITION_OR_UNCERTAIN routing
+   // treatment below that threshold; substituting it here (before the gate
+   // composer/strategy evaluation ever see the raw regime) makes
+   // STR_RouteCandidates' own existing TRANSITION_OR_UNCERTAIN default case
+   // (blocks every family) apply, with no separate routing logic needed.
+   ENUM_MARKET_REGIME regime_for_gating = regime_read.low_confidence_override
+                                           ? REGIME_TRANSITION_OR_UNCERTAIN
+                                           : regime_read.regime;
 
    //--- TASK-034: compose the untradeable-spread/liquidity gate, the news-  --
    //--- blackout gate, and hysteresis into ONE effective regime, BEFORE any --
@@ -882,7 +978,7 @@ void EvaluateAndJournal()
    string news_event_id;
    bool news_blackout = ResolveNewsBlackout(atr_values[0], news_event_id);
 
-   SRegimeGateResult gate_result = RGC_ComposeGates(g_hysteresis_state, regime_read.regime,
+   SRegimeGateResult gate_result = RGC_ComposeGates(g_hysteresis_state, regime_for_gating,
                                                      spread_liquidity_untradeable, news_blackout,
                                                      news_event_id, InpHysteresisRequiredBars);
    ENUM_MARKET_REGIME effective_regime = gate_result.effective_regime;
@@ -892,6 +988,8 @@ void EvaluateAndJournal()
    // real data to validate against").
    string gate_reasons[];
    AppendReason(gate_reasons, "regime_raw_" + EnumToString(regime_read.regime));
+   if(regime_read.low_confidence_override)
+      AppendReason(gate_reasons, "low_confidence_override_forced_transition");
    AppendReason(gate_reasons, "regime_effective_" + EnumToString(effective_regime));
    if(gate_result.spread_liquidity_gate_active)
       AppendReason(gate_reasons, "gate_spread_liquidity_active");
@@ -1005,7 +1103,7 @@ void EvaluateAndJournal()
 
    STradeDecision decision = DJ_NewDecision();
    decision.signal_id = signal_id;
-   decision.timestamp = TimeCurrent();
+   decision.timestamp = DJ_ServerTimeToUtc(TimeCurrent());
    decision.symbol = g_symbol;
    decision.market_family = IMR_MarketFamilyToString(g_market_family);
    decision.intraday_mode = IMR_IntradayModeToString(intraday_mode);

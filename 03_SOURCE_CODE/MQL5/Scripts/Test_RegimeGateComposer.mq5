@@ -86,19 +86,29 @@ void OnStart()
          "spread/liquidity determined the effective regime",
          r4.news_triggering_event_id == "EVT999");
 
-   //--- 5. A gate clearing on a later bar returns hysteresis to its own ----
-   //--- normal confirmation behavior, not stuck on the gated regime --------
+   //--- 5. A gate clearing on a later bar: hysteresis keeps reporting the --
+   //--- PRIOR confirmed (gated) regime until a fresh required_bars run of --
+   //--- clean reads actually confirms the new one -- **corrected, 2026-07-22
+   //--- Codex review finding (seventh round, P0 finding 7): this test
+   //--- previously asserted the FIRST clean read already stops reporting
+   //--- UNTRADEABLE, on the mistaken assumption that "has_confirmed" resets
+   //--- while a switch is merely pending. It does not -- MRE_ApplyHysteresis's
+   //--- own "return state.has_confirmed ? state.confirmed_regime :
+   //--- TRANSITION_OR_UNCERTAIN" branch only ever reports TRANSITION before
+   //--- the VERY FIRST confirmation this state has ever made; once
+   //--- has_confirmed is true (as it is here, from the earlier bypass call),
+   //--- an unconfirmed pending switch correctly keeps reporting the OLD
+   //--- confirmed regime -- that is hysteresis's entire purpose (never flap
+   //--- to a merely-pending read). The previous assertion was therefore
+   //--- deterministically false and could never have passed; fixed to match
+   //--- MRE_ApplyHysteresis's own real, documented behavior.**
    SRegimeHysteresisState state5;
    MRE_InitHysteresisState(state5);
    RGC_ComposeGates(state5, REGIME_RANGING, true, false, "", 2); // gate active, bypassed
    SRegimeGateResult r5a = RGC_ComposeGates(state5, REGIME_RANGING, false, false, "", 2);
-   // Gate just cleared this bar -- this is the FIRST clean read since the
-   // gate's bypass forced a confirmed UNTRADEABLE state; hysteresis now
-   // needs its own required_bars of consecutive RANGING reads before
-   // confirming RANGING, so this one bar alone reports TRANSITION.
-   Check("gate clears: first clean read after a gate is unconfirmed pending, "
-         "not still stuck on the old gated regime",
-         r5a.effective_regime != REGIME_UNTRADEABLE_SPREAD_OR_LIQUIDITY);
+   Check("gate clears: first clean read still reports the PRIOR confirmed "
+         "(gated) regime -- hysteresis has not yet confirmed the switch",
+         r5a.effective_regime == REGIME_UNTRADEABLE_SPREAD_OR_LIQUIDITY);
    SRegimeGateResult r5b = RGC_ComposeGates(state5, REGIME_RANGING, false, false, "", 2);
    Check("gate clears: second consecutive clean RANGING read confirms RANGING",
          r5b.effective_regime == REGIME_RANGING);

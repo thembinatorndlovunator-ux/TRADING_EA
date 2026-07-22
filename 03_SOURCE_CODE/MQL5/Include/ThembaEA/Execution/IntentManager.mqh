@@ -66,19 +66,54 @@ bool IM_HasActiveIntent(const string symbol, const long magic)
   }
 
 //+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 1):** the bootstrap "create the lock variable if absent" step must         |
+//| run exactly once, from OnInit, BEFORE any order-submission logic ever         |
+//| runs — never from inside IM_BeginIntent itself (the hot path). The           |
+//| original code re-ran "if(!GlobalVariableCheck(active_key))                     |
+//| GlobalVariableSet(active_key, 0.0)" on every call: if a second instance             |
+//| sharing this symbol+magic ever raced the FIRST-EVER creation of this                 |
+//| key (both see it absent before either creates it), one instance's                      |
+//| unconditional GlobalVariableSet(0.0) could silently reset the OTHER                      |
+//| instance's already-successful CAS-to-1.0 back to 0.0, breaking the                         |
+//| idempotency guard entirely. Native MQL5 GlobalVariables have no atomic                       |
+//| create-if-absent primitive, so this bootstrap cannot be made airtight                          |
+//| purely with GlobalVariable calls in the general multi-instance case --                           |
+//| calling this ONCE from OnInit (a point that, per this project's own                                |
+//| one-instance-per-symbol+magic convention used throughout TASK-034/041,                              |
+//| is not itself expected to race against another instance's OnInit for                                  |
+//| the SAME symbol+magic) closes the practical exposure: after OnInit, the                                 |
+//| key always already exists, so IM_BeginIntent's own CAS never takes the                                    |
+//| create-if-absent branch again.                                                                               |
+//+------------------------------------------------------------------+
+void IM_EnsureInitialized(const string symbol, const long magic)
+  {
+   string active_key = IM_Key(symbol, magic, "active");
+   if(!GlobalVariableCheck(active_key))
+      GlobalVariableSet(active_key, 0.0);
+  }
+
+//+------------------------------------------------------------------+
 //| Begins a new intent record just before order submission. Returns      |
 //| false (and records nothing) if an intent is already active — this is    |
 //| the idempotency guard: a caller must never submit a second order for      |
 //| the same symbol+magic while one is already in flight. 'is_long' is         |
 //| stored as 1.0/0.0, 'volume' and 'timestamp' verbatim.                        |
+//|                                                                    |
+//| **Assumes IM_EnsureInitialized(symbol, magic) has already run this       |
+//| instance's lifetime (the live EA calls it once from OnInit) — this          |
+//| function itself no longer performs the racy create-if-absent bootstrap.**    |
 //+------------------------------------------------------------------+
 bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
                      const double volume, const datetime now)
   {
    string active_key = IM_Key(symbol, magic, "active");
-   if(!GlobalVariableCheck(active_key))
-      GlobalVariableSet(active_key, 0.0); // unset sentinel, created once
-
+   // Deliberately does NOT call IM_EnsureInitialized here — re-running the
+   // create-if-absent check on every hot-path call would reintroduce
+   // exactly the race this fix removes. If the key genuinely does not
+   // exist yet (IM_EnsureInitialized was never called), this call fails
+   // closed (GlobalVariableSetOnCondition returns false against a
+   // nonexistent variable) rather than silently racing to create it.
    if(!GlobalVariableSetOnCondition(active_key, 1.0, 0.0))
       return false; // an intent is already active — refuse a second one
 
@@ -120,20 +155,67 @@ bool IM_HasMatchingPosition(const string symbol, const long magic)
   }
 
 //+------------------------------------------------------------------+
-//| Call once at OnInit, before normal evaluation resumes. If an intent    |
-//| record is active, reconciles it against the live position list and       |
-//| clears it either way (see file header's reconciliation policy).             |
-//| Returns true if an orphaned intent was found and reconciled (false if       |
-//| there was nothing to reconcile — the common case). 'was_filled_out' is        |
-//| only meaningful when this returns true.                                         |
+//| True iff an ACTIVE (not-yet-terminal) order matching 'symbol'+'magic'  |
+//| currently exists at the broker — added, 2026-07-22 (Codex review          |
+//| finding, seventh round, P0 finding 1): a restart must not silently           |
+//| clear the durable intent and resume normal operation while an accepted        |
+//| order the crash interrupted could still fill later; only a genuinely            |
+//| terminal state (a matching position exists, or neither a position NOR             |
+//| a pending order exists) is safe to treat as reconciled.                              |
 //+------------------------------------------------------------------+
-bool IM_ReconcileOnRestart(const string symbol, const long magic, bool &was_filled_out)
+bool IM_HasMatchingPendingOrder(const string symbol, const long magic)
+  {
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(OrderGetInteger(ORDER_MAGIC) != magic)
+         continue;
+      if(OrderGetString(ORDER_SYMBOL) != symbol)
+         continue;
+      return true;
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
+//| Call once at OnInit, before normal evaluation resumes. If an intent    |
+//| record is active, reconciles it against the live position AND active       |
+//| order lists. **Fixed, 2026-07-22 (Codex review finding, seventh round,       |
+//| P0 finding 1): a matching position existing means the order filled (safe        |
+//| to clear); a matching PENDING ORDER (no position yet) means the                    |
+//| submission is still live at the broker and may still fill or be                       |
+//| cancelled/expired later -- the intent MUST stay active (this function                   |
+//| does not clear it) so IM_BeginIntent's own CAS continues to refuse a                        |
+//| duplicate submission until OnTradeTransaction observes the order's                             |
+//| actual terminal outcome. Only when NEITHER a position nor a pending                               |
+//| order exists (the submission never reached the broker, or already                                   |
+//| resolved before this restart with no trace left) is it safe to clear                                   |
+//| and resume.** 'was_filled_out' is only meaningful when this returns true              |
+//| and 'still_pending_out' is false.                                                          |
+//+------------------------------------------------------------------+
+bool IM_ReconcileOnRestart(const string symbol, const long magic, bool &was_filled_out,
+                            bool &still_pending_out)
   {
    was_filled_out = false;
+   still_pending_out = false;
    if(!IM_HasActiveIntent(symbol, magic))
       return false;
 
-   was_filled_out = IM_HasMatchingPosition(symbol, magic);
+   if(IM_HasMatchingPosition(symbol, magic))
+     {
+      was_filled_out = true;
+      IM_ClearIntent(symbol, magic);
+      return true;
+     }
+
+   if(IM_HasMatchingPendingOrder(symbol, magic))
+     {
+      still_pending_out = true;
+      return true; // intent deliberately left ACTIVE -- see header comment
+     }
+
    IM_ClearIntent(symbol, magic);
    return true;
   }

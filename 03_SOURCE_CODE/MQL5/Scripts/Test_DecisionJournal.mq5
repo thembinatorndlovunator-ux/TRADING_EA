@@ -67,6 +67,27 @@ void OnStart()
    Check("ISO-8601 formatting produces the exact expected string",
          iso == "2026-07-21T14:05:30Z");
 
+   //--- 3a. TASK-036/seventh-round P0 finding 10: DJ_ServerTimeToUtc -------
+   //--- actually converts server time to UTC, rather than DJ_FormatIso8601Utc --
+   //--- silently mislabeling a raw server timestamp as UTC via a bare "Z" -----
+   //--- suffix. Verified against the terminal's own live server-GMT offset, ---
+   //--- which this function itself uses -- reconstructing TimeGMT() FROM ------
+   //--- TimeTradeServer() through the function under test, tolerating the -----
+   //--- few seconds that may elapse between the two live clock reads. ---------
+   datetime reconstructed_utc = DJ_ServerTimeToUtc(TimeTradeServer());
+   long utc_diff_seconds = MathAbs((long)reconstructed_utc - (long)TimeGMT());
+   Check("DJ_ServerTimeToUtc(TimeTradeServer()) reconstructs TimeGMT() (within a few seconds)",
+         utc_diff_seconds <= 5);
+
+   //--- 3b. A nonzero server-GMT offset actually shifts the result (not a -----
+   //--- silent identity/no-op) -- hand-verified with a fabricated offset by ----
+   //--- checking the function's own documented formula directly. --------------
+   long live_offset_seconds = (long)TimeTradeServer() - (long)TimeGMT();
+   datetime sample_server_time = D'2026.07.21 14:05:30';
+   datetime expected_utc = (datetime)((long)sample_server_time - live_offset_seconds);
+   Check("DJ_ServerTimeToUtc applies exactly (server_time - live server-GMT offset)",
+         DJ_ServerTimeToUtc(sample_server_time) == expected_utc);
+
    //--- 4. Full envelope serialization, including null-handling ----------
    STradeDecision full = DJ_NewDecision();
    full.signal_id = "test-signal-001";

@@ -58,10 +58,22 @@ input string           InpOutputFile      = "ThembaEA\\Export\\predicted_regime.
 #define XPR_MIN_EFFICIENCY        0.3
 #define XPR_TREND_SLOPE_DIVISOR   0.5
 
-string Iso8601Utc(const datetime t)
+// **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 10):**
+// iTime(...) returns trade-SERVER time -- this export previously formatted
+// it directly with a "Z" (UTC) suffix. See Export_TradeHistory.mq5's own
+// identical fix/comment for the stated historical-DST approximation this
+// necessarily makes.
+datetime ServerTimeToUtc(const datetime server_time)
   {
+   long offset_seconds = (long)TimeTradeServer() - (long)TimeGMT();
+   return (datetime)((long)server_time - offset_seconds);
+  }
+
+string Iso8601Utc(const datetime server_time)
+  {
+   datetime utc = ServerTimeToUtc(server_time);
    MqlDateTime dt;
-   TimeToStruct(t, dt);
+   TimeToStruct(utc, dt);
    return StringFormat("%04d-%02d-%02dT%02d:%02d:%02dZ", dt.year, dt.mon, dt.day, dt.hour, dt.min,
                         dt.sec);
   }
@@ -90,9 +102,19 @@ void OnStart()
 
    int ema_handle = iMA(symbol, InpExportTimeframe, XPR_EMA_PERIOD, 0, MODE_EMA, PRICE_CLOSE);
    int adx_handle = iADX(symbol, InpExportTimeframe, XPR_ADX_PERIOD);
-   if(ema_handle == INVALID_HANDLE || adx_handle == INVALID_HANDLE)
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding
+   // 12): the ATR handle was previously created FRESH inside every
+   // exported-bar iteration and never released -- a 500-bar export leaked
+   // 500 indicator handles. Created ONCE here instead, matching ema/adx's
+   // own already-correct pattern, and released alongside them below.**
+   int atr_handle = iATR(symbol, InpExportTimeframe, 14);
+   if(ema_handle == INVALID_HANDLE || adx_handle == INVALID_HANDLE ||
+      atr_handle == INVALID_HANDLE)
      {
-      Print("ABORT: could not create the EMA/ADX indicator handles.");
+      Print("ABORT: could not create the EMA/ADX/ATR indicator handles.");
+      if(ema_handle != INVALID_HANDLE) IndicatorRelease(ema_handle);
+      if(adx_handle != INVALID_HANDLE) IndicatorRelease(adx_handle);
+      if(atr_handle != INVALID_HANDLE) IndicatorRelease(atr_handle);
       return;
      }
 
@@ -102,6 +124,9 @@ void OnStart()
      {
       PrintFormat("ABORT: could not open '%s' for writing (error=%d).", InpOutputFile,
                   GetLastError());
+      IndicatorRelease(ema_handle);
+      IndicatorRelease(adx_handle);
+      IndicatorRelease(atr_handle);
       return;
      }
    FileWriteString(handle, "symbol,timestamp,predicted_regime\r\n");
@@ -124,9 +149,7 @@ void OnStart()
 
       double atr_values[];
       ArraySetAsSeries(atr_values, true);
-      int atr_handle = iATR(symbol, InpExportTimeframe, 14);
-      if(atr_handle == INVALID_HANDLE || CopyBuffer(atr_handle, 0, shift,
-                                                       XPR_ATR_PERCENTILE_WINDOW, atr_values) !=
+      if(CopyBuffer(atr_handle, 0, shift, XPR_ATR_PERCENTILE_WINDOW, atr_values) !=
          XPR_ATR_PERCENTILE_WINDOW)
          break;
 
@@ -161,6 +184,9 @@ void OnStart()
      }
 
    FileClose(handle);
+   IndicatorRelease(ema_handle);
+   IndicatorRelease(adx_handle);
+   IndicatorRelease(atr_handle);
    PrintFormat("=== TASK-037 Export_PredictedRegime complete: %d row(s) written to '%s' for "
                "'%s' on %s -- this is the PREDICTED side only; see "
                "REGIME_LABELLING_PROTOCOL.md for the independently-labelled ground truth this "

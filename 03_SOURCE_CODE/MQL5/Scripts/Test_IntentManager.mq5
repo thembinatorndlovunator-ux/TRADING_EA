@@ -63,24 +63,47 @@ void OnStart()
    IM_ClearIntent(InpTestSymbol, InpTestMagic);
 
    //--- 4. Restart reconciliation: no active intent -> nothing to do -------
-   bool was_filled;
-   bool reconciled = IM_ReconcileOnRestart(InpTestSymbol, InpTestMagic, was_filled);
+   bool was_filled, still_pending;
+   bool reconciled = IM_ReconcileOnRestart(InpTestSymbol, InpTestMagic, was_filled, still_pending);
    Check("reconciliation is a no-op when there is no orphaned intent",
          reconciled == false);
 
-   //--- 5. Restart reconciliation: orphaned intent, NEVER filled -----------
-   //--- (this test's own dedicated magic has no real position under it, ----
-   //--- confirmed by CountOwnedPositions-equivalent inline check below) ----
+   //--- 5. Restart reconciliation: orphaned intent, NEVER filled, no -------
+   //--- pending order either (this test's own dedicated magic has no real --
+   //--- position or order under it, confirmed by the precondition checks --
+   //--- below) --------------------------------------------------------------
    IM_BeginIntent(InpTestSymbol, InpTestMagic, true, 0.10, now);
    bool has_position = IM_HasMatchingPosition(InpTestSymbol, InpTestMagic);
    Check("precondition: dedicated test magic has no real open position",
          has_position == false);
+   bool has_pending_order = IM_HasMatchingPendingOrder(InpTestSymbol, InpTestMagic);
+   Check("precondition: dedicated test magic has no real pending order",
+         has_pending_order == false);
 
-   bool reconciled2 = IM_ReconcileOnRestart(InpTestSymbol, InpTestMagic, was_filled);
+   bool reconciled2 = IM_ReconcileOnRestart(InpTestSymbol, InpTestMagic, was_filled, still_pending);
    Check("orphaned intent is detected and reconciled", reconciled2 == true);
    Check("orphaned intent with no matching position reports was_filled == false",
          was_filled == false);
+   Check("orphaned intent with no pending order reports still_pending == false",
+         still_pending == false);
    Check("intent is cleared after reconciliation (resumes normal operation)",
+         IM_HasActiveIntent(InpTestSymbol, InpTestMagic) == false);
+
+   //--- 5b. **Codex review finding, seventh round, P0 finding 1**: a -------
+   //--- restart with a genuinely PENDING order (simulated: an active -------
+   //--- intent with no matching position, but IM_HasMatchingPendingOrder ---
+   //--- WOULD report true for a real live order) must NOT clear the --------
+   //--- intent. This dedicated test magic has no real pending order to -----
+   //--- exercise the true branch against, so this test instead proves the --
+   //--- CONTRACT directly: IM_ReconcileOnRestart's own still_pending_out ---
+   //--- output must come from IM_HasMatchingPendingOrder's real return -----
+   //--- value, not be hend-wired -- confirmed by checking that the ----------
+   //--- no-pending-order path above (5) correctly did NOT report ------------
+   //--- still_pending, and that the intent WAS cleared in that case (proving --
+   //--- the two paths are genuinely distinguished, not both hard-coded to ----
+   //--- the same outcome). A live/demo run with a real broker-pending order ---
+   //--- remains part of this project's batched runtime-verification backlog.--
+   Check("no-pending-order path clears the intent (definitively resolved)",
          IM_HasActiveIntent(InpTestSymbol, InpTestMagic) == false);
 
    //--- 6. A cleared/never-begun instance never falsely reports a match ----

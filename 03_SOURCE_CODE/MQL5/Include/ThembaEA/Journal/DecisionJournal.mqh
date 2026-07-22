@@ -129,8 +129,28 @@ string DJ_JsonEscapeString(const string value)
   }
 
 //+------------------------------------------------------------------+
-//| ISO-8601 UTC timestamp string, e.g. "2026-07-21T14:05:30Z", per     |
-//| TRADE_DECISION_SCHEMA.json's "timestamp_utc": "ISO-8601" field.      |
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 10):** converts a trade-SERVER timestamp (TimeCurrent()/TimeTradeServer())  |
+//| to actual UTC using the CURRENT server-GMT offset. MQL5 exposes no          |
+//| broker-specific historical timezone/DST database, so this is a stated,        |
+//| documented approximation for a timestamp recorded before the most recent       |
+//| DST transition -- not silently assumed exact across arbitrary history.           |
+//| Callers must apply this BEFORE a value is formatted by                             |
+//| DJ_FormatIso8601Utc (which stays pure formatting -- it does not itself               |
+//| convert timezones, it only labels whatever datetime it is given as "Z").               |
+//+------------------------------------------------------------------+
+datetime DJ_ServerTimeToUtc(const datetime server_time)
+  {
+   long offset_seconds = (long)TimeTradeServer() - (long)TimeGMT();
+   return (datetime)((long)server_time - offset_seconds);
+  }
+
+//+------------------------------------------------------------------+
+//| ISO-8601 timestamp string, e.g. "2026-07-21T14:05:30Z", per            |
+//| TRADE_DECISION_SCHEMA.json's "timestamp_utc": "ISO-8601" field. Pure       |
+//| formatting only -- does NOT convert server time to UTC; a caller must        |
+//| pass an already-UTC datetime (e.g. via DJ_ServerTimeToUtc first) for the        |
+//| "Z" suffix this emits to be accurate, per the review finding above.               |
 //+------------------------------------------------------------------+
 string DJ_FormatIso8601Utc(const datetime t)
   {

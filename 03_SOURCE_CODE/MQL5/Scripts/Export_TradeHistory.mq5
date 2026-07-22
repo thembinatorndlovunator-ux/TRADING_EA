@@ -54,10 +54,25 @@ void Check(const string label, const bool condition)
    else          { PrintFormat("FAIL: %s", label); g_fail++; }
   }
 
-string Iso8601Utc(const datetime t)
+// **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 10):**
+// HistoryDealGetInteger(..., DEAL_TIME) is trade-SERVER time, per MetaQuotes'
+// own documentation -- this export previously formatted it directly with a
+// "Z" (UTC) suffix, mislabeling every entry_time/exit_time on a non-UTC
+// broker. ServerTimeToUtc converts using the CURRENT server-GMT offset, a
+// stated approximation for historical deals recorded before the most recent
+// DST transition (MQL5 exposes no broker-specific historical timezone
+// database) -- not silently assumed exact.
+datetime ServerTimeToUtc(const datetime server_time)
   {
+   long offset_seconds = (long)TimeTradeServer() - (long)TimeGMT();
+   return (datetime)((long)server_time - offset_seconds);
+  }
+
+string Iso8601Utc(const datetime server_time)
+  {
+   datetime utc = ServerTimeToUtc(server_time);
    MqlDateTime dt;
-   TimeToStruct(t, dt);
+   TimeToStruct(utc, dt);
    return StringFormat("%04d-%02d-%02dT%02d:%02d:%02dZ", dt.year, dt.mon, dt.day, dt.hour, dt.min,
                         dt.sec);
   }
