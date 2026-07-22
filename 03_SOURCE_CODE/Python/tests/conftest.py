@@ -35,7 +35,7 @@ def make_valid_record(**overrides) -> dict:
         "stop": 2345.10,
         "targets": [2361.45],
         "risk_percent": 0.3,
-        "news_state": "clear",
+        "news_state": "CLEAR",
         "session_state": "london",
         "reasons_passed": ["daily_weekly_loss_caps_clear"],
         "reasons_rejected": [],

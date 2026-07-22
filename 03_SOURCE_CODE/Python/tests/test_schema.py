@@ -27,6 +27,24 @@ def test_schema_invalid_record_fails_validation_on_market_family_and_mode():
     assert "market_family" in message or "intraday_mode" in message
 
 
+def test_unknown_news_state_rejected():
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 17): the live producer (ThembaAdaptiveIntradayEA.mq5's
+    ResolveNewsBlackout) defines news_state as exactly "CLEAR" or
+    "BLACKOUT", but this schema previously accepted any string -- a
+    direct "BANANA" probe was accepted despite the two-value producer
+    contract already being documented in this module's own comments."""
+
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(news_state="BANANA"))
+
+
+def test_both_real_news_state_values_accepted():
+    for value in ("CLEAR", "BLACKOUT"):
+        record = validate_record(make_valid_record(news_state=value))
+        assert record.news_state == value
+
+
 def test_unknown_regime_rejected():
     with pytest.raises(SchemaValidationError):
         validate_record(make_valid_record(regime="REGIME_MADE_UP"))

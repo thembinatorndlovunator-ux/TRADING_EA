@@ -94,7 +94,15 @@ class TradeDecision(BaseModel):
     stop: Optional[StrictFloat] = None
     targets: list[StrictFloat] = Field(default_factory=list)
     risk_percent: StrictFloat
-    news_state: str
+    # **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 17): this accepted ANY string -- ThembaAdaptiveIntradayEA.mq5's own
+    # ResolveNewsBlackout (TASK-034) defines news_state as EXACTLY "CLEAR"
+    # or "BLACKOUT" (JournalDataFailureDecision also only ever emits
+    # "CLEAR" -- see that function's own comment), so a direct "BANANA"
+    # probe was accepted even though the two-value producer contract was
+    # already documented in this module's own comments. Restricted to
+    # match the real producer's vocabulary exactly.**
+    news_state: Literal["CLEAR", "BLACKOUT"]
     session_state: str
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_rejected: list[str] = Field(default_factory=list)

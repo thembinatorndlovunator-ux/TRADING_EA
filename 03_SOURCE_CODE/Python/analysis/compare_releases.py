@@ -75,6 +75,17 @@ they are not a coverage proof, only the evidence a coverage check would
 need. A caller presenting this comparison MUST show both the claimed and
 observed periods side by side, not the claimed period alone -- see
 notebook 10's own fix for this exact gap.
+
+**Extended, 2026-07-22 Codex review finding (seventh round, P1 finding
+17): exposing the two periods side by side still required every caller
+to redo the coverage arithmetic themselves to notice a gap -- a one-hour
+sample truthfully satisfies containment inside a claimed one-year
+window, and nothing computed how much of that window was actually
+covered. 'baseline_period_coverage_ratio'/'candidate_period_coverage_ratio'
+(observed span days / claimed span days) are now computed directly, so
+an unauthenticated, barely-covered claim is visible without further
+arithmetic -- still a coverage BOUND, not a claim of uniform sampling
+within the window.**
 """
 
 from __future__ import annotations
@@ -713,6 +724,44 @@ def run(
         "baseline_period": [str(baseline_period[0]), str(baseline_period[1])],
         "candidate_period": [str(candidate_period[0]), str(candidate_period[1])],
         "claimed_comparison_period": [period_start, period_end],
+        # **Added, 2026-07-22 Codex review finding (seventh round, P1
+        # finding 17): period_start/period_end are caller-asserted labels,
+        # verified only for CONTAINMENT (every trade falls within the
+        # claimed window) -- a one-hour sample can be truthfully claimed
+        # to fall "within" a full-year window, and nothing previously
+        # computed how MUCH of the claimed window the observed data
+        # actually covers. baseline_period/candidate_period already
+        # exposed the raw observed envelope (round six's own fix) so a
+        # caller COULD compute this themselves, but requiring every
+        # caller to redo that arithmetic is how "reports the full claimed
+        # duration as authenticated" language keeps recurring. These
+        # ratios are reported directly: 1.0 means the observed data spans
+        # the ENTIRE claimed period; a small ratio (e.g. 1 hour / 365
+        # days) makes an unauthenticated, barely-covered claim
+        # immediately visible without further arithmetic. Still not proof
+        # of representativeness within the claimed window (a baseline
+        # trading only in week 1 of a claimed year has a low ratio too,
+        # correctly flagging it) -- this is a coverage BOUND, not a claim
+        # of uniform sampling.**
+        "claimed_period_days": claimed_period_days,
+        "baseline_observed_days": (
+            baseline_period[1] - baseline_period[0]
+        ).total_seconds() / 86400.0,
+        "candidate_observed_days": (
+            candidate_period[1] - candidate_period[0]
+        ).total_seconds() / 86400.0,
+        "baseline_period_coverage_ratio": (
+            ((baseline_period[1] - baseline_period[0]).total_seconds() / 86400.0)
+            / claimed_period_days
+            if claimed_period_days > 0
+            else None
+        ),
+        "candidate_period_coverage_ratio": (
+            ((candidate_period[1] - candidate_period[0]).total_seconds() / 86400.0)
+            / claimed_period_days
+            if claimed_period_days > 0
+            else None
+        ),
         "baseline_ea_version": baseline_ea_version,
         "candidate_ea_version": candidate_ea_version,
         "baseline_data_source": baseline_data_source,

@@ -859,6 +859,47 @@ def test_writes_output_json(tmp_path):
     assert "metadata" in payload
 
 
+def test_period_coverage_ratio_flags_a_barely_sampled_claim(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 17): period_start/period_end were verified only for
+    containment (every trade falls within the claimed window), and the
+    full claimed duration was reported with nothing computing how much
+    of it the observed data actually covers -- a one-hour sample can be
+    truthfully claimed to fall "within" a full-year window. This test's
+    own DEFAULT_PERIOD_START/END already span a full year while
+    _write_trades' own fixture entries all fall within a single hour --
+    exactly that counterexample -- so the computed coverage ratio must
+    be tiny, not silently absent."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [95.0] * 12, [-10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+    output_json = tmp_path / "out" / "compare.json"
+
+    run(
+        baseline_path,
+        candidate_path,
+        output_json=output_json,
+        n_resamples=100,
+        seed=1,
+        period_start=DEFAULT_PERIOD_START,
+        period_end=DEFAULT_PERIOD_END,
+        repo_path=REPO_ROOT,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    summary = payload["summary"]
+    assert summary["claimed_period_days"] == pytest.approx(365.0, abs=0.01)
+    assert summary["baseline_observed_days"] == pytest.approx(1.0 / 24.0, abs=1e-6)
+    assert summary["candidate_observed_days"] == pytest.approx(1.0 / 24.0, abs=1e-6)
+    # A 1-hour sample inside a claimed 365-day window -- a genuinely tiny,
+    # explicitly-visible coverage ratio, not silently reported as if the
+    # full claimed duration were authenticated.
+    assert summary["baseline_period_coverage_ratio"] < 0.001
+    assert summary["candidate_period_coverage_ratio"] < 0.001
+
+
 def test_spread_and_slippage_note_persisted(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fourth round):
     spread_note/slippage_note exist on ReportMetadata but no analysis

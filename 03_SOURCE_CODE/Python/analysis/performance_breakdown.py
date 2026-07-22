@@ -130,30 +130,32 @@ def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# The only two 'news_state' values this project's own pipeline actually
-# produces and cross-checks against 'in_news_blackout' -- see
-# join_news_events.py's docstring and notebook 04's fifth-round fix.
-# Any OTHER news_state value (including "", a legacy value, or a value a
-# future real vocabulary introduces) is not cross-checked here, since no
-# full vocabulary is defined yet (Codex review finding, 2026-07-22, fifth
-# round: "news_state has no defined vocabulary").
+# The only two 'news_state' values this project's own live producer emits
+# (ThembaAdaptiveIntradayEA.mq5's ResolveNewsBlackout, TASK-034) and
+# cross-checks against 'in_news_blackout' -- see join_news_events.py's
+# docstring and notebook 04's fifth-round fix. analysis/schema.py now
+# enforces this as a real Literal["CLEAR", "BLACKOUT"] constraint at the
+# journal-ingestion boundary (Codex review finding, seventh round, P1
+# finding 17 -- closing "news_state has no defined vocabulary" for any
+# record that actually passed through schema validation).
 #
-# **Disclosed explicitly, not silently tolerated, 2026-07-22 Codex review
-# finding (sixth round): no numbered task's live EA code has ever
-# populated 'news_state' at all -- join_news_events.py only ever emits
-# the DERIVED boolean 'in_news_blackout' (see that module's own
-# docstring) -- so there is no real producer for this text dimension to
-# define a genuine enum against yet. Until TASK-036 populates a real
-# news_state value on the live EA, tolerating any value outside these two
-# canonical strings (a legacy value, a future vocabulary's value, or
-# arbitrary caller-supplied text) is a DELIBERATE choice, not an
-# oversight -- rejecting them here would be inventing a vocabulary this
-# project has no authority to define. What IS a genuine, fixable bug
-# (closed below): a near-miss of one of the two REAL canonical values
-# (whitespace or case variation, e.g. "CLEAR " or "clear") previously
-# fell through this same "not cross-checked" tolerance and silently
-# escaped the consistency check entirely, rather than being recognized
-# as the value it obviously represents.**
+# **This function's own tolerance for any OTHER value is still
+# deliberate, not stale, even after that schema fix:** performance_
+# breakdown.py's own 'trades_csv' input is the unified joined-schema CSV,
+# which this module does NOT itself schema-validate (REQUIRED_COLUMNS
+# above is deliberately minimal) -- a caller can hand-construct or
+# otherwise bypass schema.py's own validation entirely. Rejecting an
+# out-of-vocabulary news_state here (rather than merely not cross-
+# checking it) would incorrectly assume every caller's input already went
+# through the schema; a legacy value, a future vocabulary's value, or
+# arbitrary caller-supplied text is still tolerated as its own, non-
+# cross-checked group, per this module's own "grouping is never lossy"
+# design. What IS a genuine, fixable bug (closed below): a near-miss of
+# one of the two REAL canonical values (whitespace or case variation,
+# e.g. "CLEAR " or "clear") previously fell through this same "not
+# cross-checked" tolerance and silently escaped the consistency check
+# entirely, rather than being recognized as the value it obviously
+# represents.**
 _NEWS_STATE_CLEAR = "CLEAR"
 _NEWS_STATE_BLACKOUT = "BLACKOUT"
 
