@@ -62,6 +62,19 @@ temporal coverage. Different OBSERVED trade envelopes between baseline
 and candidate can be entirely legitimate (e.g. a stricter candidate
 simply took fewer setups) -- equality of first/last trade timestamps is
 deliberately not required or checked.
+
+**Named explicitly, not silently left implicit, 2026-07-22 Codex review
+finding (sixth round): a caller could previously claim an arbitrarily
+broad 'period_start'/'period_end' (e.g. a full year) for a dataset whose
+trades actually span a tiny fraction of it, with nothing in the returned
+summary making that gap visible** -- the returned 'baseline_period'/
+'candidate_period' fields (the OBSERVED entry/exit envelope, always
+computed regardless of the claim) exist precisely so a caller can
+compare them against the CLAIMED period and see this for themselves;
+they are not a coverage proof, only the evidence a coverage check would
+need. A caller presenting this comparison MUST show both the claimed and
+observed periods side by side, not the claimed period alone -- see
+notebook 10's own fix for this exact gap.
 """
 
 from __future__ import annotations
@@ -338,10 +351,18 @@ def run(
     # shared ea_version/data_source value is insufficient to identify TWO
     # releases -- a caller could only ever record one version for both
     # sides of the comparison. Separate baseline/candidate fields now.**
-    baseline_ea_version: Optional[str] = None,
-    candidate_ea_version: Optional[str] = None,
-    baseline_data_source: Optional[str] = None,
-    candidate_data_source: Optional[str] = None,
+    #
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): these four
+    # remained OPTIONAL and were persisted as null with no check at all
+    # -- the master prompt names EA version and data source among the
+    # facts every result must record (00_MASTER_PROMPT_FOR_CLAUDE.md's
+    # required-provenance list), yet a comparison could previously
+    # "pass" with both entirely absent. Now REQUIRED and cross-checked
+    # for equality/non-blank alongside the other manifest pairs below.**
+    baseline_ea_version: str,
+    candidate_ea_version: str,
+    baseline_data_source: str,
+    candidate_data_source: str,
     # **Fixed, 2026-07-22 Codex review finding (fifth round): costs were
     # previously a SINGLE shared spread_note/slippage_note pair -- "a
     # shared trusted note", not two compared manifests. TEST_PLAN.md's
@@ -354,16 +375,30 @@ def run(
     candidate_slippage_note: str,
     repo_path: Optional[Path] = None,
 ) -> dict:
-    """'period_start'/'period_end' and the six role-specific manifest
-    pairs above (broker, timeframe, modelling_mode, set_file,
-    market_data_id, and cost notes) are all REQUIRED and either enforced
-    against the actual data or cross-checked for equality (see their own
-    parameter comments) -- a complete comparability manifest, not an
-    optional best-effort assertion a caller could silently omit.
+    """'period_start'/'period_end' and the seven role-specific manifest
+    pairs (broker, timeframe, modelling_mode, set_file, market_data_id,
+    cost notes) are all REQUIRED and either enforced against the actual
+    data or cross-checked for equality AND non-blank content (see their
+    own parameter comments) -- a complete comparability manifest, not an
+    optional best-effort assertion a caller could silently omit or
+    satisfy with two equal empty strings. EA version and data source are
+    likewise now REQUIRED (never silently null) but, unlike those seven,
+    are deliberately NOT cross-checked for equality -- a baseline/
+    candidate comparison's entire premise is that the two releases (and
+    often their export source) legitimately differ.
+
+    **Disclosed, not closed, 2026-07-22 Codex review finding (sixth
+    round): set_file/market_data_id/cost notes remain caller-asserted
+    free-text labels, not bound to a manifest or source-file hash** --
+    genuinely authenticating them (e.g. hashing the real .set file, or
+    a real market-data export) needs inputs this project does not have
+    yet (TASK-037_MT5_EXPORT_BRIDGE.md); non-blank/equality checking is
+    what is actually enforceable from a string label alone.
 
     Raises ValueError if any required baseline/candidate manifest pair
     (broker, timeframe, modelling_mode, set_file, market_data_id, spread
-    note, slippage note) differs between the two sides. Raises
+    note, slippage note) is blank or differs between the two sides, or if
+    EA version/data source is blank on either side. Raises
     CsvSchemaError if any trade in either dataset falls outside
     [period_start, period_end].
     """
@@ -377,12 +412,41 @@ def run(
         ("spread_note", baseline_spread_note, candidate_spread_note),
         ("slippage_note", baseline_slippage_note, candidate_slippage_note),
     ):
+        # **Added, 2026-07-22 Codex review finding (sixth round): all
+        # seven pairs above were checked ONLY for equality, never for
+        # nonblank content -- a direct probe with every pair blank on
+        # both sides ("" == "") previously succeeded outright.**
+        if not isinstance(base_val, str) or not base_val.strip():
+            raise ValueError(
+                f"compare_releases: baseline_{label} must be a nonblank string, got {base_val!r}"
+            )
+        if not isinstance(cand_val, str) or not cand_val.strip():
+            raise ValueError(
+                f"compare_releases: candidate_{label} must be a nonblank string, got {cand_val!r}"
+            )
         if base_val != cand_val:
             raise ValueError(
                 f"compare_releases: baseline_{label} ({base_val!r}) != "
                 f"candidate_{label} ({cand_val!r}) -- the comparability contract requires "
                 f"identical {label} between baseline and candidate"
             )
+
+    # **Added, 2026-07-22 Codex review finding (sixth round): ea_version/
+    # data_source are now REQUIRED (never silently null) -- but, UNLIKE
+    # the seven pairs above, they are deliberately NOT required to be
+    # EQUAL between baseline and candidate: a baseline/candidate
+    # comparison's entire premise is that the two releases (and often
+    # their export source) legitimately DIFFER, which is exactly what
+    # test_baseline_and_candidate_ea_version_recorded_separately already
+    # exercises.**
+    for label, value in (
+        ("baseline_ea_version", baseline_ea_version),
+        ("candidate_ea_version", candidate_ea_version),
+        ("baseline_data_source", baseline_data_source),
+        ("candidate_data_source", candidate_data_source),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"compare_releases: {label} must be a nonblank string, got {value!r}")
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
@@ -708,10 +772,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # from the trade files themselves.**
     parser.add_argument("--baseline-market-data-id", required=True)
     parser.add_argument("--candidate-market-data-id", required=True)
-    parser.add_argument("--baseline-ea-version", default=None)
-    parser.add_argument("--candidate-ea-version", default=None)
-    parser.add_argument("--baseline-data-source", default=None)
-    parser.add_argument("--candidate-data-source", default=None)
+    parser.add_argument("--baseline-ea-version", required=True)
+    parser.add_argument("--candidate-ea-version", required=True)
+    parser.add_argument("--baseline-data-source", required=True)
+    parser.add_argument("--candidate-data-source", required=True)
     # **Fixed, 2026-07-22 Codex review finding (fifth round): costs were
     # previously a single shared --spread-note/--slippage-note pair --
     # now role-specific and required, matching run()'s own signature.**

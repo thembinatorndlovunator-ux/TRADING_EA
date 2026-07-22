@@ -47,6 +47,13 @@ _DEFAULT_MANIFEST_KWARGS = dict(
     candidate_spread_note="2-pip fixed spread assumed",
     baseline_slippage_note="no slippage modelled",
     candidate_slippage_note="no slippage modelled",
+    # **Added, 2026-07-22 Codex review finding (sixth round): ea_version/
+    # data_source are now REQUIRED, not optional -- see run()'s own
+    # docstring.**
+    baseline_ea_version="v6.37",
+    candidate_ea_version="v6.37",
+    baseline_data_source="synthetic-fixture",
+    candidate_data_source="synthetic-fixture",
 )
 
 
@@ -594,6 +601,66 @@ def test_baseline_and_candidate_ea_version_recorded_separately(tmp_path):
     assert summary["candidate_data_source"] == "mt5_export_b"
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "baseline_broker",
+        "candidate_broker",
+        "baseline_timeframe",
+        "candidate_timeframe",
+        "baseline_modelling_mode",
+        "candidate_modelling_mode",
+        "baseline_set_file",
+        "candidate_set_file",
+        "baseline_market_data_id",
+        "candidate_market_data_id",
+        "baseline_spread_note",
+        "candidate_spread_note",
+        "baseline_slippage_note",
+        "candidate_slippage_note",
+    ],
+)
+def test_blank_manifest_pair_rejected_even_when_both_sides_agree(tmp_path, field):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    all seven role-manifest pairs were checked ONLY for equality, never
+    for nonblank content -- a direct probe with every pair blank on both
+    sides ("" == "") previously succeeded outright."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    with pytest.raises(ValueError, match="nonblank"):
+        run(
+            baseline_path,
+            candidate_path,
+            period_start=DEFAULT_PERIOD_START,
+            period_end=DEFAULT_PERIOD_END,
+            **{field: ""},
+        )
+
+
+def test_blank_ea_version_or_data_source_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    ea_version/data_source remained optional and were persisted as null
+    with no check at all."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    with pytest.raises(ValueError, match="nonblank"):
+        run(
+            baseline_path,
+            candidate_path,
+            period_start=DEFAULT_PERIOD_START,
+            period_end=DEFAULT_PERIOD_END,
+            baseline_ea_version="",
+        )
+
+
 def test_naive_timestamp_rejected(tmp_path):
     """Regression for a Codex review finding: this script previously did
     not parse or validate entry/exit timestamps at all."""
@@ -836,6 +903,17 @@ _DEFAULT_MANIFEST_ARGV = [
     "no slippage modelled",
     "--candidate-slippage-note",
     "no slippage modelled",
+    # **Added, 2026-07-22 Codex review finding (sixth round): ea_version/
+    # data_source are now REQUIRED, not optional -- see run()'s own
+    # docstring.**
+    "--baseline-ea-version",
+    "v6.37",
+    "--candidate-ea-version",
+    "v6.37",
+    "--baseline-data-source",
+    "synthetic-fixture",
+    "--candidate-data-source",
+    "synthetic-fixture",
 ]
 
 
