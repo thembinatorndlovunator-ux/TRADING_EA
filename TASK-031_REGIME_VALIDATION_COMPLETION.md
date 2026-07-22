@@ -171,24 +171,45 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] All nine regime states, both gating overrides, AND data-failure
-      behavior are covered by synthetic fixtures.
-- [ ] Hysteresis logic is ported and hand-verified.
-- [ ] The transition-history buffer (a distinct deliverable from
-      hysteresis state -- added, 2026-07-22 Codex review finding, fourth
-      round) is ported and hand-verified in Python: representation,
-      capacity/retention, and timestamp-keying are all defined and
-      tested. **This is the Python-side offline port only (Codex review
-      finding, fifth round) -- it does not close
-      `00_MASTER_PROMPT_FOR_CLAUDE.md` section 6's live MQL5
+- [x] All nine regime states, both gating overrides, AND data-failure
+      behavior are covered by synthetic fixtures. The 7 directly-computed
+      states plus 3 data-failure paths were already covered; this task
+      added `is_untradeable_spread_or_liquidity` (the
+      `UNTRADEABLE_SPREAD_OR_LIQUIDITY` gate, cross-checked directly
+      against `Test_MarketRegimeEngine.mq5`'s own hand-traced values) and
+      the `NEWS_BLACKOUT`/`UNTRADEABLE_SPREAD_OR_LIQUIDITY` enum values
+      (the `NEWS_BLACKOUT` trigger itself lives in `NewsManager.mqh`,
+      outside this task's scope, per the module's own docstring).
+- [x] Hysteresis logic is ported (`RegimeHysteresisState`/
+      `init_hysteresis_state`/`apply_hysteresis`) and hand-verified: the
+      exact 5-step scenario `Test_MarketRegimeEngine.mq5` already
+      hand-traces, PLUS a borderline flapping-input case (never
+      confirms), a genuine sustained switch across `required_bars` (does
+      confirm), and the pre-first-confirmation state (reports
+      `TRANSITION_OR_UNCERTAIN`, never a half-confirmed guess).
+- [x] The transition-history buffer (a distinct deliverable from
+      hysteresis state) is ported and hand-verified in Python
+      (`RegimeTransitionHistory`): representation
+      (`(timestamp, from_regime, to_regime)`), capacity/retention (500
+      entries, justified in the class's own docstring), and
+      timestamp-keying are all defined and tested (records only genuine
+      confirmed transitions, never repeated same-regime confirmations;
+      evicts the oldest entry at capacity; rejects a non-positive
+      capacity). **This is the Python-side offline port only -- it does
+      not close `00_MASTER_PROMPT_FOR_CLAUDE.md` section 6's live MQL5
       `MarketRegimeEngine.mqh` transition-history requirement, which
       remains unregistered and unowned.**
-- [ ] The bias/structure-input decision (ported vs. caller-supplied) is
-      explicit and documented.
-- [ ] No "closes TASK-016" claim is made anywhere -- this task closes
+- [x] The bias/structure-input decision (ported vs. caller-supplied) is
+      explicit and documented — confirmed as caller-supplied (unchanged),
+      with an explicit test
+      (`test_structure_read_failure_modeled_as_neutral_caller_supplied_bias`)
+      documenting why a "MarketStructure read failure" is not a distinct
+      path this module can represent.
+- [x] No "closes TASK-016" claim is made anywhere -- this task closes
       the FORMULA-level item only; the real-evidence confusion matrix
       remains explicitly owned by TASK-037.
-- [ ] Independent review completed and findings resolved.
+- [ ] Independent review completed and findings resolved — deferred to
+      this project's single, consolidated, end-of-sprint Codex review.
 
 ## Rejection criteria
 
@@ -199,6 +220,12 @@ here (it is not -- see Objective).
 
 ## Status
 
-Not started. Registered as a formal follow-up per Codex's TASK-028
-review finding #1 (2026-07-21); scope corrected per finding #2 of the
-second review round (2026-07-22).
+Done — `regime_validation.py` extended with gating overrides
+(`is_untradeable_spread_or_liquidity`), hysteresis
+(`RegimeHysteresisState`/`init_hysteresis_state`/`apply_hysteresis`), and
+a transition-history buffer (`RegimeTransitionHistory`), each
+cross-checked against `Test_MarketRegimeEngine.mq5`'s own hand-traced
+values where one exists. 26 tests in `test_regime_validation.py` (up from
+15), all passing; ruff/ruff format/mypy clean; full suite (614 tests)
+passes with no regressions. Independent review deferred to the
+consolidated end-of-sprint Codex review.

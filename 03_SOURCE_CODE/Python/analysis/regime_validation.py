@@ -21,18 +21,54 @@ reproducibility rule 7, no real, independently-labelled regime dataset
 exists in this project. ``build_confusion_matrix`` is provided as a
 ready-to-use utility for when one does; this module's own tests instead
 validate the classification formula itself against hand-constructed
-synthetic fixtures for each of the seven directly-computed regime states
-(``NEWS_BLACKOUT``/``UNTRADEABLE_SPREAD_OR_LIQUIDITY`` are gating
-overrides applied BEFORE this function per section 2, not states this
-function itself selects -- see ``MarketRegimeEngine.mqh``'s own
-``MRE_IsUntradeableSpreadOrLiquidity``, not ported here either).
+synthetic fixtures for each of the seven directly-computed regime states.
+Producing that real evidence is ``TASK-037``'s own deliverable (its
+``Export_PredictedRegime.mq5`` + ``REGIME_LABELLING_PROTOCOL.md``), not
+this module's -- see ``TASK-031_REGIME_VALIDATION_COMPLETION.md``'s own
+Objective for why this scope split exists.
+
+**TASK-031 additions (2026-07-22): gating overrides, hysteresis, and a
+transition-history buffer, all ported from ``MarketRegimeEngine.mqh``:**
+
+- ``is_untradeable_spread_or_liquidity`` -- direct port of
+  ``MRE_IsUntradeableSpreadOrLiquidity``. ``NEWS_BLACKOUT``'s own trigger
+  (an active news-blackout window) lives in ``NewsManager.mqh``, a
+  separate module outside this task's scope -- this port only covers the
+  spread/liquidity gate; a caller applies both gates as overrides BEFORE
+  ``classify()``'s own decision tree, exactly as
+  ``RegimeGateComposer.mqh`` does on the MQL5 side.
+- ``RegimeHysteresisState``/``init_hysteresis_state``/``apply_hysteresis``
+  -- direct port of ``SRegimeHysteresisState``/``MRE_InitHysteresisState``/
+  ``MRE_ApplyHysteresis``. Stateful across calls, by design (matching the
+  MQL5 struct's own mutate-in-place convention) -- callers thread the same
+  ``RegimeHysteresisState`` instance across a multi-bar sequence, never a
+  fresh one per bar.
+- ``RegimeTransitionHistory`` -- a NEW, Python-side-only offline analysis
+  tool: a bounded ring buffer of ``(timestamp, from_regime, to_regime)``
+  entries, appended only on a genuine CONFIRMED transition (never a
+  pending/unconfirmed flap). **This is explicitly NOT the same thing as
+  the live MQL5 ``MarketRegimeEngine.mqh``'s own required transition-
+  history buffer** (``00_MASTER_PROMPT_FOR_CLAUDE.md`` section 6) -- that
+  live-engine deliverable remains unregistered and unowned by any
+  numbered task; this class only replays/analyzes already-recorded
+  regime sequences offline and does not close that requirement.
+- **Bias/structure-input decision (TASK-031 Specification item 4),
+  explicitly confirmed, not silently deferred again:** ``classify()``
+  continues to accept ``swing_agreement``/``direction_agree`` as
+  CALLER-SUPPLIED inputs. Porting ``MarketStructure.mqh``'s own BOS/CHoCH
+  bias computation to Python is a separate, substantial module this task
+  does not attempt -- a future task may port it; until then, any fixture
+  or real-data run using this module must supply its own bias inputs
+  (synthetic fixtures do so directly; a real run would need
+  ``MarketStructure.mqh``'s own live output recorded alongside the
+  regime, which no export currently produces).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Sequence
+from typing import Optional, Sequence
 
 import pandas as pd
 
@@ -45,6 +81,8 @@ class Regime(str, Enum):
     VOLATILITY_EXPANSION_DOWN = "VOLATILITY_EXPANSION_DOWN"
     COMPRESSION = "COMPRESSION"
     TRANSITION_OR_UNCERTAIN = "TRANSITION_OR_UNCERTAIN"
+    NEWS_BLACKOUT = "NEWS_BLACKOUT"
+    UNTRADEABLE_SPREAD_OR_LIQUIDITY = "UNTRADEABLE_SPREAD_OR_LIQUIDITY"
 
 
 def _clamp01(value: float) -> float:
@@ -151,6 +189,149 @@ def classify(
     return RegimeRead(
         valid=True, regime=regime, confidence=confidence, T=t, T_final=t_final, E=e, ER=er
     )
+
+
+def is_untradeable_spread_or_liquidity(
+    current_spread: float,
+    atr: float,
+    max_spread_atr_multiple: float,
+    avg_ticks_per_bar: float,
+    min_liquidity_ticks_per_bar: float,
+) -> bool:
+    """Direct port of MRE_IsUntradeableSpreadOrLiquidity -- see module
+    docstring for why NEWS_BLACKOUT's own trigger is not ported here."""
+
+    if atr > 0.0 and current_spread > atr * max_spread_atr_multiple:
+        return True
+    if min_liquidity_ticks_per_bar > 0.0 and avg_ticks_per_bar < min_liquidity_ticks_per_bar:
+        return True
+    return False
+
+
+@dataclass
+class RegimeHysteresisState:
+    """Direct port of SRegimeHysteresisState. Mutable and stateful by
+    design -- a caller threads the SAME instance across a multi-bar
+    sequence of apply_hysteresis() calls, exactly matching
+    MRE_ApplyHysteresis's own mutate-in-place convention on the MQL5 side.
+    Construct via init_hysteresis_state(), not directly, to match that
+    function's exact defaults."""
+
+    has_confirmed: bool
+    confirmed_regime: Regime
+    pending_regime: Regime
+    pending_count: int
+
+
+def init_hysteresis_state() -> RegimeHysteresisState:
+    """Direct port of MRE_InitHysteresisState."""
+
+    return RegimeHysteresisState(
+        has_confirmed=False,
+        confirmed_regime=Regime.TRANSITION_OR_UNCERTAIN,
+        pending_regime=Regime.TRANSITION_OR_UNCERTAIN,
+        pending_count=0,
+    )
+
+
+def apply_hysteresis(
+    state: RegimeHysteresisState,
+    raw_regime: Regime,
+    bypass_hysteresis: bool,
+    required_bars: int = 2,
+) -> Regime:
+    """Direct port of MRE_ApplyHysteresis. Mutates 'state' in place and
+    returns the EFFECTIVE (confirmed, or bypassed) regime -- before a
+    first confirmation exists, an unconfirmed read reports
+    TRANSITION_OR_UNCERTAIN rather than a half-confirmed guess, matching
+    the MQL5 source exactly."""
+
+    if bypass_hysteresis:
+        state.confirmed_regime = raw_regime
+        state.has_confirmed = True
+        state.pending_regime = raw_regime
+        state.pending_count = required_bars
+        return raw_regime
+
+    if state.pending_regime != raw_regime:
+        state.pending_regime = raw_regime
+        state.pending_count = 1
+    else:
+        state.pending_count += 1
+
+    if state.pending_count >= required_bars:
+        state.confirmed_regime = raw_regime
+        state.has_confirmed = True
+
+    return state.confirmed_regime if state.has_confirmed else Regime.TRANSITION_OR_UNCERTAIN
+
+
+@dataclass(frozen=True)
+class RegimeTransition:
+    """One CONFIRMED regime transition -- never a pending/unconfirmed flap
+    that hysteresis never actually resolved. 'timestamp' is the real bar
+    timestamp the transition was confirmed on (not a bar-index alone), so
+    the buffer stays meaningful across gaps/resumptions in the underlying
+    bar sequence."""
+
+    timestamp: object  # a real timestamp (e.g. pandas.Timestamp/datetime) -- caller's own type
+    from_regime: Regime
+    to_regime: Regime
+
+
+class RegimeTransitionHistory:
+    """A bounded ring buffer of CONFIRMED regime transitions, for OFFLINE
+    Python-side analysis of an already-recorded regime sequence -- see
+    module docstring for why this is explicitly NOT the same deliverable
+    as the live MQL5 MarketRegimeEngine.mqh's own required transition-
+    history buffer (that remains a separate, unregistered task).
+
+    Capacity default of 500 entries is this task's own stated, justified
+    choice: even in the (implausible) worst case of a genuine confirmed
+    transition on every single bar, 500 entries covers several weeks of
+    M15-cadence trading activity; in practice transitions are far rarer
+    (each requires 'required_bars' consecutive confirmations), so 500
+    gives a generously long real window while keeping memory/
+    serialization bounded, per this task's own capacity/retention
+    requirement (Specification item 3a)."""
+
+    def __init__(self, max_entries: int = 500) -> None:
+        if max_entries <= 0:
+            raise ValueError(f"max_entries must be a positive integer, got {max_entries}")
+        self._max_entries = max_entries
+        self._entries: list[RegimeTransition] = []
+        self._last_confirmed_regime: Optional[Regime] = None
+
+    def record_confirmed(self, timestamp: object, confirmed_regime: Regime) -> None:
+        """Call once per bar with apply_hysteresis()'s own return value
+        (the CONFIRMED/effective regime, never the raw pre-hysteresis
+        read). Appends a new entry ONLY when the confirmed regime
+        genuinely differs from the last one recorded -- repeated
+        confirmations of the same regime (the common case, bar after
+        bar) never append a duplicate entry. Evicts the oldest entry once
+        max_entries is exceeded (a true ring buffer, not an unbounded
+        list)."""
+
+        if (
+            self._last_confirmed_regime is not None
+            and confirmed_regime != self._last_confirmed_regime
+        ):
+            self._entries.append(
+                RegimeTransition(timestamp, self._last_confirmed_regime, confirmed_regime)
+            )
+            if len(self._entries) > self._max_entries:
+                self._entries.pop(0)
+        self._last_confirmed_regime = confirmed_regime
+
+    @property
+    def entries(self) -> list[RegimeTransition]:
+        """A defensive copy -- callers must not mutate this buffer's
+        internal state directly."""
+
+        return list(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
 
 
 def build_confusion_matrix(predicted: Sequence[str], actual: Sequence[str]) -> pd.DataFrame:
