@@ -799,6 +799,39 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
         run(trades_path, bars_path, output_csv=trades_path)
 
 
+def test_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without summary_json previously got a
+    CSV with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+
+    out_csv = tmp_path / "out" / "giveback.csv"
+    run(trades_path, bars_path, output_csv=out_csv, seed=1, repo_path=REPO_ROOT)
+
+    derived_summary_json = tmp_path / "out" / "giveback.summary.json"
+    assert derived_summary_json.exists()
+    summary = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert summary["metadata"]["dataset_hash"]
+
+
 def test_summary_json_includes_actual_row_errors_not_just_count(tmp_path):
     """Regression for a Codex review finding: only a row-error COUNT was
     written, losing which trades actually failed."""

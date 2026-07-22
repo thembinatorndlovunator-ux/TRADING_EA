@@ -360,6 +360,40 @@ def test_writes_output_csv_and_errors_json(tmp_path):
     assert payload["summary"]["n_row_errors"] == 0
 
 
+def test_errors_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without errors_json previously got a CSV
+    with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv (matching
+    join_signal_to_outcome.py's own pattern)."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+
+    out_csv = tmp_path / "out" / "mfe_mae.csv"
+    run(trades_path, bars_path, output_csv=out_csv, seed=1, repo_path=REPO_ROOT)
+
+    derived_errors_json = tmp_path / "out" / "mfe_mae.errors.json"
+    assert derived_errors_json.exists()
+    payload = json.loads(derived_errors_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 def test_spread_and_slippage_note_persisted_in_metadata(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fourth round):
     spread_note/slippage_note exist on ReportMetadata but no analysis

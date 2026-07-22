@@ -363,6 +363,17 @@ def run(
         raise InsufficientSampleError(
             f"analyse_baseline.run: starting_balance must be a finite number > 0, got {starting_balance}"
         )
+    # **Added, 2026-07-22 Codex review finding (sixth round): a caller
+    # requesting per_trade_csv without output_json previously got a CSV
+    # with NO accompanying provenance metadata anywhere -- this pipeline's
+    # summary/metadata payload lives entirely in output_json, so omitting
+    # it left the per-trade CSV completely unprovenanced. An implicit
+    # path is now derived (matching join_trade_journal.py/
+    # join_news_events.py/join_signal_to_outcome.py's own pattern),
+    # derived FIRST so the collision checks below cover it too.**
+    if output_json is None and per_trade_csv is not None:
+        output_json = per_trade_csv.parent / f"{per_trade_csv.stem}.summary.json"
+
     # **Fixed, 2026-07-22 Codex review finding (third round): comparing
     # only Path.resolve() let a hard link to trades_csv pass this check
     # (different resolved name, identical underlying file) -- a direct

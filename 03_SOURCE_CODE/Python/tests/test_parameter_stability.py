@@ -288,6 +288,22 @@ def test_run_v811_sweep_writes_output_csv_and_summary_json(tmp_path):
     assert payload["summary"]["floor_r_values_swept"] == [0.0, 1.5]
 
 
+def test_v811_sweep_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    same gap as run()'s own test above, for run_v811_sweep()."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+    output_csv = tmp_path / "out" / "v811_stability.csv"
+
+    run_v811_sweep(r_paths_csv, [0.5, 0.8], [0.0, 1.5], output_csv=output_csv)
+
+    derived_summary_json = tmp_path / "out" / "v811_stability.summary.json"
+    assert derived_summary_json.exists()
+    payload = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 # --- CLI --model dispatch (Codex review finding, 2026-07-22, fifth round) -----
 
 
@@ -344,6 +360,24 @@ def test_run_writes_output_with_real_dataset_hash(tmp_path):
     payload = json.loads(summary_json.read_text(encoding="utf-8"))
     assert payload["metadata"]["dataset_hash"] != ""
     assert payload["metadata"]["pipeline_version"]
+
+
+def test_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without summary_json previously got a
+    CSV with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+    output_csv = tmp_path / "out" / "stability.csv"
+
+    run(r_paths_csv, [40.0], output_csv=output_csv)
+
+    derived_summary_json = tmp_path / "out" / "stability.summary.json"
+    assert derived_summary_json.exists()
+    payload = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
 
 
 def test_run_zero_rows_raises(tmp_path):

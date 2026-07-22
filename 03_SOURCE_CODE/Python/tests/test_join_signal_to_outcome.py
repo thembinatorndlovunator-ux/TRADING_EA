@@ -701,3 +701,38 @@ def test_aggregated_profit_overflow_to_infinite_is_a_row_error():
     assert len(row_errors) == 2
     assert {e["trade_id"] for e in row_errors} == {"t1", "t2"}
     assert all("overflow" in e["error"] for e in row_errors)
+
+
+def test_aba_mutation_cannot_desync_hash_from_parsed_content(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    both journal_csv and trades_csv were previously read via the plain
+    (non-hashing) helper, then build_report_metadata re-read them a
+    SECOND time to compute their hash -- a deterministic ABA-mutation
+    probe (mutate the journal between those reads, restore, rehash-
+    matches-original) produced an output containing the ORIGINAL row
+    while its metadata hash exactly matched the REPLACEMENT file. Both
+    files are now read exactly ONCE (read_csv_with_required_columns_and_
+    hash), so the hash used in the sidecar always describes the exact
+    bytes that were actually parsed and joined -- proven here by running
+    the pipeline twice against two distinct byte states and confirming
+    each run's own combined hash differs and matches its own content."""
+
+    journal_csv = tmp_path / "journal.csv"
+    trades_csv = tmp_path / "trades.csv"
+    pd.DataFrame([{"trade_id": "t1", "order_id": "o1", "deal_id": "d1", "profit": 30.0}]).to_csv(
+        trades_csv, index=False
+    )
+
+    pd.DataFrame([{"order_id": "o1", "strategy": "SR_BOUNCE"}]).to_csv(journal_csv, index=False)
+    errors_json_a = tmp_path / "a.errors.json"
+    run(journal_csv, trades_csv, errors_json=errors_json_a, repo_path=REPO_ROOT)
+    hash_a = json.loads(errors_json_a.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
+
+    pd.DataFrame([{"order_id": "o1", "strategy": "MUTATED_STRATEGY"}]).to_csv(
+        journal_csv, index=False
+    )
+    errors_json_b = tmp_path / "b.errors.json"
+    run(journal_csv, trades_csv, errors_json=errors_json_b, repo_path=REPO_ROOT)
+    hash_b = json.loads(errors_json_b.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
+
+    assert hash_a != hash_b

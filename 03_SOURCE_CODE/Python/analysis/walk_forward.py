@@ -60,7 +60,7 @@ from analysis.csv_io import (
     assert_valid_stop_geometry,
     atomic_write_dataframe_csv,
     parse_is_long,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
 )
 from analysis.metrics import (
     MAX_N_RESAMPLES,
@@ -262,13 +262,28 @@ def run(
             f"n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], got {n_resamples}"
         )
 
+    # **Added, 2026-07-22 Codex review finding (sixth round): a caller
+    # requesting output_csv without summary_json previously got a CSV
+    # with NO accompanying provenance metadata anywhere. An implicit
+    # sidecar path is now derived (matching join_trade_journal.py/
+    # join_news_events.py/join_signal_to_outcome.py's own pattern),
+    # derived FIRST so the collision checks below cover it too.**
+    if summary_json is None and output_csv is not None:
+        summary_json = output_csv.parent / f"{output_csv.stem}.summary.json"
+
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, summary_json):
         assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
-    trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): previously
+    # read via the plain (non-hashing) helper, then re-read a second time
+    # inside build_report_metadata below to compute its hash -- the same
+    # ABA-mutation race round 5 already closed for
+    # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
+    # left open here.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
@@ -359,6 +374,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=trades_csv_hash,
         )
         # pandas stores the "no test trades" case as NaN (float), not the
         # Python None _slice_metrics returned -- `r is not None` does NOT

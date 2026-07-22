@@ -281,6 +281,25 @@ def test_run_persists_n_resamples_and_confidence(tmp_path):
     assert payload["summary"]["confidence"] == 0.90
 
 
+def test_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without summary_json previously got a
+    CSV with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv."""
+
+    import json
+
+    trades_csv = tmp_path / "trades.csv"
+    _fixture_df().to_csv(trades_csv, index=False)
+    output_csv = tmp_path / "out" / "breakdown.csv"
+    run(trades_csv, ["strategy"], output_csv=output_csv)
+
+    derived_summary_json = tmp_path / "out" / "breakdown.summary.json"
+    assert derived_summary_json.exists()
+    payload = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 def test_derive_time_dimensions_hand_computed(tmp_path):
     trades_csv = tmp_path / "trades.csv"
     pd.DataFrame(

@@ -54,6 +54,7 @@ from analysis.csv_io import (
     assert_unique_ids,
     atomic_write_dataframe_csv,
     read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
 )
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 
@@ -405,6 +406,15 @@ def run(
     pipeline in this layer.**
     """
 
+    # **Added, 2026-07-22 Codex review finding (sixth round): a caller
+    # requesting output_csv without summary_json previously got a CSV
+    # with NO accompanying provenance metadata anywhere. An implicit
+    # sidecar path is now derived (matching join_trade_journal.py/
+    # join_news_events.py/join_signal_to_outcome.py's own pattern),
+    # derived FIRST so the collision checks below cover it too.**
+    if summary_json is None and output_csv is not None:
+        summary_json = output_csv.parent / f"{output_csv.stem}.summary.json"
+
     # **Fixed, 2026-07-22 Codex review finding:** this script had no
     # input/output collision guard at all -- unlike every other pipeline
     # in this layer. **Fixed, 2026-07-22 Codex review finding (fourth
@@ -416,7 +426,13 @@ def run(
     assert_path_not_same_file(summary_json, ohlc_csv, "summary_json")
     assert_output_paths_distinct([output_csv, summary_json])
 
-    ohlc = read_csv_with_required_columns(ohlc_csv, REQUIRED_OHLC_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): previously
+    # read via the plain (non-hashing) helper, then re-read a second time
+    # inside build_report_metadata below to compute its hash -- the same
+    # ABA-mutation race round 5 already closed for
+    # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
+    # left open here.**
+    ohlc, ohlc_csv_hash = read_csv_with_required_columns_and_hash(ohlc_csv, REQUIRED_OHLC_COLUMNS)
     assert_finite_columns(ohlc, ["open", "high", "low", "close"], ohlc_csv)
     # Full OHLC geometry (open/close must also fall within [low, high]),
     # not just high >= low -- see assert_high_low_geometry's own
@@ -449,6 +465,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=ohlc_csv_hash,
         )
         payload = {
             "metadata": metadata.to_dict(),

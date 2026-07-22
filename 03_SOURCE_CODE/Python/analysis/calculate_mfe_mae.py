@@ -51,10 +51,14 @@ from analysis.csv_io import (
     assert_unique_ids,
     atomic_write_dataframe_csv,
     parse_is_long,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
 )
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import (
+    atomic_write_text,
+    build_report_metadata,
+    combine_labeled_hashes,
+)
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import (
     BarAlignmentError,
@@ -116,6 +120,15 @@ def run(
     trade never hides every other trade's valid result.
     """
 
+    # **Added, 2026-07-22 Codex review finding (sixth round): a caller
+    # requesting output_csv without errors_json previously got a CSV
+    # with NO accompanying provenance metadata anywhere. An implicit
+    # sidecar path is now derived (matching join_trade_journal.py/
+    # join_news_events.py/join_signal_to_outcome.py's own pattern),
+    # derived FIRST so the collision checks below cover it too.**
+    if errors_json is None and output_csv is not None:
+        errors_json = output_csv.parent / f"{output_csv.stem}.errors.json"
+
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, errors_json):
@@ -123,8 +136,18 @@ def run(
         assert_path_not_same_file(out_path, bars_csv, "output path")
     assert_output_paths_distinct([output_csv, errors_json])
 
-    trades = read_csv_with_required_columns(trades_csv, REQUIRED_TRADE_COLUMNS)
-    bars = read_csv_with_required_columns(bars_csv, REQUIRED_BAR_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): both files
+    # were previously read via the plain (non-hashing) helper, and
+    # 'build_report_metadata' below then re-read them a SECOND time to
+    # compute their hash -- the same ABA-mutation race round 5 already
+    # closed for join_trade_journal.py/join_news_events.py/
+    # analyse_baseline.py but left open here. Reading once and hashing
+    # from that same pass, then combining both files' hashes below,
+    # closes the race structurally.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(
+        trades_csv, REQUIRED_TRADE_COLUMNS
+    )
+    bars, bars_csv_hash = read_csv_with_required_columns_and_hash(bars_csv, REQUIRED_BAR_COLUMNS)
     # **Fixed, 2026-07-22 Codex review finding:** a header-only (zero-row)
     # trades.csv previously produced a "successful" empty run (0 results,
     # 0 row errors) instead of a visible insufficient-sample failure --
@@ -217,6 +240,9 @@ def run(
 
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
+        combined_hash = combine_labeled_hashes(
+            [(trades_csv.name, trades_csv_hash), (bars_csv.name, bars_csv_hash)]
+        )
         metadata = build_report_metadata(
             [trades_csv, bars_csv],
             symbol=symbol,
@@ -224,6 +250,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=combined_hash,
         )
         payload = {
             "metadata": metadata.to_dict(),

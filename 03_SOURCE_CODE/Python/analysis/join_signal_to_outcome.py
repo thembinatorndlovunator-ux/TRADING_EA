@@ -173,11 +173,15 @@ from analysis.csv_io import (
     assert_output_paths_distinct,
     assert_path_not_same_file,
     atomic_write_dataframe_csv,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
 )
 from analysis.metrics import InsufficientSampleError
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import (
+    atomic_write_text,
+    build_report_metadata,
+    combine_labeled_hashes,
+)
 
 REQUIRED_JOURNAL_COLUMNS = {"order_id"}
 REQUIRED_TRADE_COLUMNS = {"trade_id", "order_id", "deal_id", "profit"}
@@ -490,10 +494,21 @@ def run(
         assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_csv, errors_json])
 
-    journal_df = read_csv_with_required_columns(
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): both files
+    # were previously read via the plain (non-hashing) helper, and
+    # 'build_report_metadata' below then re-read them a SECOND time to
+    # compute their hash -- a deterministic probe (mutate the journal
+    # between those reads, restore, rehash-matches-original) produced an
+    # output containing the ORIGINAL row while its metadata hash exactly
+    # matched the REPLACEMENT file -- the exact old-analysis/new-hash race
+    # round 5 already closed for join_trade_journal.py/join_news_events.py/
+    # analyse_baseline.py but left open here. Reading once and hashing
+    # from that same pass, then combining both files' hashes below,
+    # closes the race structurally.**
+    journal_df, journal_csv_hash = read_csv_with_required_columns_and_hash(
         journal_csv, REQUIRED_JOURNAL_COLUMNS, dtype=IDENTITY_DTYPE
     )
-    trades_df = read_csv_with_required_columns(
+    trades_df, trades_csv_hash = read_csv_with_required_columns_and_hash(
         trades_csv, REQUIRED_TRADE_COLUMNS, dtype=IDENTITY_DTYPE
     )
     if trades_df.empty:
@@ -507,6 +522,9 @@ def run(
 
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
+        combined_hash = combine_labeled_hashes(
+            [(journal_csv.name, journal_csv_hash), (trades_csv.name, trades_csv_hash)]
+        )
         metadata = build_report_metadata(
             [journal_csv, trades_csv],
             symbol=symbol,
@@ -514,6 +532,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=combined_hash,
         )
         payload = {
             "metadata": metadata.to_dict(),

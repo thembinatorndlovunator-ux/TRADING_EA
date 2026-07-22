@@ -64,7 +64,7 @@ from analysis.csv_io import (
     assert_finite_columns,
     assert_path_not_same_file,
     assert_unique_ids,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
 )
 from analysis.metrics import (
     InsufficientSampleError,
@@ -269,7 +269,13 @@ def run(
     # link to an input is also caught -- Codex review finding, third round.
     assert_path_not_same_file(output_json, trades_csv, "output_json")
 
-    trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): previously
+    # read via the plain (non-hashing) helper, then re-read a second time
+    # inside build_report_metadata below to compute its hash -- the same
+    # ABA-mutation race round 5 already closed for
+    # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
+    # left open here.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
@@ -293,6 +299,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=trades_csv_hash,
         )
         # **Added, 2026-07-22 Codex review finding (third round):** the
         # module docstring and dataclass docstring already explained that

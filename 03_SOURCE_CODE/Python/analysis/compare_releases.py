@@ -86,10 +86,14 @@ from analysis.csv_io import (
     assert_unique_ids,
     assert_valid_stop_geometry,
     parse_is_long,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
 )
 from analysis.metrics import InsufficientSampleError, wilson_diff_confidence_interval
-from analysis.report_metadata import atomic_write_text, build_report_metadata, compute_dataset_hash
+from analysis.report_metadata import (
+    atomic_write_text,
+    build_report_metadata,
+    combine_labeled_hashes,
+)
 from analysis.resampling import seeded_bootstrap_indices
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
@@ -103,8 +107,19 @@ MIN_N_RESAMPLES = 100
 MAX_N_RESAMPLES = 100_000
 
 
-def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str]) -> pd.DataFrame:
-    trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
+def _load_trades_with_r_multiple(
+    trades_csv: Path, symbol_filter: Optional[str]
+) -> tuple[pd.DataFrame, str]:
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): this was
+    # previously read via the plain (non-hashing) helper, and the caller
+    # then re-read the same path (twice more -- once for its own
+    # role-specific 'baseline_dataset_hash'/'candidate_dataset_hash', once
+    # more inside build_report_metadata's combined hash) -- the same
+    # ABA-mutation race round 5 already closed for
+    # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
+    # left open here. Returns the hash from this single read so every
+    # downstream use (role-specific and combined) shares it.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
@@ -141,7 +156,7 @@ def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str])
         ),
         axis=1,
     )
-    return trades
+    return trades, trades_csv_hash
 
 
 @dataclass(frozen=True)
@@ -375,8 +390,8 @@ def run(
             f"period_end ({period_end})"
         )
 
-    baseline = _load_trades_with_r_multiple(baseline_csv, symbol)
-    candidate = _load_trades_with_r_multiple(candidate_csv, symbol)
+    baseline, baseline_csv_hash = _load_trades_with_r_multiple(baseline_csv, symbol)
+    candidate, candidate_csv_hash = _load_trades_with_r_multiple(candidate_csv, symbol)
 
     for label, df, csv_path in (
         ("baseline", baseline, baseline_csv),
@@ -618,9 +633,17 @@ def run(
         # label manifest, so swapping which physical file is baseline vs.
         # candidate could retain the SAME combined hash while reversing
         # the comparison. Separate per-role hashes close that gap.**
-        summary["baseline_dataset_hash"] = compute_dataset_hash([baseline_csv], repo_root=repo_path)
-        summary["candidate_dataset_hash"] = compute_dataset_hash(
-            [candidate_csv], repo_root=repo_path
+        # **Fixed, 2026-07-22 Codex review finding (sixth round): both
+        # role-specific hashes above, AND the combined hash passed to
+        # build_report_metadata below, were previously each a SEPARATE
+        # re-read of baseline_csv/candidate_csv -- independent of the
+        # single read '_load_trades_with_r_multiple' already did to
+        # produce 'baseline'/'candidate' above. All three now reuse the
+        # exact hash computed during that one read.**
+        summary["baseline_dataset_hash"] = baseline_csv_hash
+        summary["candidate_dataset_hash"] = candidate_csv_hash
+        combined_hash = combine_labeled_hashes(
+            [(baseline_csv.name, baseline_csv_hash), (candidate_csv.name, candidate_csv_hash)]
         )
         metadata = build_report_metadata(
             [baseline_csv, candidate_csv],
@@ -637,6 +660,7 @@ def run(
             spread_note=baseline_spread_note,
             slippage_note=baseline_slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=combined_hash,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
         atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))

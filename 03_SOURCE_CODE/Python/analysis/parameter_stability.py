@@ -88,7 +88,7 @@ from analysis.csv_io import (
     assert_path_not_same_file,
     assert_unique_composite_key,
     atomic_write_dataframe_csv,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
 )
 from analysis.exit_simulation import simulate_giveback_path
 from analysis.metrics import MAX_N_RESAMPLES, MIN_N_RESAMPLES, bootstrap_confidence_interval
@@ -146,7 +146,7 @@ class V811StabilityRow:
     r_diff_ci_upper: Optional[float]
 
 
-def _load_r_paths_from_csv(path: Path) -> list[list[float]]:
+def _load_r_paths_from_csv(path: Path) -> tuple[list[list[float]], str]:
     """**Hardened, 2026-07-22 Codex review finding (fourth round): this
     previously enforced only bar_index/r_value finiteness -- a malformed
     probe with a blank path_id, a fractional/negative bar_index (-2.5), a
@@ -154,9 +154,16 @@ def _load_r_paths_from_csv(path: Path) -> list[list[float]]:
     successfully. pandas' own ``groupby`` silently DROPS a blank-ID group
     entirely rather than surfacing it as a schema error.** Every one of
     those is now rejected outright.
+
+    **Fixed, 2026-07-22 Codex review finding (sixth round): previously
+    read via the plain (non-hashing) helper, then re-read a second time
+    by each caller's own build_report_metadata call -- the same
+    ABA-mutation race round 5 already closed for
+    join_trade_journal.py/join_news_events.py/analyse_baseline.py but
+    left open here. Returns the hash from this single read.**
     """
 
-    df = read_csv_with_required_columns(path, REQUIRED_COLUMNS)
+    df, file_hash = read_csv_with_required_columns_and_hash(path, REQUIRED_COLUMNS)
     if df.empty:
         raise CsvSchemaError(f"{path}: zero rows")
     assert_finite_columns(df, ["bar_index", "r_value"], path)
@@ -198,7 +205,7 @@ def _load_r_paths_from_csv(path: Path) -> list[list[float]]:
                 f"got {r_values[0]}"
             )
         paths.append(r_values)
-    return paths
+    return paths, file_hash
 
 
 def sweep_giveback_percent(
@@ -495,6 +502,15 @@ def run(
     invalid parameter values (see sweep_giveback_percent's docstring).
     """
 
+    # **Added, 2026-07-22 Codex review finding (sixth round): a caller
+    # requesting output_csv without summary_json previously got a CSV
+    # with NO accompanying provenance metadata anywhere. An implicit
+    # sidecar path is now derived (matching join_trade_journal.py/
+    # join_news_events.py/join_signal_to_outcome.py's own pattern),
+    # derived FIRST so the collision checks below cover it too.**
+    if summary_json is None and output_csv is not None:
+        summary_json = output_csv.parent / f"{output_csv.stem}.summary.json"
+
     # **Fixed, 2026-07-22 Codex review finding (fourth round): this guard
     # used a bare Path.resolve() == comparison, which a hard link to
     # r_paths_csv (different resolved name, identical underlying file)
@@ -504,7 +520,7 @@ def run(
         assert_path_not_same_file(out_path, r_paths_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
-    r_paths = _load_r_paths_from_csv(r_paths_csv)
+    r_paths, r_paths_csv_hash = _load_r_paths_from_csv(r_paths_csv)
     rows = sweep_giveback_percent(
         r_paths,
         giveback_percents,
@@ -529,6 +545,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=r_paths_csv_hash,
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -579,11 +596,17 @@ def run_v811_sweep(
     requires both models' neighbouring sweeps, not V6.37 alone).
     """
 
+    # **Added, 2026-07-22 Codex review finding (sixth round): see
+    # run()'s own comment above -- the same implicit-sidecar gap existed
+    # here.**
+    if summary_json is None and output_csv is not None:
+        summary_json = output_csv.parent / f"{output_csv.stem}.summary.json"
+
     for out_path in (output_csv, summary_json):
         assert_path_not_same_file(out_path, r_paths_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
-    r_paths = _load_r_paths_from_csv(r_paths_csv)
+    r_paths, r_paths_csv_hash = _load_r_paths_from_csv(r_paths_csv)
     rows = sweep_v811_arm_and_floor(
         r_paths,
         arm_r_values,
@@ -607,6 +630,7 @@ def run_v811_sweep(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=r_paths_csv_hash,
         )
         payload = {
             "metadata": metadata.to_dict(),

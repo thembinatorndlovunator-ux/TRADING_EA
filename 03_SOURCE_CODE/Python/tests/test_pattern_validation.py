@@ -221,6 +221,33 @@ def test_run_writes_output_csv(tmp_path):
     assert len(result) == 2
 
 
+def test_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without summary_json previously got a
+    CSV with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv."""
+
+    path = tmp_path / "ohlc.csv"
+    pd.DataFrame(
+        {
+            "open": [99.0, 110.0],
+            "high": [113.0, 111.0],
+            "low": [98.0, 99.0],
+            "close": [112.0, 100.0],
+        }
+    ).to_csv(path, index=False)
+    out_csv = tmp_path / "out" / "patterns.csv"
+
+    run(path, out_csv)
+
+    import json
+
+    derived_summary_json = tmp_path / "out" / "patterns.summary.json"
+    assert derived_summary_json.exists()
+    payload = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 def test_run_writes_provenance_sidecar(tmp_path):
     """Regression for a Codex review finding (2026-07-22, third round):
     this script previously emitted an entirely unprovenanced CSV, unlike

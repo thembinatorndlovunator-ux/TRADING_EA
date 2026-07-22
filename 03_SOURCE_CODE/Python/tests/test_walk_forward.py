@@ -436,6 +436,32 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     assert payload["summary"]["train_days"] == 3
 
 
+def test_summary_json_auto_derived_when_omitted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting output_csv without summary_json previously got a
+    CSV with NO accompanying provenance metadata anywhere. An implicit
+    sidecar path is now derived from output_csv."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    out_csv = tmp_path / "out" / "windows.csv"
+
+    run(
+        path,
+        train_days=3,
+        test_days=2,
+        step_days=2,
+        output_csv=out_csv,
+        symbol="XAUUSD",
+        repo_path=REPO_ROOT,
+    )
+
+    derived_summary_json = tmp_path / "out" / "windows.summary.json"
+    assert derived_summary_json.exists()
+    payload = json.loads(derived_summary_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 def test_summary_discloses_overlap_and_partial_window_status(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fourth round):
     'mean_test_expectancy_r' is an unlabelled, unweighted mean of

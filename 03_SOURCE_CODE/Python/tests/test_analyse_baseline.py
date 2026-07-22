@@ -500,6 +500,25 @@ def test_r_multiples_hand_computed_per_trade(tmp_path):
     assert df.loc["t4", "r_multiple"] == pytest.approx(-1.0)
 
 
+def test_output_json_auto_derived_when_per_trade_csv_given_without_it(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    caller requesting per_trade_csv without output_json previously got a
+    CSV with NO accompanying provenance metadata anywhere -- this
+    pipeline's summary/metadata lives entirely in output_json. An
+    implicit path is now derived from per_trade_csv."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    per_trade_csv = tmp_path / "out" / "per_trade.csv"
+
+    run(path, per_trade_csv=per_trade_csv)
+
+    derived_output_json = tmp_path / "out" / "per_trade.summary.json"
+    assert derived_output_json.exists()
+    payload = json.loads(derived_output_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["dataset_hash"]
+
+
 def test_writes_output_json_with_metadata(tmp_path):
     path = tmp_path / "trades.csv"
     _write_trades(path)
