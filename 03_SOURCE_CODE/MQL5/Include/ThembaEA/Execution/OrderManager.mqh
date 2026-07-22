@@ -297,9 +297,21 @@ bool OM_ClosePosition(const ulong position_ticket, const long magic, string &rej
    bool ok = trade.PositionClose(position_ticket);
    uint retcode = trade.ResultRetcode();
 
-   if(!ok || (retcode != TRADE_RETCODE_DONE && retcode != TRADE_RETCODE_PLACED))
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
+   // TRADE_RETCODE_PLACED means "accepted for processing", not "closed" --
+   // MetaQuotes documents the actual fill/close as arriving asynchronously via
+   // OnTradeTransaction, in an order not guaranteed relative to this call
+   // returning. Treating PLACED as a completed close let the caller believe a
+   // position was gone (and clear its own tracking state) while the position
+   // could still be open. Only TRADE_RETCODE_DONE is a broker-confirmed
+   // terminal "closed" outcome; PLACED is surfaced as its own distinguishable
+   // reason so a caller can keep retrying rather than treating it as a hard
+   // failure or a success.**
+   if(!ok || retcode != TRADE_RETCODE_DONE)
      {
-      rejection_reason = StringFormat("position_close_failed_retcode_%u", retcode);
+      string reason_tag = (retcode == TRADE_RETCODE_PLACED) ? "position_close_pending_confirmation"
+                                                              : "position_close_failed";
+      rejection_reason = StringFormat("%s_retcode_%u", reason_tag, retcode);
       return false;
      }
 

@@ -161,13 +161,26 @@ double EM_ApplyTrailNeverWiden(const bool is_long, const double current_stop,
 //| mode's OWN remaining-session-time ratio (SessionManager.mqh's                 |
 //| SN_GetSessionMinutesRemaining, section 1 item 4) reaching 0 — not                |
 //| re-derived here, the ratio is a caller-supplied input.                              |
+//|                                                                    |
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 8): 'session_ratio_known' -- when the caller could not determine the        |
+//| session-remaining ratio at all (e.g. a calendar lookup failure), the           |
+//| ratio must NOT be silently treated as 0.0/"duration exceeded". That               |
+//| coercion previously let a data-read failure force an unintended                     |
+//| day-trade close. An unknown session state means this duration check                    |
+//| cannot fire at all -- the intraday boundary close (IntradayCloseManager.mqh,               |
+//| a pure function of server time, no session-calendar dependency) remains                     |
+//| the real safety net regardless.**                                                               |
 //+------------------------------------------------------------------+
 bool EM_IsTimeStopDurationExceeded(const bool is_scalp_mode, const double elapsed_minutes,
                                     const double remaining_session_ratio,
+                                    const bool session_ratio_known,
                                     const double scalp_max_minutes)
   {
    if(is_scalp_mode)
       return elapsed_minutes >= scalp_max_minutes;
+   if(!session_ratio_known)
+      return false; // unknown session state must never force an unintended close
    return remaining_session_ratio <= 0.0;
   }
 
@@ -181,12 +194,12 @@ bool EM_IsTimeStopDurationExceeded(const bool is_scalp_mode, const double elapse
 //| clock").                                                                                |
 //+------------------------------------------------------------------+
 bool EM_ShouldTimeStop(const bool is_scalp_mode, const double elapsed_minutes,
-                        const double remaining_session_ratio, const double scalp_max_minutes,
-                        const double current_r, const double time_stop_min_r,
-                        const bool is_stale)
+                        const double remaining_session_ratio, const bool session_ratio_known,
+                        const double scalp_max_minutes, const double current_r,
+                        const double time_stop_min_r, const bool is_stale)
   {
    if(!EM_IsTimeStopDurationExceeded(is_scalp_mode, elapsed_minutes, remaining_session_ratio,
-                                      scalp_max_minutes))
+                                      session_ratio_known, scalp_max_minutes))
       return false;
    if(current_r >= time_stop_min_r)
       return false;

@@ -393,25 +393,62 @@ void OnDeinit(const int reason)
 
 void OnTick()
   {
-   datetime current_bar_time;
-   if(!g_md.GetTime(0, current_bar_time))
-      return;
-   if(current_bar_time == g_last_evaluated_bar_time)
-      return; // only evaluate once per newly completed bar
-   g_last_evaluated_bar_time = current_bar_time;
-
-   EvaluateAndJournal();
-   ManageOpenPositions();
-
-   // Scoped strictly to this EA's own magic number. With
+   // **Reordered, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 8): mandatory boundary protection now runs FIRST, on EVERY tick, ahead
+   // of any entry evaluation or position management -- previously it ran
+   // last and only on the first tick of a new bar (so the advertised
+   // "retry on the next tick" was actually "retry once per bar"). This is a
+   // pure function of the current server clock (no per-day flag of its own
+   // to lose), scoped strictly to this EA's own magic number. With
    // InpEnableOrderSubmission=false this remains a no-op in practice
-   // (nothing is ever opened under this magic); with it true, this is
-   // now this EA's real end-of-day exposure close.
+   // (nothing is ever opened under this magic); with it true, this is this
+   // EA's real end-of-day exposure close, and it now retries every tick
+   // until ICM_ExecuteIntradayClose reports a fully broker-confirmed
+   // success (see IntradayCloseManager.mqh's own P0 finding 8 fix).**
    if(ICM_ShouldExecuteIntradayClose())
      {
       string closeReasons[];
       ICM_ExecuteIntradayClose(InpMagicNumber, closeReasons);
      }
+
+   // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
+   // a persistent post-boundary entry lock. SN_IsPastIntradayBoundary() is a
+   // pure function of the current server clock, so this needs no
+   // restart-durable flag: it is true on every tick past today's boundary
+   // regardless of whether the EA (re)started mid-day, and it naturally
+   // resets to false at the next server midnight without any date-tracking
+   // of its own. This closes the gap where a fully successful close (which
+   // suppresses further CLOSE attempts for the rest of the day via
+   // g_icm_close_done_today) left no gate blocking a later bar's NEW entry
+   // after the boundary had already passed.**
+   bool past_intraday_boundary = SN_IsPastIntradayBoundary();
+
+   // **Reordered, 2026-07-22 (Codex review finding, seventh round, P0
+   // finding 8): tick-sensitive exit management (structure/ATR trailing,
+   // profit-lock, time stop) now runs on EVERY tick, not gated behind the
+   // once-per-completed-bar check below -- ExitOrchestrator.mqh's own
+   // header advertises a per-tick decision, but its only live caller
+   // previously ran once per completed bar (since OnTick returned early on
+   // every other tick), losing intrabar responsiveness entirely.
+   // 'is_new_completed_bar' still gates the bar-count-based staleness clock
+   // inside EO_EvaluatePosition itself -- only the CALL cadence changed.**
+   bool is_new_completed_bar = false;
+   datetime current_bar_time;
+   if(g_md.GetTime(0, current_bar_time) && current_bar_time != g_last_evaluated_bar_time)
+     {
+      is_new_completed_bar = true;
+      g_last_evaluated_bar_time = current_bar_time;
+     }
+
+   ManageOpenPositions(is_new_completed_bar);
+
+   // New-entry evaluation stays on this pipeline's own once-per-completed-bar
+   // decision cadence. AttemptOrderSubmission (called from within
+   // EvaluateAndJournal's own decision path) additionally refuses any new
+   // entry once past_intraday_boundary is true, regardless of whether
+   // today's close operation above has itself fully succeeded yet.
+   if(is_new_completed_bar)
+      EvaluateAndJournal(past_intraday_boundary);
   }
 
 //--- Appends one string to a dynamic string[] array (local helper —
@@ -648,6 +685,8 @@ double ComputeOwnMagicOpenRiskCash()
 //|                                                                    |
 //| Gating sequence, in order (matches TASK-027_WIRE_ORDER_MANAGER.md's   |
 //| Specification section, extended by TASK-034):                          |
+//|  -1. Persistent post-intraday-boundary entry lock (seventh-round P0        |
+//|      finding 8).                                                              |
 //|  0. Three-loss-per-symbol cooldown (TASK-034, CooldownManager.mqh).       |
 //|  1. No-add-on/no-concurrent-position rule (section 8).                     |
 //|  2. Daily/weekly loss caps, account-wide measurement (section 8).            |
@@ -659,12 +698,30 @@ double ComputeOwnMagicOpenRiskCash()
 //|  7. Durable-intent-guarded real order submission (TASK-034, OrderManager).          |
 //+------------------------------------------------------------------+
 void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &resolution,
-                             const double atr_current, const string &gate_reasons[])
+                             const double atr_current, const string &gate_reasons[],
+                             const bool past_intraday_boundary)
   {
    string passed[];
    string rejected[];
    for(int gi = 0; gi < ArraySize(gate_reasons); gi++)
       AppendReason(passed, gate_reasons[gi]);
+
+   //--- -1. Persistent post-intraday-boundary entry lock (Codex review -----
+   //--- finding, seventh round, P0 finding 8): a fully successful boundary --
+   //--- close only suppresses further CLOSE attempts for the rest of the ----
+   //--- day (IntradayCloseManager.mqh's own guard) -- it does not, by --------
+   //--- itself, stop a LATER bar from opening new same-day exposure. This ----
+   //--- check is a pure function of the current server clock (no in-memory --
+   //--- flag of its own to lose across a restart), so it blocks every entry ---
+   //--- attempt from the moment the boundary passes until the next server -----
+   //--- midnight, every day, unconditionally. -----------------------------------
+   if(past_intraday_boundary)
+     {
+      AppendReason(rejected, "past_intraday_boundary_no_new_entries");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
 
    //--- 0. Three-loss-per-symbol cooldown (TASK-034) ----------------------
    datetime cooldown_until;
@@ -900,8 +957,14 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
 //| scope). Independent of EvaluateAndJournal's own regime-classification            |
 //| gates -- an existing open position must still be protected even on a a             |
 //| bar where a NEW entry decision could not be evaluated.                                |
+//|                                                                    |
+//| 'is_new_completed_bar' (Codex review finding, seventh round, P0 finding    |
+//| 8): now caller-supplied instead of hardcoded true -- OnTick calls this        |
+//| function on EVERY tick (not just the first tick of a new bar) so trailing/       |
+//| profit-lock/time-stop react intrabar; only the bar-count-based staleness           |
+//| clock inside EO_EvaluatePosition still advances once per completed bar.               |
 //+------------------------------------------------------------------+
-void ManageOpenPositions()
+void ManageOpenPositions(const bool is_new_completed_bar)
   {
    double atr_current;
    if(!g_md.GetATR(0, atr_current, 14))
@@ -917,9 +980,20 @@ void ManageOpenPositions()
       if(!g_md.GetHigh(i, highs[i]) || !g_md.GetLow(i, lows[i]))
          return;
 
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
+   // a session-calendar lookup failure must NOT be silently coerced to
+   // remaining ratio 0.0 -- for a day-trade-mode position that reads as
+   // "duration exceeded" and could force an unintended close purely because
+   // of a data hiccup, not a real end of session. 'session_ratio_known' is
+   // now threaded through to EO_EvaluatePosition/EM_ShouldTimeStop so an
+   // unknown session state simply cannot trigger the duration-based time
+   // stop at all (the intraday boundary close remains the real safety net,
+   // since it depends only on the server clock, never the session
+   // calendar).**
    double session_remaining_ratio, session_remaining_minutes_unused;
-   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio,
-                                      session_remaining_minutes_unused))
+   bool session_ratio_known = SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio,
+                                                              session_remaining_minutes_unused);
+   if(!session_ratio_known)
       session_remaining_ratio = 0.0;
 
    SExitConfig cfg;
@@ -959,8 +1033,9 @@ void ManageOpenPositions()
 
       SExitDecision decision = EO_EvaluatePosition(
          is_long, entry_price, state.initial_stop_price, current_stop, current_price, target_price,
-         atr_current, highs, lows, InpSwingDepth, InpMaxLookback, true, InpTimeStopUsesScalpMode,
-         session_remaining_ratio, elapsed_minutes, cfg, state);
+         atr_current, highs, lows, InpSwingDepth, InpMaxLookback, is_new_completed_bar,
+         InpTimeStopUsesScalpMode, session_remaining_ratio, session_ratio_known, elapsed_minutes,
+         cfg, state);
 
       PST_Save(position_id, state);
 
@@ -1050,8 +1125,15 @@ void JournalDataFailureDecision(const string failure_reason)
 //| SAME data, routes, resolves, journals the outcome, and — only when     |
 //| InpEnableOrderSubmission is true — attempts a fully risk-gated real     |
 //| order submission for the winning candidate (see file header).          |
+//|                                                                    |
+//| 'past_intraday_boundary' (Codex review finding, seventh round, P0       |
+//| finding 8): threaded through to AttemptOrderSubmission as a persistent   |
+//| entry lock -- a decision can still be evaluated/journaled past the        |
+//| boundary (this EA's own "journal every bar" invariant), but no new         |
+//| order may be submitted once the intraday boundary has passed, regardless      |
+//| of whether today's close operation has itself fully succeeded yet.             |
 //+------------------------------------------------------------------+
-void EvaluateAndJournal()
+void EvaluateAndJournal(const bool past_intraday_boundary)
   {
    // Account-wide bookkeeping runs every bar regardless of this bar's
    // decision outcome, per section 8 — equity tracking must not skip a
@@ -1344,7 +1426,8 @@ void EvaluateAndJournal()
                   g_symbol, decision.strategy, decision.setup, decision.score);
 
       if(InpEnableOrderSubmission)
-         AttemptOrderSubmission(decision, resolution, atr_values[0], gate_reasons);
+         AttemptOrderSubmission(decision, resolution, atr_values[0], gate_reasons,
+                                 past_intraday_boundary);
       else
         {
          string skip_reasons[];

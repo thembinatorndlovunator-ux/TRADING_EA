@@ -107,23 +107,32 @@ void OnStart()
 
    //--- 8. EM_IsTimeStopDurationExceeded -------------------------------------
    Check("scalp mode: elapsed 61min >= max 60min -> exceeded",
-         EM_IsTimeStopDurationExceeded(true, 61.0, 0.0, 60.0));
+         EM_IsTimeStopDurationExceeded(true, 61.0, 0.0, true, 60.0));
    Check("scalp mode: elapsed 59min < max 60min -> NOT exceeded",
-         EM_IsTimeStopDurationExceeded(true, 59.0, 0.0, 60.0) == false);
-   Check("day-trade mode: remaining_ratio 0.0 -> exceeded",
-         EM_IsTimeStopDurationExceeded(false, 0.0, 0.0, 60.0));
-   Check("day-trade mode: remaining_ratio 0.01 -> NOT exceeded",
-         EM_IsTimeStopDurationExceeded(false, 0.0, 0.01, 60.0) == false);
+         EM_IsTimeStopDurationExceeded(true, 59.0, 0.0, true, 60.0) == false);
+   Check("day-trade mode: remaining_ratio 0.0, ratio known -> exceeded",
+         EM_IsTimeStopDurationExceeded(false, 0.0, 0.0, true, 60.0));
+   Check("day-trade mode: remaining_ratio 0.01, ratio known -> NOT exceeded",
+         EM_IsTimeStopDurationExceeded(false, 0.0, 0.01, true, 60.0) == false);
+   // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
+   // an UNKNOWN session ratio (e.g. a calendar lookup failure) must never be
+   // treated as "duration exceeded", even though the coerced-to-0.0 ratio
+   // value would otherwise read that way -- this is the exact counterexample
+   // the review reported.**
+   Check("day-trade mode: ratio UNKNOWN (even though the value passed is 0.0) -> NOT exceeded",
+         EM_IsTimeStopDurationExceeded(false, 0.0, 0.0, false, 60.0) == false);
 
    //--- 9. EM_ShouldTimeStop (all three conditions required) -----------------
    Check("time stop fires: duration exceeded + low R + stale",
-         EM_ShouldTimeStop(true, 61.0, 0.0, 60.0, 0.2, 0.3, true));
+         EM_ShouldTimeStop(true, 61.0, 0.0, true, 60.0, 0.2, 0.3, true));
    Check("time stop does NOT fire: duration NOT exceeded",
-         EM_ShouldTimeStop(true, 30.0, 0.0, 60.0, 0.2, 0.3, true) == false);
+         EM_ShouldTimeStop(true, 30.0, 0.0, true, 60.0, 0.2, 0.3, true) == false);
    Check("time stop does NOT fire: R already sufficient",
-         EM_ShouldTimeStop(true, 61.0, 0.0, 60.0, 0.5, 0.3, true) == false);
+         EM_ShouldTimeStop(true, 61.0, 0.0, true, 60.0, 0.5, 0.3, true) == false);
    Check("time stop does NOT fire: not stale (fresh favorable swing)",
-         EM_ShouldTimeStop(true, 61.0, 0.0, 60.0, 0.2, 0.3, false) == false);
+         EM_ShouldTimeStop(true, 61.0, 0.0, true, 60.0, 0.2, 0.3, false) == false);
+   Check("time stop does NOT fire: day-trade mode with an UNKNOWN session ratio",
+         EM_ShouldTimeStop(false, 0.0, 0.0, false, 60.0, 0.2, 0.3, true) == false);
 
    //--- 10. EM_ShouldArmProfitLock -------------------------------------------
    Check("profit lock arms: 70% of entry-to-target distance covered",

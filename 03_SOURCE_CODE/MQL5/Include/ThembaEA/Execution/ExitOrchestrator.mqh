@@ -81,7 +81,8 @@ SExitDecision EO_EvaluatePosition(const bool is_long, const double entry_price,
                                    const double atr, const double &highs[], const double &lows[],
                                    const int swing_depth, const int swing_max_lookback,
                                    const bool is_new_completed_bar, const bool is_scalp_mode,
-                                   const double remaining_session_ratio, const double elapsed_minutes,
+                                   const double remaining_session_ratio,
+                                   const bool session_ratio_known, const double elapsed_minutes,
                                    const SExitConfig &cfg, SPositionExitState &state)
   {
    SExitDecision d;
@@ -117,7 +118,8 @@ SExitDecision EO_EvaluatePosition(const bool is_long, const double entry_price,
 
    //--- 1. Time stop -- closes outright; no further stop management -------
    if(EM_ShouldTimeStop(is_scalp_mode, elapsed_minutes, remaining_session_ratio,
-                          cfg.scalp_max_minutes, current_r, cfg.time_stop_min_r, is_stale))
+                          session_ratio_known, cfg.scalp_max_minutes, current_r,
+                          cfg.time_stop_min_r, is_stale))
      {
       d.should_close = true;
       d.close_reason = "time_stop";

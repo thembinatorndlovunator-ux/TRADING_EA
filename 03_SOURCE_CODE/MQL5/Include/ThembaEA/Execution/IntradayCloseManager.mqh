@@ -81,11 +81,22 @@ bool ICM_CloseAllOwnedPositions(const long magic, string &reasons[])
       bool ok = trade.PositionClose(ticket);
       uint retcode = trade.ResultRetcode();
 
-      if(!ok || (retcode != TRADE_RETCODE_DONE && retcode != TRADE_RETCODE_PLACED))
+      // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+      // 8): TRADE_RETCODE_PLACED is "accepted for processing", not a
+      // broker-confirmed close -- accepting it here let the once-per-day
+      // guard mark today's boundary close as fully done while a position
+      // could still genuinely be open. Only TRADE_RETCODE_DONE counts as
+      // success; anything else (including PLACED) is a distinguishable
+      // failure reason that keeps ICM_ShouldExecuteIntradayClose returning
+      // true so the caller retries on the next tick, per this module's own
+      // "keep retrying until a full success" guard design.**
+      if(!ok || retcode != TRADE_RETCODE_DONE)
         {
+         string reason_tag = (retcode == TRADE_RETCODE_PLACED) ? "intraday_close_pending_confirmation"
+                                                                 : "intraday_close_failed";
          ICM_AppendReason(reasons, StringFormat(
-            "intraday_close_failed_ticket_%I64u_symbol_%s_retcode_%u",
-            ticket, symbol, retcode));
+            "%s_ticket_%I64u_symbol_%s_retcode_%u",
+            reason_tag, ticket, symbol, retcode));
          all_ok = false;
         }
      }

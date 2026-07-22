@@ -91,7 +91,7 @@ void OnStart()
    SPositionExitState s1 = MakeFreshState();
    SExitDecision d1 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.0900, 1.1060, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           true, false, 0.5, 10.0, cfg, s1);
+                                           true, false, 0.5, true, 10.0, cfg, s1);
    Check("scenario 1: break-even arms", s1.break_even_armed);
    Check("scenario 1: does not close", d1.should_close == false);
    Check("scenario 1: modifies the stop", d1.should_modify_stop);
@@ -107,7 +107,7 @@ void OnStart()
    // never-widen invariant must never return something below 1.1044.
    SExitDecision d2 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.1044, 1.1010, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           false, false, 0.5, 12.0, cfg, s1);
+                                           false, false, 0.5, true, 12.0, cfg, s1);
    Check("scenario 2: never-widen -- new stop is never below the prior stop",
          d2.new_stop_price >= 1.1044 - 0.000001);
 
@@ -118,12 +118,13 @@ void OnStart()
    s3.break_even_armed = true;
    for(int i = 0; i < 3; i++) // cfg.trail_stale_bars == 3
       EO_EvaluatePosition(true, 1.1000, 1.0900, 1.1044, 1.1060, 1.1300, 0.0020, highs_favorable,
-                           lows_favorable, depth, max_lookback, true, false, 0.5, 10.0, cfg, s3);
+                           lows_favorable, depth, max_lookback, true, false, 0.5, true, 10.0, cfg,
+                           s3);
    Check("scenario 3: bars_since_favorable_swing reached the stale threshold",
          s3.bars_since_favorable_swing >= cfg.trail_stale_bars);
    SExitDecision d3 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.1044, 1.1060, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           true, false, 0.5, 10.0, cfg, s3);
+                                           true, false, 0.5, true, 10.0, cfg, s3);
    double expected_atr_fallback = 1.1060 - 0.0020 * cfg.atr_trail_multiple; // 1.1060 - 0.0040 = 1.1020
    // The never-widen invariant means the effective stop is max(prior=1.1044,
    // atr_fallback=1.1020) = 1.1044 -- confirms staleness switched the
@@ -137,7 +138,7 @@ void OnStart()
    s4.bars_since_favorable_swing = 99; // already far past any stale threshold
    SExitDecision d4 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.0900, 1.1010, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           false, true, 0.0, 65.0, cfg, s4);
+                                           false, true, 0.0, true, 65.0, cfg, s4);
    // current_r = (1.1010-1.1000)/0.0100 = 0.10 < time_stop_min_r(0.3);
    // elapsed 65min >= scalp_max_minutes(60); stale (bars=99>=3) -> closes.
    Check("scenario 4: time stop closes the position", d4.should_close);
@@ -148,10 +149,23 @@ void OnStart()
    s5.bars_since_favorable_swing = 99;
    SExitDecision d5 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.0900, 1.1050, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           false, true, 0.0, 65.0, cfg, s5);
+                                           false, true, 0.0, true, 65.0, cfg, s5);
    // current_r = (1.1050-1.1000)/0.0100 = 0.50 >= time_stop_min_r(0.3) -> no time stop.
    Check("scenario 5: time stop does NOT fire when current R already clears the min",
          d5.should_close == false);
+
+   //--- 5b. Day-trade time stop does NOT fire when the session ratio is ----
+   //--- UNKNOWN, even though duration/R/staleness otherwise match scenario --
+   //--- 4 exactly (Codex review finding, seventh round, P0 finding 8's own -----
+   //--- exact counterexample: a session-calendar lookup failure must never -----
+   //--- be coerced into an unintended close). ------------------------------------
+   SPositionExitState s5b = MakeFreshState();
+   s5b.bars_since_favorable_swing = 99;
+   SExitDecision d5b = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.0900, 1.1010, 1.1300, 0.0020,
+                                            highs_favorable, lows_favorable, depth, max_lookback,
+                                            false, false, 0.0, false, 65.0, cfg, s5b);
+   Check("scenario 5b: day-trade time stop does NOT fire with an UNKNOWN session ratio",
+         d5b.should_close == false);
 
    //--- 6. Profit-lock arms and produces the correct locked stop -----------
    // is_new_completed_bar=false here -> the swing scan does not run this
@@ -164,7 +178,7 @@ void OnStart()
    SPositionExitState s6 = MakeFreshState();
    SExitDecision d6 = EO_EvaluatePosition(true, 1.1000, 1.0900, 1.0900, 1.1250, 1.1300, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           false, false, 0.5, 10.0, cfg, s6);
+                                           false, false, 0.5, true, 10.0, cfg, s6);
    Check("scenario 6: profit-lock arms", s6.profit_lock_armed);
    Check("scenario 6: profit-lock stop is 1.1125", NearlyEqual(d6.new_stop_price, 1.1125));
 
@@ -182,7 +196,7 @@ void OnStart()
    SPositionExitState s7 = MakeFreshState();
    SExitDecision d7 = EO_EvaluatePosition(false, 1.1000, 1.1100, 1.1100, 1.0940, 1.0700, 0.0020,
                                            highs_favorable, lows_favorable, depth, max_lookback,
-                                           true, false, 0.5, 10.0, cfg, s7);
+                                           true, false, 0.5, true, 10.0, cfg, s7);
    Check("scenario 7 (short): break-even arms", s7.break_even_armed);
    Check("scenario 7 (short): does not close", d7.should_close == false);
    Check("scenario 7 (short): structure trail (1.0976) beats break-even (1.1000)",
