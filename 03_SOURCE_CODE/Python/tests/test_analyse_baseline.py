@@ -65,6 +65,88 @@ def _write_trades(path: Path, rows: list[dict] | None = None) -> None:
     ).to_csv(path, index=False)
 
 
+def test_simultaneous_losses_collapse_into_one_balance_step_streak(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    computing the streak over per-exit-time balance steps (round 5's own
+    fix) is a DIFFERENT metric than "longest run of consecutive losing
+    trades", not just a differently-computed version of the same one.
+    Three simultaneous losses at one exit_time sum to ONE negative
+    balance step, so the streak is 1 here, not 3 -- exactly why the
+    field is now named longest_losing_BALANCE_STEP_streak rather than
+    silently redefining the old name."""
+
+    same_time = "2026-07-21T00:00:00Z"
+    rows = [
+        {
+            "trade_id": f"t{i}",
+            "symbol": "XAUUSD",
+            "is_long": "True",
+            "entry_time": same_time,
+            "exit_time": same_time,
+            "entry_price": 100.0,
+            "exit_price": 90.0,
+            "stop_price": 98.0,
+            "profit": -10.0,
+        }
+        for i in range(3)
+    ]
+    path = tmp_path / "trades.csv"
+    _write_trades(path, rows)
+
+    summary = run(path, starting_balance=1000.0)
+    assert summary["longest_losing_balance_step_streak"] == 1
+
+
+def test_avg_winner_loser_duration_ci_present_with_enough_observations(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    avg_winner_dollars/avg_loser_dollars/avg_trade_duration_minutes
+    carried a sample size (round 5) but no uncertainty at all, despite
+    round 5's own finding/test commentary naming both as required."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)  # 4 trades: 2 winners, 2 losers (see module fixture)
+
+    summary = run(path, starting_balance=1000.0)
+    assert summary["avg_winner_dollars_ci_lower"] is not None
+    assert summary["avg_winner_dollars_ci_upper"] is not None
+    assert summary["avg_loser_dollars_ci_lower"] is not None
+    assert summary["avg_loser_dollars_ci_upper"] is not None
+    assert summary["avg_trade_duration_minutes_ci_lower"] is not None
+    assert summary["avg_trade_duration_minutes_ci_upper"] is not None
+
+
+def test_avg_winner_loser_ci_none_with_single_observation(tmp_path):
+    """A single winner/loser has no estimable uncertainty -- the CI must
+    be None, never a false-precision degenerate interval (same
+    convention expectancy() already uses for n==1)."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(
+        path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 50.0,
+            }
+        ],
+    )
+
+    summary = run(path, starting_balance=1000.0)
+    assert summary["avg_winner_dollars_n"] == 1
+    assert summary["avg_winner_dollars_ci_lower"] is None
+    assert summary["avg_winner_dollars_ci_upper"] is None
+    assert summary["avg_loser_dollars_n"] == 0
+    assert summary["avg_loser_dollars_ci_lower"] is None
+    assert summary["avg_loser_dollars_ci_upper"] is None
+
+
 def test_n_resamples_and_confidence_exposed_and_actually_used(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round):
     compute_trade_summary previously exposed 'seed' but hard-wired every
@@ -297,14 +379,15 @@ def test_same_timestamp_trades_give_deterministic_drawdown(tmp_path):
 
 def test_same_timestamp_trades_give_deterministic_losing_streak(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fifth round):
-    longest_losing_streak previously iterated 'profits' in trades_sorted's
-    own row order, which is ARBITRARY among same-instant trades (the same
-    tie-break problem drawdown above already solves). Reordering three
-    simultaneous outcomes (loss/win/loss vs. loss/loss/win, net -40 at
-    that one instant) previously changed the reported streak from 1 to 2.
-    The streak is now computed over one order-independent balance STEP
-    per distinct exit_time (net -40, a single loss step), so it must be
-    identical regardless of row order."""
+    longest_losing_balance_step_streak (renamed, 2026-07-22, sixth round --
+    see compute_trade_summary's own comment) previously iterated 'profits'
+    in trades_sorted's own row order, which is ARBITRARY among same-instant
+    trades (the same tie-break problem drawdown above already solves).
+    Reordering three simultaneous outcomes (loss/win/loss vs. loss/loss/win,
+    net -40 at that one instant) previously changed the reported streak
+    from 1 to 2. The streak is now computed over one order-independent
+    balance STEP per distinct exit_time (net -40, a single loss step), so
+    it must be identical regardless of row order."""
 
     same_time = "2026-07-21T00:00:00Z"
     loss_win_loss = [
@@ -352,7 +435,11 @@ def test_same_timestamp_trades_give_deterministic_losing_streak(tmp_path):
     summary_a = run(path_a, starting_balance=1000.0)
     summary_b = run(path_b, starting_balance=1000.0)
 
-    assert summary_a["longest_losing_streak"] == summary_b["longest_losing_streak"] == 1
+    assert (
+        summary_a["longest_losing_balance_step_streak"]
+        == summary_b["longest_losing_balance_step_streak"]
+        == 1
+    )
 
 
 def test_trades_per_day_uses_authenticated_evaluation_period_when_given(tmp_path):
@@ -514,8 +601,8 @@ def test_baseline_comparison_metrics_hand_computed(tmp_path):
     assert summary["recovery_factor"] == pytest.approx(2.5)
 
     # Sorted-by-exit-time profits: [40, -20, 50, -20] -- each loss is
-    # isolated (win in between) -> longest losing streak = 1.
-    assert summary["longest_losing_streak"] == 1
+    # isolated (win in between) -> longest losing balance-step streak = 1.
+    assert summary["longest_losing_balance_step_streak"] == 1
 
     # winners=[40,50] -> avg 45.0; losers=[-20,-20] -> avg -20.0.
     assert summary["avg_winner_dollars"] == pytest.approx(45.0)

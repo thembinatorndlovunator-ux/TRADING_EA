@@ -2,8 +2,11 @@
 trade-export CSV: win rate (with Wilson CI), expectancy ($  and R), profit
 factor, max drawdown, net profit, recovery factor, a BALANCE-based peak-
 giveback proxy (**not** the master-prompt equity-peak-giveback metric --
-see below), longest losing streak, average winner/loser, average trade
-duration, and trades-per-day on the resulting BALANCE curve --
+see below), longest losing BALANCE-STEP streak (**renamed, 2026-07-22
+Codex review finding, sixth round: NOT "longest run of consecutive
+losing trades" -- see compute_trade_summary's own comment for exactly
+why**), average winner/loser, average trade duration, and trades-per-day
+on the resulting BALANCE curve --
 **extended, 2026-07-22 Codex review finding (fourth round): every one of
 these except win rate/expectancy/profit factor/max drawdown was
 previously absent, despite TEST_PLAN.md naming all of them as the
@@ -52,7 +55,7 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import pandas as pd
 
@@ -72,6 +75,7 @@ from analysis.csv_io import (
 )
 from analysis.metrics import (
     InsufficientSampleError,
+    bootstrap_confidence_interval,
     compute_balance_peak_giveback,
     compute_max_drawdown,
     expectancy,
@@ -94,6 +98,34 @@ REQUIRED_COLUMNS = {
     "profit",
 }
 NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
+
+
+def _mean_with_ci(
+    values: Sequence[float], *, n_resamples: int, seed: int, confidence: float
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Mean of 'values' plus a bootstrap CI on that mean -- returns
+    (mean, ci_lower, ci_upper), with the CI as ``None`` (never a
+    false-precision degenerate interval) when fewer than 2 observations
+    exist, same "no estimable uncertainty" convention ``expectancy``
+    already uses for n==1.
+
+    **Added, 2026-07-22 Codex review finding (sixth round): avg_winner_
+    dollars/avg_loser_dollars/avg_trade_duration_minutes previously
+    carried a sample size (added round 5) but no uncertainty at all,
+    despite round 5's own finding/test commentary naming BOTH as
+    required -- a caller could not tell whether e.g. an average winner
+    of $45 over 2 trades was anywhere near as reliable as one over 200.**
+    """
+
+    if not values:
+        return None, None, None
+    mean = sum(values) / len(values)
+    if len(values) < 2:
+        return mean, None, None
+    boot = bootstrap_confidence_interval(
+        values, statistic="mean", n_resamples=n_resamples, confidence=confidence, seed=seed
+    )
+    return mean, boot.ci_lower, boot.ci_upper
 
 
 def compute_trade_summary(
@@ -128,8 +160,8 @@ def compute_trade_summary(
 ) -> dict:
     """Computes the full baseline summary dict (win rate, expectancy,
     profit factor, drawdown, net profit, recovery factor, balance-peak
-    giveback, longest losing streak, avg winner/loser, avg trade
-    duration, trades-per-day) from an ALREADY-VALIDATED, already-parsed
+    giveback, longest losing BALANCE-STEP streak, avg winner/loser, avg
+    trade duration, trades-per-day) from an ALREADY-VALIDATED, already-parsed
     trades DataFrame: 'is_long' parsed to bool, 'entry_time'/'exit_time'
     parsed to UTC timestamps, 'r_multiple' column already computed --
     exactly what ``run()`` below and
@@ -203,24 +235,54 @@ def compute_trade_summary(
     # identical timestamps and net P/L. The streak is now computed over
     # the SAME order-independent 'balance_steps' series drawdown uses --
     # one outcome per DISTINCT exit_time (summed), not one per row.**
-    longest_losing_streak = 0
+    #
+    # **Renamed, 2026-07-22 Codex review finding (sixth round): computing
+    # this over summed-per-exit-time balance steps (the round-5 fix
+    # above) is not the SAME metric as "longest run of consecutive
+    # LOSING TRADES" -- it changed what is measured, not just how it is
+    # computed. Reproduced counterexample: simultaneous profits
+    # [-1, -1, +10] at one exit_time sum to a single +8 balance step,
+    # reporting a losing streak of 0 despite two individual losing
+    # trades; three simultaneous losses sum to one negative step,
+    # reporting 1 instead of 3. This schema has no durable intra-
+    # timestamp deal sequence field, so there is no principled way to
+    # recover a genuine per-TRADE ordering among same-instant trades --
+    # renamed to describe exactly what is measured (consecutive negative
+    # BALANCE STEPS, i.e. distinct exit-time instants, not individual
+    # trades) rather than silently redefining the old, differently-named
+    # field.**
+    longest_losing_balance_step_streak = 0
     current_losing_streak = 0
     for step_pnl in balance_steps:
         if step_pnl < 0:
             current_losing_streak += 1
-            longest_losing_streak = max(longest_losing_streak, current_losing_streak)
+            longest_losing_balance_step_streak = max(
+                longest_losing_balance_step_streak, current_losing_streak
+            )
         else:
             current_losing_streak = 0
 
     winners = [p for p in profits if p > 0]
     losers = [p for p in profits if p < 0]
-    avg_winner = sum(winners) / len(winners) if winners else None
-    avg_loser = sum(losers) / len(losers) if losers else None
+    # **Added, 2026-07-22 Codex review finding (sixth round): a bootstrap
+    # CI alongside each mean -- see _mean_with_ci's own docstring.**
+    avg_winner, avg_winner_ci_lower, avg_winner_ci_upper = _mean_with_ci(
+        winners, n_resamples=n_resamples, seed=seed, confidence=confidence
+    )
+    avg_loser, avg_loser_ci_lower, avg_loser_ci_upper = _mean_with_ci(
+        losers, n_resamples=n_resamples, seed=seed, confidence=confidence
+    )
 
     durations_minutes = (
         trades_sorted["exit_time"] - trades_sorted["entry_time"]
     ).dt.total_seconds() / 60.0
-    avg_trade_duration_minutes = float(durations_minutes.mean())
+    (
+        avg_trade_duration_minutes,
+        avg_trade_duration_minutes_ci_lower,
+        avg_trade_duration_minutes_ci_upper,
+    ) = _mean_with_ci(
+        durations_minutes.tolist(), n_resamples=n_resamples, seed=seed, confidence=confidence
+    )
 
     # **Fixed, 2026-07-22 Codex review finding (fifth round): this
     # previously ALWAYS divided by the active trade envelope (earliest
@@ -299,18 +361,30 @@ def compute_trade_summary(
                 "analyse_giveback.py's per-trade R-path guard simulation"
             ),
         },
-        "longest_losing_streak": longest_losing_streak,
+        "longest_losing_balance_step_streak": longest_losing_balance_step_streak,
         # **Added, 2026-07-22 Codex review finding (fifth round): these
         # carried neither a subgroup sample size nor uncertainty, despite
         # the task's sample-size/uncertainty contract -- a caller could
         # not tell a well-supported average from one based on a single
         # observation.**
+        # **Added, 2026-07-22 Codex review finding (sixth round): a
+        # bootstrap CI on each mean, closing the "sample size but no
+        # uncertainty" gap round 5's own commentary named but did not
+        # actually add -- ``None`` when fewer than 2 observations exist
+        # (no estimable uncertainty from a single point), never a
+        # false-precision degenerate interval.**
         "avg_winner_dollars": avg_winner,
         "avg_winner_dollars_n": len(winners),
+        "avg_winner_dollars_ci_lower": avg_winner_ci_lower,
+        "avg_winner_dollars_ci_upper": avg_winner_ci_upper,
         "avg_loser_dollars": avg_loser,
         "avg_loser_dollars_n": len(losers),
+        "avg_loser_dollars_ci_lower": avg_loser_ci_lower,
+        "avg_loser_dollars_ci_upper": avg_loser_ci_upper,
         "avg_trade_duration_minutes": avg_trade_duration_minutes,
         "avg_trade_duration_minutes_n": len(trades_sorted),
+        "avg_trade_duration_minutes_ci_lower": avg_trade_duration_minutes_ci_lower,
+        "avg_trade_duration_minutes_ci_upper": avg_trade_duration_minutes_ci_upper,
         "trades_per_day": trades_per_day,
         "trades_per_day_denominator_days": period_days,
         "trades_per_day_denominator_source": trades_per_day_source,

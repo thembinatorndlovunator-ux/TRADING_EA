@@ -615,9 +615,14 @@ def run(
             baseline_summary["balance_peak_giveback"]["max_giveback_pct"],
         ),
         (
-            "longest_losing_streak",
-            candidate_summary["longest_losing_streak"],
-            baseline_summary["longest_losing_streak"],
+            # **Renamed, 2026-07-22 Codex review finding (sixth round):
+            # see analyse_baseline.compute_trade_summary's own comment --
+            # this measures consecutive negative BALANCE STEPS (distinct
+            # exit-time instants), not consecutive individual losing
+            # trades.**
+            "longest_losing_balance_step_streak",
+            candidate_summary["longest_losing_balance_step_streak"],
+            baseline_summary["longest_losing_balance_step_streak"],
         ),
         (
             "avg_winner_dollars",
