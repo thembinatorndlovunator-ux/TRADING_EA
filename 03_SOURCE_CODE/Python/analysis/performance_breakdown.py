@@ -128,6 +128,63 @@ def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# The only two 'news_state' values this project's own pipeline actually
+# produces and cross-checks against 'in_news_blackout' -- see
+# join_news_events.py's docstring and notebook 04's fifth-round fix.
+# Any OTHER news_state value (including "", a legacy value, or a value a
+# future real vocabulary introduces) is not cross-checked here, since no
+# full vocabulary is defined yet (Codex review finding, 2026-07-22, fifth
+# round: "news_state has no defined vocabulary").
+_NEWS_STATE_CLEAR = "CLEAR"
+_NEWS_STATE_BLACKOUT = "BLACKOUT"
+
+
+def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>") -> None:
+    """Raises CsvSchemaError if 'in_news_blackout' is present but not a
+    genuine boolean column, or if 'news_state' and 'in_news_blackout' are
+    BOTH present and directly contradict each other for the same row
+    (news_state=="CLEAR" with in_news_blackout=True, or
+    news_state=="BLACKOUT" with in_news_blackout=False).
+
+    **Added, 2026-07-22 Codex review finding (fifth round): no equivalent
+    validation previously existed for news_state vs. in_news_blackout (or
+    for in_news_blackout's own type) -- a row with news_state="CLEAR" and
+    in_news_blackout=True was silently accepted and grouped, as was a
+    string-valued blackout flag ("true"/"false" strings, which Python
+    treats as truthy regardless of their text).**
+    """
+
+    if "in_news_blackout" in df.columns:
+        # **Fixed, 2026-07-22 Codex review finding (fifth round):** a
+        # string-valued blackout flag (e.g. the literal text "False")
+        # previously passed through ungrouped-checked -- every non-empty
+        # Python string is truthy, so a caller-supplied "False" string
+        # would silently behave as blackout=True downstream. Only a
+        # genuine bool dtype column is accepted.
+        if not pd.api.types.is_bool_dtype(df["in_news_blackout"]):
+            raise CsvSchemaError(
+                f"{path}: 'in_news_blackout' must be a genuine boolean column, got dtype "
+                f"{df['in_news_blackout'].dtype} -- a string/object value (even 'False') is "
+                "truthy and would silently corrupt every downstream grouping"
+            )
+
+    if "news_state" in df.columns and "in_news_blackout" in df.columns:
+        contradicts_clear = (df["news_state"] == _NEWS_STATE_CLEAR) & (
+            df["in_news_blackout"].astype(bool)
+        )
+        contradicts_blackout = (df["news_state"] == _NEWS_STATE_BLACKOUT) & (
+            ~df["in_news_blackout"].astype(bool)
+        )
+        bad = df[contradicts_clear | contradicts_blackout]
+        if not bad.empty:
+            raise CsvSchemaError(
+                f"{path}: {len(bad)} row(s) have a news_state/in_news_blackout contradiction "
+                f"(news_state={_NEWS_STATE_CLEAR!r} with in_news_blackout=True, or "
+                f"news_state={_NEWS_STATE_BLACKOUT!r} with in_news_blackout=False): "
+                f"rows {bad.index.tolist()}"
+            )
+
+
 def compute_breakdown(
     df: pd.DataFrame,
     dimensions: Sequence[str],
@@ -183,6 +240,12 @@ def compute_breakdown(
         raise ValueError(
             f"n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], got {n_resamples}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round):** checked
+    # unconditionally, independent of whether news_state/in_news_blackout
+    # are actually among 'dimensions' -- a contradictory row would
+    # corrupt any breakdown it appears in, not only one grouped by these
+    # specific fields.
+    _assert_news_state_consistency(df)
 
     has_r_multiple = "r_multiple" in df.columns
 

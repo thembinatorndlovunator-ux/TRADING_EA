@@ -109,6 +109,71 @@ def test_compute_breakdown_news_state_and_in_news_blackout_hand_computed():
     assert no_blackout_row["expectancy_dollars"] == pytest.approx(7.0)
 
 
+def test_compute_breakdown_rejects_news_state_in_news_blackout_contradiction():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    no cross-field validation previously existed between news_state and
+    in_news_blackout -- a row with news_state="CLEAR" and
+    in_news_blackout=True was silently accepted and grouped."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2"],
+            "profit": [10.0, -5.0],
+            "news_state": ["CLEAR", "BLACKOUT"],
+            "in_news_blackout": [True, False],  # both contradict news_state
+        }
+    )
+    with pytest.raises(CsvSchemaError):
+        compute_breakdown(df, ["in_news_blackout"])
+
+
+def test_compute_breakdown_accepts_consistent_news_state_and_in_news_blackout():
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2"],
+            "profit": [10.0, -5.0],
+            "news_state": ["CLEAR", "BLACKOUT"],
+            "in_news_blackout": [False, True],  # consistent
+        }
+    )
+    result = compute_breakdown(df, ["in_news_blackout"])
+    assert len(result) == 2
+
+
+def test_compute_breakdown_rejects_string_valued_in_news_blackout():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a string-valued blackout flag (e.g. the literal text "False") was
+    previously accepted -- every non-empty Python string is truthy, so it
+    would silently behave as blackout=True downstream."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2"],
+            "profit": [10.0, -5.0],
+            "in_news_blackout": ["True", "False"],  # strings, not real booleans
+        }
+    )
+    with pytest.raises(CsvSchemaError):
+        compute_breakdown(df, ["in_news_blackout"])
+
+
+def test_compute_breakdown_unrelated_news_state_values_not_cross_checked():
+    """news_state values outside the CLEAR/BLACKOUT vocabulary this
+    project's own pipeline actually produces are not cross-checked --
+    no full vocabulary is defined yet (see the module's own note)."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "profit": [10.0],
+            "news_state": ["SOME_LEGACY_VALUE"],
+            "in_news_blackout": [True],
+        }
+    )
+    result = compute_breakdown(df, ["news_state"])
+    assert len(result) == 1
+
+
 def test_compute_breakdown_multi_dimension_hand_computed():
     result = compute_breakdown(_fixture_df(), ["strategy", "regime"])
     assert len(result) == 4  # every (strategy, regime) combination present
