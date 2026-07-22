@@ -247,3 +247,13 @@ exit-priority orchestrator (composing this module with
 stop-modification function (`OrderManager.mqh` currently has none), and
 per-position state tracking — all deliberately deferred to one coherent
 follow-up task rather than partially wired here.
+
+**Update, 2026-07-22 — TASK-041 (partial scope, per user decision):**
+`OM_ModifyStop` (the stop-modification function), `PositionStateTracker.mqh`
+(per-position state), and `ExitOrchestrator.mqh` (composing break-even,
+structure/ATR trailing, time stop, and profit-lock only) are now built and
+wired into `ThembaAdaptiveIntradayEA.mq5`'s new `ManageOpenPositions()`.
+Target-selection porting, the daily-risk/news/opposite-structure-shift
+exit-priority items, momentum-failure, and the giveback guard remain
+explicitly deferred — see `TASK-041_EXIT_ENGINE_WIRING.md`'s own scope
+section for exactly what is and is not covered.

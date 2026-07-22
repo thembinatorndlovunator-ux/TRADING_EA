@@ -278,3 +278,74 @@ bool OM_ClosePosition(const ulong position_ticket, const long magic, string &rej
 
    return true;
   }
+
+//+------------------------------------------------------------------+
+//| TASK-041 — result of a stop-modification attempt, always populated on |
+//| both success and failure, matching SOrderOpenResult's own convention.   |
+//+------------------------------------------------------------------+
+struct SOrderModifyResult
+  {
+   bool   success;
+   uint   retcode;
+   double actual_sl;       // whatever SL the broker actually accepted —
+                             // may differ from the requested price if a
+                             // broker minimum-stop-distance rule widened
+                             // it further; ExitManager.mqh's own
+                             // EM_ProfitLockClearsMinFloor is designed to
+                             // consume exactly this actual value, not the
+                             // requested one.
+   string rejection_reason; // "" iff success
+  };
+
+//+------------------------------------------------------------------+
+//| Modifies a single position's stop-loss by ticket, verifying it          |
+//| actually carries 'magic' first (same own-magic-only discipline as       |
+//| OM_ClosePosition). The take-profit is always resubmitted UNCHANGED --     |
+//| this function only ever moves the stop; a caller that wants to change      |
+//| the target needs a different, explicit function (none exists yet, out       |
+//| of this task's scope — see ExitOrchestrator.mqh's own header for why         |
+//| target re-selection is explicitly deferred).                                    |
+//+------------------------------------------------------------------+
+bool OM_ModifyStop(const ulong position_ticket, const long magic, const double new_sl_price,
+                    SOrderModifyResult &result)
+  {
+   result.success = false;
+   result.retcode = 0;
+   result.actual_sl = 0.0;
+   result.rejection_reason = "";
+
+   if(!PositionSelectByTicket(position_ticket))
+     {
+      result.rejection_reason = "position_not_found";
+      return false;
+     }
+   if(PositionGetInteger(POSITION_MAGIC) != magic)
+     {
+      result.rejection_reason = "position_not_owned_by_this_magic";
+      return false;
+     }
+
+   double current_tp = PositionGetDouble(POSITION_TP);
+
+   CTrade trade;
+   trade.SetExpertMagicNumber(magic);
+   bool ok = trade.PositionModify(position_ticket, new_sl_price, current_tp);
+   result.retcode = trade.ResultRetcode();
+
+   if(!ok || (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED))
+     {
+      result.rejection_reason = StringFormat("position_modify_failed_retcode_%u", result.retcode);
+      return false;
+     }
+
+   // Re-select and read back the ACTUALLY accepted SL — may differ from
+   // new_sl_price if the broker's own minimum-stop-distance enforcement
+   // widened it further (see this struct's own actual_sl comment).
+   if(PositionSelectByTicket(position_ticket))
+      result.actual_sl = PositionGetDouble(POSITION_SL);
+   else
+      result.actual_sl = new_sl_price;
+
+   result.success = true;
+   return true;
+  }

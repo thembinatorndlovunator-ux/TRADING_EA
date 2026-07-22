@@ -194,6 +194,33 @@ void OnStart()
       Check("exactly one owned position exists after opening",
             CountOwnedPositions(InpTestMagic) == 1);
 
+      //--- 9. TASK-041: OM_ModifyStop moves this same live position's SL --
+      double point = SymbolInfoDouble(InpTestSymbol, SYMBOL_POINT);
+      long stops_level_points = SymbolInfoInteger(InpTestSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double safe_distance = MathMax((double)stops_level_points, 100.0) * point * 2.0;
+      double bid = SymbolInfoDouble(InpTestSymbol, SYMBOL_BID);
+      double new_sl = bid - safe_distance; // this test's position was opened long, above
+
+      SOrderModifyResult modify_result;
+      bool modified = OM_ModifyStop(open_result.position_ticket, InpTestMagic, new_sl,
+                                     modify_result);
+      Check(StringFormat("OM_ModifyStop succeeds (retcode=%u)", modify_result.retcode), modified);
+      if(modified)
+        {
+         Check("OM_ModifyStop's actual_sl is nonzero", modify_result.actual_sl != 0.0);
+         Check("position's live SL reflects the modification",
+               PositionSelectByTicket(open_result.position_ticket) &&
+               MathAbs(PositionGetDouble(POSITION_SL) - modify_result.actual_sl) < point);
+        }
+
+      //--- 10. OM_ModifyStop refuses to modify under the wrong magic ------
+      SOrderModifyResult wrong_magic_modify_result;
+      bool wrongly_modified = OM_ModifyStop(open_result.position_ticket, InpTestMagic + 1, new_sl,
+                                             wrong_magic_modify_result);
+      Check("OM_ModifyStop refuses to modify under the wrong magic", wrongly_modified == false);
+      Check("wrong-magic modify rejection reason is set",
+            wrong_magic_modify_result.rejection_reason == "position_not_owned_by_this_magic");
+
       string close_reason;
       bool closed = OM_ClosePosition(open_result.position_ticket, InpTestMagic, close_reason);
       Check("OM_ClosePosition succeeds", closed);

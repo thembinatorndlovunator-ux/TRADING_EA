@@ -47,6 +47,7 @@
 #include "../Include/ThembaEA/Execution/IntradayCloseManager.mqh"
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
 #include "../Include/ThembaEA/Execution/IntentManager.mqh"
+#include "../Include/ThembaEA/Execution/ExitOrchestrator.mqh"
 #include "../Include/ThembaEA/Market/RegimeGateComposer.mqh"
 #include "../Include/ThembaEA/Market/IntradayModeRouter.mqh"
 #include "../Include/ThembaEA/Market/SessionManager.mqh"
@@ -93,6 +94,28 @@ input double InpMinLiquidityTicksPerBar    = 5.0;
 input int    InpLiquidityAvgBars           = 20;
 input int    InpHysteresisRequiredBars     = 2;
 input int    InpCooldownMinutes            = 90;     // TASK-034: three-loss-per-symbol cooldown
+
+// TASK-041 (exit-engine wiring, partial scope -- see ExitOrchestrator.mqh's own header):
+input double InpBreakEvenMinR              = 0.5;
+input double InpTrailBufferAtrMultiple     = 0.3;
+input double InpAtrTrailMultiple           = 2.0;
+input int    InpTrailStaleBars             = 15;
+input double InpScalpMaxMinutes            = 60.0;
+input double InpTimeStopMinR               = 0.3;
+input double InpProfitLockTriggerPercent   = 70.0;
+input double InpProfitLockKeepPercent      = 50.0;
+input double InpProfitLockMinKeepPercent   = 30.0;
+input bool   InpTimeStopUsesScalpMode      = true; // TASK-041: stand-in policy applied to EVERY
+                                                     // position this EA manages -- which time-stop
+                                                     // duration ceiling (InpScalpMaxMinutes vs
+                                                     // remaining-session-time) applies. Until
+                                                     // intraday_mode (TASK-040) is captured
+                                                     // per-position at entry time and threaded
+                                                     // through to exit management end-to-end (a
+                                                     // further, explicitly named follow-up), the
+                                                     // operator sets this once per deployment,
+                                                     // matching how InpNewsProviderSource stood in
+                                                     // for market_family before TASK-040 shipped it.
 
 input bool   InpEnableOrderSubmission     = false; // MASTER SAFETY TOGGLE — see file header
 input double InpRiskPercentTarget         = 0.3;   // per-trade target risk %, within section 8's
@@ -199,6 +222,15 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                 HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
 
    CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(), InpCooldownMinutes);
+
+   // TASK-041: free PositionStateTracker.mqh's per-position state once a
+   // position is confirmed closed — no partial-close functionality exists
+   // anywhere in this project yet (OM_ClosePosition/IntradayCloseManager.mqh
+   // both close a ticket's full volume), so a closing deal always means
+   // the position is genuinely gone, never a still-open remainder.
+   ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+   if(closed_position_id != 0)
+      PST_Clear(closed_position_id);
   }
 
 void OnDeinit(const int reason)
@@ -216,6 +248,7 @@ void OnTick()
    g_last_evaluated_bar_time = current_bar_time;
 
    EvaluateAndJournal();
+   ManageOpenPositions();
 
    // Scoped strictly to this EA's own magic number. With
    // InpEnableOrderSubmission=false this remains a no-op in practice
@@ -569,6 +602,114 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
 
    decision.reasons_passed_json = BuildJsonStringArray(passed);
    decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+  }
+
+//+------------------------------------------------------------------+
+//| TASK-041 — manages every OPEN position under this EA's own magic on   |
+//| 'g_symbol', once per completed bar: composes break-even, structure/      |
+//| ATR trailing, time stop, and profit-lock via ExitOrchestrator.mqh (see       |
+//| that module's own header for this task's explicitly-approved partial          |
+//| scope). Independent of EvaluateAndJournal's own regime-classification            |
+//| gates -- an existing open position must still be protected even on a a             |
+//| bar where a NEW entry decision could not be evaluated.                                |
+//+------------------------------------------------------------------+
+void ManageOpenPositions()
+  {
+   double atr_current;
+   if(!g_md.GetATR(0, atr_current, 14))
+      return; // cannot manage without a live ATR read this bar
+
+   int window = InpSwingDepth * 2 + InpMaxLookback + 5;
+   if(!g_md.HasBars(window))
+      return;
+   double highs[], lows[];
+   ArrayResize(highs, window);
+   ArrayResize(lows, window);
+   for(int i = 0; i < window; i++)
+      if(!g_md.GetHigh(i, highs[i]) || !g_md.GetLow(i, lows[i]))
+         return;
+
+   double session_remaining_ratio;
+   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio))
+      session_remaining_ratio = 0.0;
+
+   SExitConfig cfg;
+   cfg.break_even_min_r = InpBreakEvenMinR;
+   cfg.trail_buffer_atr_multiple = InpTrailBufferAtrMultiple;
+   cfg.atr_trail_multiple = InpAtrTrailMultiple;
+   cfg.trail_stale_bars = InpTrailStaleBars;
+   cfg.scalp_max_minutes = InpScalpMaxMinutes;
+   cfg.time_stop_min_r = InpTimeStopMinR;
+   cfg.profit_lock_trigger_percent = InpProfitLockTriggerPercent;
+   cfg.profit_lock_keep_percent = InpProfitLockKeepPercent;
+   cfg.stop_modify_tolerance = g_profile.point * 2.0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != g_symbol)
+         continue;
+
+      ulong position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      bool is_long = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+      double entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
+      double current_stop = PositionGetDouble(POSITION_SL);
+      double target_price = PositionGetDouble(POSITION_TP);
+      double current_price = is_long ? SymbolInfoDouble(g_symbol, SYMBOL_BID)
+                                       : SymbolInfoDouble(g_symbol, SYMBOL_ASK);
+      double elapsed_minutes = (double)(TimeCurrent() - (datetime)PositionGetInteger(POSITION_TIME)) /
+                                60.0;
+
+      SPositionExitState state = PST_Load(position_id);
+      if(state.initial_stop_price == 0.0)
+         state.initial_stop_price = current_stop; // seed once, before any trailing occurs
+
+      SExitDecision decision = EO_EvaluatePosition(
+         is_long, entry_price, state.initial_stop_price, current_stop, current_price, target_price,
+         atr_current, highs, lows, InpSwingDepth, InpMaxLookback, true, InpTimeStopUsesScalpMode,
+         session_remaining_ratio, elapsed_minutes, cfg, state);
+
+      PST_Save(position_id, state);
+
+      if(decision.should_close)
+        {
+         string close_reason;
+         bool closed = OM_ClosePosition(ticket, InpMagicNumber, close_reason);
+         PrintFormat("ThembaEA: exit orchestrator CLOSE (%s) position_id=%I64u ticket=%I64u -> %s.",
+                     decision.close_reason, position_id, ticket,
+                     closed ? "closed" : ("FAILED: " + close_reason));
+         if(closed)
+            PST_Clear(position_id);
+         continue;
+        }
+
+      if(decision.should_modify_stop)
+        {
+         SOrderModifyResult modify_result;
+         bool modified = OM_ModifyStop(ticket, InpMagicNumber, decision.new_stop_price, modify_result);
+         if(modified)
+           {
+            PrintFormat("ThembaEA: exit orchestrator trail stop position_id=%I64u ticket=%I64u "
+                        "requested=%.5f actual=%.5f.", position_id, ticket, decision.new_stop_price,
+                        modify_result.actual_sl);
+            if(state.profit_lock_armed &&
+               !EM_ProfitLockClearsMinFloor(is_long, entry_price, current_price,
+                                             modify_result.actual_sl, InpProfitLockMinKeepPercent))
+               PrintFormat("ThembaEA: WARNING partial profit-lock only -- position_id=%I64u actual "
+                           "stop %.5f does not clear the %.2f%% min-keep floor (broker minimum-"
+                           "stop-distance likely widened it).", position_id, modify_result.actual_sl,
+                           InpProfitLockMinKeepPercent);
+           }
+         else
+            PrintFormat("ThembaEA: exit orchestrator stop modify FAILED position_id=%I64u "
+                        "ticket=%I64u requested=%.5f -> %s.", position_id, ticket,
+                        decision.new_stop_price, modify_result.rejection_reason);
+        }
+     }
   }
 
 //+------------------------------------------------------------------+
