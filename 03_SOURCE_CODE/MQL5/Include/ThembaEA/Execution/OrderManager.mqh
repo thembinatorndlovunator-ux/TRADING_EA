@@ -130,8 +130,26 @@ bool OM_CalculateVolume(const CSymbolProfile &profile, const double equity,
 struct SOrderOpenResult
   {
    bool   success;
-   ulong  deal_ticket;    // 0 on failure
-   ulong  position_ticket; // 0 on failure or if the position could not be resolved
+   ulong  deal_ticket;    // 0 on failure — MT5's DEAL_TICKET, per-fill identity
+   ulong  position_ticket; // 0 on failure or if the position could not be resolved —
+                            // MT5's POSITION_TICKET, valid for THIS SESSION's live API
+                            // calls (PositionSelectByTicket/CTrade::PositionClose both
+                            // require this exact value RIGHT NOW), but NOT guaranteed
+                            // stable across the position's whole lifetime (see
+                            // position_id below and this struct's own review-finding
+                            // comment).
+   ulong  position_id;    // 0 on failure or if the position could not be resolved —
+                            // MT5's POSITION_IDENTIFIER, the DURABLE cross-reference
+                            // key for journaling/Python-side joins (matches every
+                            // related deal's own DEAL_POSITION_ID). Added, 2026-07-22
+                            // (Codex review finding, sixth round, TASK-028's own
+                            // round-6 P0 finding 1): position_ticket "can change after
+                            // a server service re-open and, in netting mode, after
+                            // reversal" per MT5's own documented lifecycle contract --
+                            // position_id is the field MT5 documents as staying
+                            // constant for the position's entire life. Use THIS field,
+                            // never position_ticket, as the journal's own 'order_id'
+                            // once TASK-036 wires journaling to this struct.
    double fill_price;     // 0.0 on failure
    uint   retcode;
    string rejection_reason; // "" iff success
@@ -144,9 +162,13 @@ struct SOrderOpenResult
 //| return alone, since CTrade's own bool can be true for a PLACED-but-     |
 //| not-yet-DONE pending state on some brokers). Looks up the resulting     |
 //| position by (symbol, magic) immediately after a successful DONE/        |
-//| PLACED retcode, so a caller gets a real position_ticket, not just a      |
-//| deal ticket, to hand to OM_ClosePosition or IntradayCloseManager.mqh's    |
-//| own magic-scoped enumeration later.                                       |
+//| PLACED retcode, so a caller gets both a real position_ticket (for THIS   |
+//| session's immediate close/modify calls, which the MT5 API itself         |
+//| requires) and the durable position_id (for cross-session/cross-reboot    |
+//| journaling identity — see SOrderOpenResult's own comment for exactly     |
+//| why these two are NOT interchangeable), not just a deal ticket, to        |
+//| hand to OM_ClosePosition or IntradayCloseManager.mqh's own magic-scoped    |
+//| enumeration later.                                                         |
 //+------------------------------------------------------------------+
 bool OM_OpenPosition(const string symbol, const bool is_long, const double volume,
                       const double sl_price, const double tp_price, const long magic,
@@ -155,6 +177,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    result.success = false;
    result.deal_ticket = 0;
    result.position_ticket = 0;
+   result.position_id = 0;
    result.fill_price = 0.0;
    result.retcode = 0;
    result.rejection_reason = "";
@@ -192,6 +215,17 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    // Resolve the resulting position ticket by scanning this EA's own
    // magic-scoped positions on this symbol — CTrade's ResultDeal() is a
    // deal ticket, not a position ticket, and the two are not interchangeable.
+   // **Fixed, 2026-07-22 (Codex review finding, sixth round, TASK-028's own
+   // round-6 P0 finding 1): PositionGetTicket(i) returns POSITION_TICKET,
+   // which MT5 documents as NOT guaranteed stable across a server-side
+   // service re-open or (in netting mode) a reversal -- POSITION_IDENTIFIER
+   // is MT5's own documented stable-for-the-whole-lifetime key. Both are
+   // now captured: position_ticket for THIS session's immediate close/
+   // modify calls (which the MT5 API itself requires), position_id for
+   // durable journaling identity. PositionGetTicket(i) already selects
+   // this position for the PositionGetInteger/PositionGetString calls
+   // below, so reading POSITION_IDENTIFIER here is reading the SAME
+   // position these checks already matched.**
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
       ulong ticket = PositionGetTicket(i);
@@ -202,6 +236,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
       if(PositionGetString(POSITION_SYMBOL) != symbol)
          continue;
       result.position_ticket = ticket;
+      result.position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       break;
      }
 

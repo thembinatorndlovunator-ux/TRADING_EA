@@ -312,13 +312,20 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // strategy's originally proposed stop).
    decision.stop = final_stop;
    decision.risk_percent = 100.0 * sizing.risk_cash_actual / equity;
-   AppendReason(passed, StringFormat("order_submitted_ticket_%I64u_volume_%.2f_fill_%.5f",
-                                       open_result.position_ticket, sizing.volume,
-                                       open_result.fill_price));
-   PrintFormat("ThembaEA: *** ORDER SUBMITTED *** %s %s volume=%.2f ticket=%I64u fill=%.5f "
-               "stop=%.5f risk_pct=%.4f", decision.direction, g_symbol, sizing.volume,
-               open_result.position_ticket, open_result.fill_price, final_stop,
-               decision.risk_percent);
+   // **Fixed, 2026-07-22 (Codex review finding, sixth round): logs both
+   // the session-scoped position_ticket AND the durable position_id --
+   // see OrderManager.mqh's own SOrderOpenResult comment for why these
+   // are not interchangeable. position_id is what TASK-036 must journal
+   // as the durable order_id once it wires DecisionJournal.mqh to this
+   // struct.**
+   AppendReason(passed, StringFormat(
+      "order_submitted_ticket_%I64u_position_id_%I64u_volume_%.2f_fill_%.5f",
+      open_result.position_ticket, open_result.position_id, sizing.volume,
+      open_result.fill_price));
+   PrintFormat("ThembaEA: *** ORDER SUBMITTED *** %s %s volume=%.2f ticket=%I64u "
+               "position_id=%I64u fill=%.5f stop=%.5f risk_pct=%.4f", decision.direction,
+               g_symbol, sizing.volume, open_result.position_ticket, open_result.position_id,
+               open_result.fill_price, final_stop, decision.risk_percent);
 
    decision.reasons_passed_json = BuildJsonStringArray(passed);
    decision.reasons_rejected_json = BuildJsonStringArray(rejected);

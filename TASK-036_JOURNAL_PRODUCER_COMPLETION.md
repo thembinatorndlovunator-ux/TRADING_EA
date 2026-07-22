@@ -126,7 +126,17 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    before order submission has neither) to `STradeDecision` and populate
    them once `OrderManager.mqh` confirms a fill. (The Python-side field
    -- `analysis/schema.py`'s `TradeDecision.order_id`/`deal_id` -- already
-   exists; this is the matching MQL5-side population.)
+   exists; this is the matching MQL5-side population.) **`order_id` MUST
+   be populated from `SOrderOpenResult.position_id` (MT5's
+   `POSITION_IDENTIFIER`), NEVER `position_ticket` (Codex review finding,
+   2026-07-22, sixth round, TASK-028's own P0 finding 1) -- MT5 documents
+   `POSITION_TICKET` as changeable after a server-side service re-open or,
+   in netting mode, a reversal, while `POSITION_IDENTIFIER` is documented
+   as constant for the position's entire life and is what every related
+   deal itself carries back as `DEAL_POSITION_ID`. `position_ticket`
+   remains useful for THIS session's own immediate close/modify calls
+   (which the live MT5 API itself requires), but must never be journaled
+   as the durable `order_id`.**
 
    **Asynchronous fill correlation, added explicitly (Codex review
    finding, 2026-07-22, fifth round -- previously entirely unaddressed):**
@@ -136,11 +146,12 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    call. For a genuinely synchronous `DONE` fill this works; for
    `PLACED` (order accepted but not necessarily filled yet on every
    broker/execution model), the position may not exist at that scan
-   point, so `result.position_ticket` can come back `0` with no later
-   mechanism to correlate a subsequent async fill back to the journal
-   decision that triggered it. This task must (a) journal the decision
-   once immediately after submission (as today), recording whichever
-   ticket IS available at that point plus the raw `retcode`; (b) add an
+   point, so both `result.position_ticket` and `result.position_id` can
+   come back `0` with no later mechanism to correlate a subsequent async
+   fill back to the journal decision that triggered it. This task must
+   (a) journal the decision once immediately after submission (as
+   today), recording whichever identifiers ARE available at that point
+   plus the raw `retcode`; (b) add an
    `OnTradeTransaction` handler that detects a LATER fill for a
    previously-`PLACED`-but-unconfirmed order and updates that journal
    decision's `order_id`/`deal_id` (or appends a correlated follow-up

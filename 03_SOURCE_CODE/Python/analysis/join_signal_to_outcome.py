@@ -16,14 +16,23 @@ one existed. This script is that missing, explicit owner.
 fifth round -- previously left undefined, which the review demonstrated
 produces incoherent results):**
 
-- ``order_id`` here means MT5's **position ticket**
-  (``SOrderOpenResult.position_ticket`` in ``OrderManager.mqh``), the
-  identifier that stays STABLE across every fill of one position -- NOT
-  a literal MT5 "order ticket" (a pending/market order request that is
-  consumed once filled and is not a durable position-lifetime key). This
-  is the join key precisely because it is what stays constant across
-  partial fills; `TASK-036_JOURNAL_PRODUCER_COMPLETION.md` must populate
-  it from ``position_ticket``, not ``order_ticket``.
+- ``order_id`` here means MT5's **position identifier**
+  (``SOrderOpenResult.position_id`` in ``OrderManager.mqh``, MT5's own
+  ``POSITION_IDENTIFIER``), the identifier MT5 documents as staying
+  STABLE across every fill AND across the position's entire lifetime --
+  **corrected, 2026-07-22 Codex review finding (sixth round, P0 finding
+  1): this previously said ``position_ticket``/``POSITION_TICKET``,
+  which MT5 documents as changeable after a server-side service re-open
+  or, in netting mode, after a reversal. ``POSITION_IDENTIFIER`` is the
+  field MT5 documents as constant for the position's whole life, and is
+  what every related deal itself carries back as ``DEAL_POSITION_ID`` --
+  the genuinely durable key this join's own "stays constant across
+  partial fills" requirement actually needs.** NOT a literal MT5 "order
+  ticket" (a pending/market order request that is consumed once filled
+  and is not a durable position-lifetime key) and NOT ``position_ticket``
+  either (session-scoped, not durable); `TASK-036_JOURNAL_PRODUCER_COMPLETION.md`
+  must populate it from ``position_id``/``POSITION_IDENTIFIER``, not
+  ``position_ticket`` or ``order_ticket``.
 - ``deal_id`` means MT5's **deal ticket** (``deal_ticket``), a distinct
   identifier PER FILL. A journal decision (recorded before any fill
   exists) legitimately has no real ``deal_id`` yet -- ``deal_id`` is
@@ -265,8 +274,9 @@ def join_signal_to_outcome(
     journal_df: pd.DataFrame, trades_df: pd.DataFrame
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Returns (joined_df, row_errors), one row of 'joined_df' per
-    aggregated POSITION (order_id == MT5 position_ticket), not per
-    individual fill (see module docstring's identity-semantics section).
+    aggregated POSITION (order_id == MT5 position_id / POSITION_IDENTIFIER,
+    not position_ticket -- see module docstring's identity-semantics
+    section), not per individual fill.
     'row_errors' entries have shape {"trade_id": ..., "order_id": ...,
     "error": ...} for an orphaned trade outcome, or for EVERY fill of a
     position that fails an integrity check (the whole position is

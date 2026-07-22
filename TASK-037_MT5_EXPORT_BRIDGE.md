@@ -58,11 +58,19 @@ must not be modified.
    per row -- a partial fill produces multiple deals against the same
    order, and `join_signal_to_outcome.py` requires exactly that
    cardinality to aggregate them into one position)**. `order_id` must be
-   populated from MT5's **position ticket** (`SOrderOpenResult
-   .position_ticket` in `OrderManager.mqh`), the identifier stable across
-   every fill of one position -- NOT the literal order ticket, which is
-   consumed once filled (added, 2026-07-22 Codex review finding, fifth
-   round, matching `join_signal_to_outcome.py`'s own documented identity
+   populated from MT5's **position identifier** (`SOrderOpenResult
+   .position_id` in `OrderManager.mqh`, MT5's own `POSITION_IDENTIFIER`),
+   the identifier documented as stable across every fill AND the
+   position's entire lifetime -- **corrected, 2026-07-22 Codex review
+   finding (sixth round, TASK-028's own P0 finding 1): this previously
+   said `position_ticket`/`POSITION_TICKET`, which MT5 documents as
+   changeable after a server-side service re-open or, in netting mode, a
+   reversal; `POSITION_IDENTIFIER` is the field MT5 documents as constant
+   for the whole life of the position, matching every related deal's own
+   `DEAL_POSITION_ID`.** NOT the literal order ticket, which is consumed
+   once filled, and NOT `position_ticket` either (session-scoped, not
+   durable) (added, 2026-07-22 Codex review finding, fifth round,
+   matching `join_signal_to_outcome.py`'s own documented identity
    semantics).
    **Net P/L formula must be specified and verified, not assumed (added,
    2026-07-22 Codex review finding, fifth round):** `analyse_baseline.py`

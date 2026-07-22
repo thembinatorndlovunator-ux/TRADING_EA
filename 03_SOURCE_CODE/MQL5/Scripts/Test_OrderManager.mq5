@@ -185,6 +185,12 @@ void OnStart()
       Check("opened position has a nonzero deal_ticket", open_result.deal_ticket != 0);
       Check("opened position has a nonzero position_ticket resolved",
             open_result.position_ticket != 0);
+      // **Added, 2026-07-22 (Codex review finding, sixth round): position_id
+      // (POSITION_IDENTIFIER) must also resolve -- this is the durable
+      // identity TASK-036 must journal as order_id, not position_ticket
+      // (see OrderManager.mqh's own SOrderOpenResult comment for why).**
+      Check("opened position has a nonzero position_id resolved",
+            open_result.position_id != 0);
       Check("exactly one owned position exists after opening",
             CountOwnedPositions(InpTestMagic) == 1);
 
