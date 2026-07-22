@@ -57,6 +57,16 @@ struct STradeDecision
    string   reasons_rejected_json; // pre-serialized JSON array of strings
    string   ea_version;
    string   git_commit;
+   string   order_id;              // TASK-036: MT5's POSITION_IDENTIFIER
+                                    // (SOrderOpenResult.position_id) — NEVER
+                                    // position_ticket (see OrderManager.mqh's
+                                    // own SOrderOpenResult comment). "" (JSON
+                                    // null) for a decision that never reached
+                                    // order submission or was rejected.
+   string   deal_id;               // TASK-036: MT5's DEAL_TICKET
+                                    // (SOrderOpenResult.deal_ticket). "" (JSON
+                                    // null) under the same conditions as
+                                    // order_id.
   };
 
 //+------------------------------------------------------------------+
@@ -94,6 +104,8 @@ STradeDecision DJ_NewDecision()
    d.reasons_rejected_json = "[]";
    d.ea_version = "";
    d.git_commit = "";
+   d.order_id = "";
+   d.deal_id = "";
    return d;
   }
 
@@ -145,6 +157,12 @@ string DJ_SerializeDecision(const STradeDecision &d)
    string chart_json = (StringLen(d.chart_pattern) > 0)
                         ? ("\"" + DJ_JsonEscapeString(d.chart_pattern) + "\"")
                         : "null";
+   string order_id_json = (StringLen(d.order_id) > 0)
+                           ? ("\"" + DJ_JsonEscapeString(d.order_id) + "\"")
+                           : "null";
+   string deal_id_json = (StringLen(d.deal_id) > 0)
+                          ? ("\"" + DJ_JsonEscapeString(d.deal_id) + "\"")
+                          : "null";
 
    string json = "{";
    json += "\"signal_id\":\"" + DJ_JsonEscapeString(d.signal_id) + "\",";
@@ -170,7 +188,9 @@ string DJ_SerializeDecision(const STradeDecision &d)
    json += "\"reasons_passed\":" + d.reasons_passed_json + ",";
    json += "\"reasons_rejected\":" + d.reasons_rejected_json + ",";
    json += "\"ea_version\":\"" + DJ_JsonEscapeString(d.ea_version) + "\",";
-   json += "\"git_commit\":\"" + DJ_JsonEscapeString(d.git_commit) + "\"";
+   json += "\"git_commit\":\"" + DJ_JsonEscapeString(d.git_commit) + "\",";
+   json += "\"order_id\":" + order_id_json + ",";
+   json += "\"deal_id\":" + deal_id_json;
    json += "}";
    return json;
   }
@@ -202,7 +222,16 @@ bool DJ_AppendDecision(const STradeDecision &d, string &error_reason)
    error_reason = "";
    string path = DJ_JournalFilePath(d.timestamp);
 
-   int handle = FileOpen(path, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ);
+   // TASK-036: FILE_ANSI's single-byte-per-character mode used the
+   // terminal's default codepage (CP_ACP) here, which is NOT UTF-8 on most
+   // Windows locales -- a latent cross-language mismatch against the
+   // Python reader's utf-8-sig decode. MQL5's FileOpen accepts an explicit
+   // codepage as its 4th argument; passing CP_UTF8 makes FILE_ANSI mode
+   // encode/decode as real UTF-8 instead of the system codepage, fixing
+   // the mismatch without switching to FILE_UNICODE (which would write
+   // UTF-16LE with a BOM, a different on-disk contract entirely).
+   int handle = FileOpen(path, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ,
+                          0, CP_UTF8);
    if(handle == INVALID_HANDLE)
      {
       error_reason = StringFormat("file_open_failed_error_%d", GetLastError());

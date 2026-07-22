@@ -48,6 +48,7 @@
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
 #include "../Include/ThembaEA/Execution/IntentManager.mqh"
 #include "../Include/ThembaEA/Execution/ExitOrchestrator.mqh"
+#include "../Include/ThembaEA/Execution/AsyncFillCorrelator.mqh"
 #include "../Include/ThembaEA/Market/RegimeGateComposer.mqh"
 #include "../Include/ThembaEA/Market/IntradayModeRouter.mqh"
 #include "../Include/ThembaEA/Market/SessionManager.mqh"
@@ -136,6 +137,7 @@ string                  g_symbol;
 datetime                g_last_evaluated_bar_time = 0;
 SRegimeHysteresisState  g_hysteresis_state;
 ENUM_MARKET_FAMILY      g_market_family = MARKET_FAMILY_UNKNOWN;
+long                    g_signal_counter = 0; // TASK-036: in-process counter feeding signal_id
 
 int OnInit()
   {
@@ -195,42 +197,118 @@ int OnInit()
   }
 
 //+------------------------------------------------------------------+
-//| TASK-034 — feeds CooldownManager.mqh: on every closing deal for       |
-//| this EA's own symbol+magic, records the deal's net $ P/L (profit +      |
-//| swap + commission) into the three-loss cooldown's ring buffer.            |
+//| TASK-036 — journals a correlated follow-up record for a PLACED order   |
+//| whose resolution (filled, or cancelled/expired without ever filling)      |
+//| only became known later via OnTradeTransaction — see                          |
+//| AsyncFillCorrelator.mqh's own header for why this is a NEW appended             |
+//| record (linked back to the original decision via signal_id) rather               |
+//| than an in-place rewrite of the original JSONL line.                                |
+//+------------------------------------------------------------------+
+void JournalAsyncFillFollowUp(const string original_signal_id, const bool filled,
+                               const ulong resolved_position_id, const ulong resolved_deal_ticket,
+                               const string outcome_note)
+  {
+   STradeDecision follow_up = DJ_NewDecision();
+   follow_up.signal_id = original_signal_id; // correlation key back to the original decision
+   follow_up.timestamp = TimeCurrent();
+   follow_up.symbol = g_symbol;
+   follow_up.direction = "NONE";
+   follow_up.strategy = "AsyncFillCorrelation";
+   follow_up.setup = filled ? "order_filled_async" : "order_never_filled_async";
+   follow_up.ea_version = "1.01-task027-order-submission-optional";
+   if(filled)
+     {
+      if(resolved_position_id != 0)
+         follow_up.order_id = IntegerToString((long)resolved_position_id);
+      if(resolved_deal_ticket != 0)
+         follow_up.deal_id = IntegerToString((long)resolved_deal_ticket);
+     }
+
+   string reason_arr[];
+   AppendReason(reason_arr, outcome_note);
+   if(filled)
+      follow_up.reasons_passed_json = BuildJsonStringArray(reason_arr);
+   else
+      follow_up.reasons_rejected_json = BuildJsonStringArray(reason_arr);
+
+   string journal_error;
+   if(!DJ_AppendDecision(follow_up, journal_error))
+      PrintFormat("ThembaEA: failed to journal async-fill-correlation follow-up for "
+                  "signal_id=%s: %s", original_signal_id, journal_error);
+  }
+
+//+------------------------------------------------------------------+
+//| Feeds CooldownManager.mqh/PositionStateTracker.mqh on a confirmed     |
+//| closing deal (TASK-034/TASK-041), and resolves TASK-036's                |
+//| asynchronous fill correlation: a DEAL_ENTRY_IN deal whose order matches       |
+//| a pending PLACED submission confirms the async fill; an order that            |
+//| moves to history in any state OTHER than FILLED while still pending              |
+//| means it was cancelled/expired/rejected without ever filling — either               |
+//| way, this appends a correlated follow-up journal record rather than                   |
+//| leaving the original decision's null order_id/deal_id unexplained.                       |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request,
                          const MqlTradeResult &result)
   {
-   if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+     {
+      if(!HistoryDealSelect(trans.deal))
+         return;
+
+      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+
+      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
+        {
+         if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) == InpMagicNumber &&
+            HistoryDealGetString(trans.deal, DEAL_SYMBOL) == g_symbol)
+           {
+            double pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
+                         HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
+                         HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+            CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(), InpCooldownMinutes);
+
+            // TASK-041: no partial-close functionality exists anywhere in
+            // this project yet, so a closing deal always means the
+            // position is genuinely gone, never a still-open remainder.
+            ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+            if(closed_position_id != 0)
+               PST_Clear(closed_position_id);
+           }
+         return;
+        }
+
+      if(entry == DEAL_ENTRY_IN)
+        {
+         string pending_signal_id;
+         int pending_index;
+         if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
+           {
+            ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+            AFC_RemovePending(pending_index);
+            JournalAsyncFillFollowUp(pending_signal_id, true, resolved_position_id, trans.deal,
+                                      "async_fill_confirmed");
+           }
+        }
       return;
+     }
 
-   if(!HistoryDealSelect(trans.deal))
+   if(trans.type == TRADE_TRANSACTION_HISTORY_ADD)
+     {
+      string pending_signal_id;
+      int pending_index;
+      if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
+        {
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(trans.order, ORDER_STATE);
+         if(state != ORDER_STATE_FILLED)
+           {
+            AFC_RemovePending(pending_index);
+            JournalAsyncFillFollowUp(pending_signal_id, false, 0, 0,
+                                      StringFormat("async_order_never_filled_state_%s",
+                                                    EnumToString(state)));
+           }
+        }
       return;
-
-   ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
-   if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)
-      return; // only a position-closing deal counts toward the cooldown
-
-   if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != InpMagicNumber)
-      return;
-   if(HistoryDealGetString(trans.deal, DEAL_SYMBOL) != g_symbol)
-      return;
-
-   double pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
-                HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
-                HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
-
-   CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(), InpCooldownMinutes);
-
-   // TASK-041: free PositionStateTracker.mqh's per-position state once a
-   // position is confirmed closed — no partial-close functionality exists
-   // anywhere in this project yet (OM_ClosePosition/IntradayCloseManager.mqh
-   // both close a ticket's full volume), so a closing deal always means
-   // the position is genuinely gone, never a still-open remainder.
-   ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
-   if(closed_position_id != 0)
-      PST_Clear(closed_position_id);
+     }
   }
 
 void OnDeinit(const int reason)
@@ -585,12 +663,16 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // strategy's originally proposed stop).
    decision.stop = final_stop;
    decision.risk_percent = 100.0 * sizing.risk_cash_actual / equity;
-   // **Fixed, 2026-07-22 (Codex review finding, sixth round): logs both
-   // the session-scoped position_ticket AND the durable position_id --
-   // see OrderManager.mqh's own SOrderOpenResult comment for why these
-   // are not interchangeable. position_id is what TASK-036 must journal
-   // as the durable order_id once it wires DecisionJournal.mqh to this
-   // struct.**
+   // TASK-036: order_id is the DURABLE position_id (POSITION_IDENTIFIER),
+   // never position_ticket -- see OrderManager.mqh's own SOrderOpenResult
+   // comment for why. deal_id is the per-fill DEAL_TICKET. Both stay ""
+   // (JSON null) if the position could not be resolved synchronously --
+   // the TRADE_RETCODE_PLACED-not-yet-filled case, handled below.
+   if(open_result.position_id != 0)
+      decision.order_id = IntegerToString((long)open_result.position_id);
+   if(open_result.deal_ticket != 0)
+      decision.deal_id = IntegerToString((long)open_result.deal_ticket);
+
    AppendReason(passed, StringFormat(
       "order_submitted_ticket_%I64u_position_id_%I64u_volume_%.2f_fill_%.5f",
       open_result.position_ticket, open_result.position_id, sizing.volume,
@@ -602,6 +684,15 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
 
    decision.reasons_passed_json = BuildJsonStringArray(passed);
    decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+
+   // TASK-036 Specification item 4: an accepted-but-not-yet-resolved
+   // position (retcode PLACED, position_id still 0) cannot be journaled
+   // with a real order_id/deal_id yet -- register it for later
+   // correlation so OnTradeTransaction can append a follow-up record once
+   // the async fill (or cancellation/expiry) actually arrives, rather
+   // than leaving this record's null order_id/deal_id unexplained forever.
+   if(open_result.position_id == 0 && open_result.order_ticket != 0)
+      AFC_AddPending(open_result.order_ticket, decision.signal_id);
   }
 
 //+------------------------------------------------------------------+
@@ -875,8 +966,11 @@ void EvaluateAndJournal()
    //--- not yet consumed by any strategy's own behavior — see               --
    //--- IntradayModeRouter.mqh's own header for the stated scope boundary). --
    double session_remaining_ratio;
-   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio))
+   bool session_ratio_known = SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio);
+   if(!session_ratio_known)
       session_remaining_ratio = 0.0; // no session today (weekend/holiday) — treat as "none left"
+                                      // for the MODE classifier only; session_state (below) keeps
+                                      // this distinguished from a genuine low-ratio bar.
    double range_ratio = ComputeCurrentRangeRatio(highs, lows, InpLiquidityAvgBars);
    double spread_atr_ratio = (atr_values[0] > 0.0) ? current_spread / atr_values[0] : 0.0;
 
@@ -890,11 +984,35 @@ void EvaluateAndJournal()
    AppendReason(gate_reasons, StringFormat("intraday_mode_%s_score_%.4f",
                                             IMR_IntradayModeToString(intraday_mode), day_trade_score));
 
+   // TASK-036: news_state/session_state's exact canonical vocabulary,
+   // matching analysis/performance_breakdown.py's own defined values --
+   // "CLEAR"/"BLACKOUT" for news_state; the 3 SESSION_TIME_REMAINING_*
+   // buckets for session_state (never labelling unreadable session data as
+   // a fabricated LOW, per SN_GetSessionMinutesRemaining's own "exclude
+   // it, never default it" rule).
+   string news_state = news_blackout ? "BLACKOUT" : "CLEAR";
+   string session_state;
+   if(!session_ratio_known)
+      session_state = "SESSION_TIME_REMAINING_UNKNOWN";
+   else if(session_remaining_ratio >= 0.5)
+      session_state = "SESSION_TIME_REMAINING_HIGH";
+   else
+      session_state = "SESSION_TIME_REMAINING_LOW";
+
+   g_signal_counter++;
+   string signal_id = StringFormat("%s_%I64d_%I64d", g_symbol, (long)TimeCurrent(),
+                                    g_signal_counter);
+
    STradeDecision decision = DJ_NewDecision();
+   decision.signal_id = signal_id;
    decision.timestamp = TimeCurrent();
    decision.symbol = g_symbol;
+   decision.market_family = IMR_MarketFamilyToString(g_market_family);
+   decision.intraday_mode = IMR_IntradayModeToString(intraday_mode);
    decision.regime = EnumToString(effective_regime);
    decision.regime_confidence = regime_read.confidence * 100.0;
+   decision.news_state = news_state;
+   decision.session_state = session_state;
    decision.ea_version = "1.01-task027-order-submission-optional";
 
    if(has_decision)
@@ -907,6 +1025,15 @@ void EvaluateAndJournal()
       decision.has_entry = true;
       decision.stop = resolution.winner.stop_price;
       decision.has_stop = true;
+      // TASK-036 Specification item 6: real per-component score breakdown,
+      // matching exactly what SS_ComputeBaseScore/StrategyRouter.mqh
+      // actually compute today (only these two components exist; the
+      // three others SignalScorer.mqh's own header names are not
+      // implemented and are NOT fabricated here).
+      decision.score_breakdown_json = StringFormat(
+         "{\"r_component\":%.6f,\"regime_component\":%.6f,\"eligibility_multiplier\":%.6f}",
+         resolution.winner_r_component, resolution.winner_regime_component,
+         resolution.winner_eligibility_multiplier);
       decision.targets_json = StringFormat("[%.5f]", resolution.winner.target_price);
       decision.score = resolution.winner_score;
       PrintFormat("ThembaEA: decision = %s %s via %s (%s), score=%.2f", decision.direction,

@@ -158,10 +158,22 @@ STradeCandidate SS_FromPostExpansionRetest(const SPostExpansionRetestSignal &sig
 //| scaled to [0,100] — see the file header for why the other three       |
 //| section-9 components are not included yet.                            |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| 'r_component_out'/'regime_component_out' (added, 2026-07-22,          |
+//| TASK-036 Specification item 6) expose the two real, currently-           |
+//| implemented components separately, each already in [0,1] before the        |
+//| 0.5/0.5 weighting -- so a caller (DecisionJournal.mqh's                       |
+//| score_breakdown_json) can journal exactly what this function actually           |
+//| computed, not a re-derived approximation. Both are 0.0 on a false                 |
+//| return, matching base_score's own convention.                                        |
+//+------------------------------------------------------------------+
 bool SS_ComputeBaseScore(const STradeCandidate &candidate, const double regime_confidence,
-                          double &base_score)
+                          double &base_score, double &r_component_out,
+                          double &regime_component_out)
   {
    base_score = 0.0;
+   r_component_out = 0.0;
+   regime_component_out = 0.0;
    if(!candidate.found)
       return false;
 
@@ -176,5 +188,7 @@ bool SS_ComputeBaseScore(const STradeCandidate &candidate, const double regime_c
 
    double score01 = 0.5 * r_component + 0.5 * regime_component;
    base_score = score01 * 100.0;
+   r_component_out = r_component;
+   regime_component_out = regime_component;
    return true;
   }

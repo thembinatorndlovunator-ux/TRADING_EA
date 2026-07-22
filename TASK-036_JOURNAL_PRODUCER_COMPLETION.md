@@ -249,22 +249,54 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] All five fields (signal_id, market_family, intraday_mode,
+- [x] All five fields (signal_id, market_family, intraday_mode,
       news_state, session_state) populated by the live EA.
-- [ ] order_id/deal_id populated by the live EA on fill (schema-side
-      already done).
-- [ ] **Asynchronous `PLACED`-then-later-fill correlation implemented via
-      `OnTradeTransaction` and hand-verified (added, 2026-07-22 Codex
-      review finding, fifth round -- previously unaddressed; without
-      this, a delayed real fill leaves `order_id`/`deal_id` null forever
-      and the join in acceptance item below silently only ever exercises
-      the synchronous `DONE` path).**
-- [ ] score_breakdown_json populated with real per-component score
-      values (added, 2026-07-22 Codex review finding, third round).
-- [ ] FILE_ANSI/UTF-8 mismatch fixed and verified with a non-ASCII case.
-- [ ] `join_signal_to_outcome.py` run against real data at least once,
-      result reported (not left as another synthetic-only pass).
-- [ ] Independent review completed and findings resolved.
+      `signal_id` = symbol + timestamp + an in-process counter;
+      `market_family`/`intraday_mode` from TASK-040's
+      `IntradayModeRouter.mqh`; `news_state` = "CLEAR"/"BLACKOUT" (matching
+      `analysis/performance_breakdown.py`'s own canonical vocabulary);
+      `session_state` = the 3 `SESSION_TIME_REMAINING_*` buckets from this
+      item's own spec, never fabricating a bucket when
+      `SN_GetSessionMinutesRemaining` returns `false`.
+- [x] order_id/deal_id populated by the live EA on fill (schema-side
+      already done; `TRADE_DECISION_SCHEMA.json` updated to match).
+      `order_id` = `position_id` (`POSITION_IDENTIFIER`), never
+      `position_ticket`.
+- [x] **Asynchronous `PLACED`-then-later-fill correlation implemented via
+      `OnTradeTransaction` and hand-verified** — new
+      `AsyncFillCorrelator.mqh` tracks pending `PLACED` submissions by
+      order ticket; a later `DEAL_ENTRY_IN` deal matching a pending
+      ticket, or an order moving to history in any non-`FILLED` state,
+      appends a correlated follow-up journal record (`strategy=
+      "AsyncFillCorrelation"`) rather than an in-place JSONL rewrite —
+      see that module's own header for why. `Test_AsyncFillCorrelator.mq5`
+      covers the pending-store logic (add/find/remove, multiple
+      coexisting records); the actual async broker behavior itself
+      remains part of this project's batched runtime-verification
+      backlog (this sandbox cannot attach to a live/demo terminal).
+- [x] score_breakdown_json populated with real per-component score
+      values — `r_component`/`regime_component`/`eligibility_multiplier`,
+      exactly what `SS_ComputeBaseScore`/`StrategyRouter.mqh` actually
+      compute today (the other three components
+      `SignalScorer.mqh`'s own header names as not-yet-implemented are
+      NOT fabricated). `SS_ComputeBaseScore`'s signature gained two new
+      out-parameters to expose these without duplicating its math
+      elsewhere; threaded through `SRoutedCandidate`/`SConflictResult`.
+- [x] FILE_ANSI/UTF-8 mismatch fixed (`FileOpen`'s explicit `CP_UTF8`
+      codepage argument) and verified with a real non-ASCII case — a
+      raw-byte check in `Test_DecisionJournal.mq5` confirming the UTF-8
+      byte sequence (`0xC3 0xA9`) for an accented character, not a
+      single-byte codepage's `0xE9`.
+- [ ] **`join_signal_to_outcome.py` run against real data — remains
+      genuinely BLOCKED, not silently skipped:** this sandbox cannot run
+      a live/demo MT5 terminal to generate a real journal, and TASK-037's
+      own trade-history export bridge (needed to produce the matching
+      real trade-outcome side of the join) does not exist yet either.
+      This item stays open until both a real trading session and TASK-037
+      exist.
+- [ ] Independent review completed and findings resolved — deferred to
+      this project's single, consolidated, end-of-sprint Codex review per
+      the user's 2026-07-22 directive, not a per-task review this time.
 
 ## Rejection criteria
 
@@ -274,8 +306,13 @@ without a non-ASCII test actually exercising it.
 
 ## Status
 
-Not started (MQL5 side). Registered per Codex's TASK-028 review finding
-#2 (2026-07-22); scope narrowed and Out-of-scope/Test-plan contradiction
-fixed per finding #3 of the third review round (2026-07-22) -- the
-Python-side schema fields and the consuming join pipeline
-(`analysis/join_signal_to_outcome.py`) are already built and tested.
+In progress — every MQL5-side population item is built, wired, and
+compiles clean (real MetaEditor evidence, 2026-07-22): `signal_id`,
+`market_family`/`intraday_mode`, `news_state`/`session_state`,
+`order_id`/`deal_id` (incl. asynchronous fill correlation), and
+`score_breakdown_json`; the `FILE_ANSI`/UTF-8 encoding mismatch is fixed
+and verified with a real non-ASCII round trip. Only the real-data
+`join_signal_to_outcome.py` run remains open, genuinely blocked on a real
+MT5 trading session and TASK-037's own trade-history export, neither of
+which exist yet. Independent review deferred to the consolidated
+end-of-sprint Codex review.

@@ -130,6 +130,11 @@ bool OM_CalculateVolume(const CSymbolProfile &profile, const double equity,
 struct SOrderOpenResult
   {
    bool   success;
+   ulong  order_ticket;   // MT5's own ORDER ticket (CTrade::ResultOrder()) — populated
+                            // even when position_ticket/position_id come back 0 (the
+                            // TRADE_RETCODE_PLACED-not-yet-filled case). TASK-036's
+                            // AsyncFillCorrelator.mqh uses this to correlate a LATER
+                            // OnTradeTransaction fill back to this submission.
    ulong  deal_ticket;    // 0 on failure — MT5's DEAL_TICKET, per-fill identity
    ulong  position_ticket; // 0 on failure or if the position could not be resolved —
                             // MT5's POSITION_TICKET, valid for THIS SESSION's live API
@@ -175,6 +180,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
                       const string comment, SOrderOpenResult &result)
   {
    result.success = false;
+   result.order_ticket = 0;
    result.deal_ticket = 0;
    result.position_ticket = 0;
    result.position_id = 0;
@@ -209,6 +215,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
       return false;
      }
 
+   result.order_ticket = trade.ResultOrder();
    result.deal_ticket = trade.ResultDeal();
    result.fill_price  = trade.ResultPrice();
 

@@ -183,6 +183,11 @@ void OnStart()
    else
      {
       Check("opened position has a nonzero deal_ticket", open_result.deal_ticket != 0);
+      // **Added, TASK-036: order_ticket must also resolve -- this is what
+      // AsyncFillCorrelator.mqh keys a PLACED-but-unconfirmed submission
+      // on when position_ticket/position_id come back 0.**
+      Check("opened position has a nonzero order_ticket resolved",
+            open_result.order_ticket != 0);
       Check("opened position has a nonzero position_ticket resolved",
             open_result.position_ticket != 0);
       // **Added, 2026-07-22 (Codex review finding, sixth round): position_id

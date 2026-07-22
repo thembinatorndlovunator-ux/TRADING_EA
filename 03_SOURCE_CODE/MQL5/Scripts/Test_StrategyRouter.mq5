@@ -35,18 +35,24 @@ void OnStart()
       STradeCandidate c = SS_EmptyCandidate();
       c.found = true;
       c.entry_price = 100; c.stop_price = 99; c.target_price = 103; // risk1,reward3,R=3.0
-      double base;
-      bool ok = SS_ComputeBaseScore(c, 0.8, base);
+      double base, r_comp, regime_comp;
+      bool ok = SS_ComputeBaseScore(c, 0.8, base, r_comp, regime_comp);
       Check("base score computes successfully", ok);
       Check("base score == 90.0 (0.5*min(1,3/3) + 0.5*0.8 = 0.9 -> 90)",
             NearlyEqual(base, 90.0));
+      // TASK-036: the two components feeding score_breakdown_json.
+      Check("r_component == 1.0 (min(1, 3.0/3.0))", NearlyEqual(r_comp, 1.0));
+      Check("regime_component == 0.8 (passed through unchanged, already in [0,1])",
+            NearlyEqual(regime_comp, 0.8));
 
       STradeCandidate cZeroRisk = SS_EmptyCandidate();
       cZeroRisk.found = true;
       cZeroRisk.entry_price = 100; cZeroRisk.stop_price = 100; cZeroRisk.target_price = 105;
-      double baseZero;
+      double baseZero, rZero, regimeZero;
       Check("zero-risk candidate (entry==stop) fails to score",
-            SS_ComputeBaseScore(cZeroRisk, 0.8, baseZero) == false);
+            SS_ComputeBaseScore(cZeroRisk, 0.8, baseZero, rZero, regimeZero) == false);
+      Check("zero-risk candidate: r_component_out is 0.0 on failure", rZero == 0.0);
+      Check("zero-risk candidate: regime_component_out is 0.0 on failure", regimeZero == 0.0);
    }
 
    //--- 2. Adapters -------------------------------------------------------
@@ -125,11 +131,20 @@ void OnStart()
       rSingle[0].candidate = SS_EmptyCandidate();
       rSingle[0].candidate.found = true; rSingle[0].candidate.direction = CAND_LONG;
       rSingle[0].eligible = true; rSingle[0].final_score = 75.0;
+      rSingle[0].eligibility_multiplier = 1.10; // TASK-036: nonzero test values so the
+      rSingle[0].r_component = 0.65;             // propagation through CR_FillWinnerFromRouted
+      rSingle[0].regime_component = 0.82;        // is genuinely exercised, not trivially 0==0.
       SConflictResult res1;
       bool ok1 = CR_ResolveConflicts(rSingle, 1, 10.0, res1);
       Check("single-direction winner: resolves successfully", ok1 && res1.has_winner);
       Check("single-direction winner: direction is CAND_LONG", res1.winning_direction == CAND_LONG);
       Check("single-direction winner: score == 75.0", NearlyEqual(res1.winner_score, 75.0));
+      Check("single-direction winner: eligibility_multiplier carried through",
+            NearlyEqual(res1.winner_eligibility_multiplier, 1.10));
+      Check("single-direction winner: r_component carried through",
+            NearlyEqual(res1.winner_r_component, 0.65));
+      Check("single-direction winner: regime_component carried through",
+            NearlyEqual(res1.winner_regime_component, 0.82));
 
       // 5b. Opposing directions, gap met (20 >= 10)
       SRoutedCandidate rGapMet[2];

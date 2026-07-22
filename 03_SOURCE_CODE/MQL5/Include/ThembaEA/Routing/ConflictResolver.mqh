@@ -28,9 +28,31 @@ struct SConflictResult
    bool                     has_winner;
    STradeCandidate          winner;
    double                   winner_score;
+   double                   winner_eligibility_multiplier; // TASK-036
+   double                   winner_r_component;             // TASK-036
+   double                   winner_regime_component;        // TASK-036
    ENUM_CANDIDATE_DIRECTION winning_direction;
    string                   reason; // set when has_winner is false
   };
+
+//+------------------------------------------------------------------+
+//| TASK-036 — local helper: fills 'result' from the winning routed        |
+//| candidate at 'idx', including its own score-component breakdown, so     |
+//| the 4 call sites below (each a different resolution branch) cannot         |
+//| drift out of sync with each other on which fields get copied.               |
+//+------------------------------------------------------------------+
+void CR_FillWinnerFromRouted(SConflictResult &result, const SRoutedCandidate &routed[],
+                              const int idx, const double score,
+                              const ENUM_CANDIDATE_DIRECTION direction)
+  {
+   result.has_winner = true;
+   result.winner = routed[idx].candidate;
+   result.winner_score = score;
+   result.winner_eligibility_multiplier = routed[idx].eligibility_multiplier;
+   result.winner_r_component = routed[idx].r_component;
+   result.winner_regime_component = routed[idx].regime_component;
+   result.winning_direction = direction;
+  }
 
 //+------------------------------------------------------------------+
 //| Resolves the final trade decision from a routed candidate list.      |
@@ -44,6 +66,9 @@ bool CR_ResolveConflicts(const SRoutedCandidate &routed[], const int count,
    result.has_winner = false;
    result.winner = SS_EmptyCandidate();
    result.winner_score = 0.0;
+   result.winner_eligibility_multiplier = 0.0;
+   result.winner_r_component = 0.0;
+   result.winner_regime_component = 0.0;
    result.winning_direction = CAND_NONE;
    result.reason = "";
 
@@ -80,19 +105,13 @@ bool CR_ResolveConflicts(const SRoutedCandidate &routed[], const int count,
 
    if(have_long && !have_short)
      {
-      result.has_winner = true;
-      result.winner = routed[best_long_idx].candidate;
-      result.winner_score = best_long_score;
-      result.winning_direction = CAND_LONG;
+      CR_FillWinnerFromRouted(result, routed, best_long_idx, best_long_score, CAND_LONG);
       return true;
      }
 
    if(have_short && !have_long)
      {
-      result.has_winner = true;
-      result.winner = routed[best_short_idx].candidate;
-      result.winner_score = best_short_score;
-      result.winning_direction = CAND_SHORT;
+      CR_FillWinnerFromRouted(result, routed, best_short_idx, best_short_score, CAND_SHORT);
       return true;
      }
 
@@ -105,18 +124,8 @@ bool CR_ResolveConflicts(const SRoutedCandidate &routed[], const int count,
      }
 
    if(best_long_score > best_short_score)
-     {
-      result.has_winner = true;
-      result.winner = routed[best_long_idx].candidate;
-      result.winner_score = best_long_score;
-      result.winning_direction = CAND_LONG;
-     }
+      CR_FillWinnerFromRouted(result, routed, best_long_idx, best_long_score, CAND_LONG);
    else
-     {
-      result.has_winner = true;
-      result.winner = routed[best_short_idx].candidate;
-      result.winner_score = best_short_score;
-      result.winning_direction = CAND_SHORT;
-     }
+      CR_FillWinnerFromRouted(result, routed, best_short_idx, best_short_score, CAND_SHORT);
    return true;
   }

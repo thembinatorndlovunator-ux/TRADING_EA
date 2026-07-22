@@ -18,17 +18,17 @@ guard, TASK-025, should prevent this on the MQL5 side; if this module ever
 finds one, that is a genuine finding worth investigating, not a schema
 quirk to filter out).
 
-**Known, stated encoding caveat:** ``DJ_AppendDecision`` opens its file
-with MQL5's ``FILE_ANSI`` flag while this reader decodes as UTF-8 (with a
-tolerant BOM check). For pure-ASCII content (the only kind any current
-strategy/setup name in this project actually produces) the two encodings
-are byte-identical, so this has not caused a real failure yet -- but it is
-not a matching, tested contract, and a future non-ASCII value (e.g. a
-symbol or comment containing an accented character) could decode
-incorrectly or raise. Fixing this properly needs an MQL5-side change
-(write UTF-8, not ANSI) -- registered as part of a future numbered
-follow-up (see TASK-028_PYTHON_STATISTICAL_LAB.md), not silently patched
-around here by ignoring decode errors.
+**Encoding, fixed 2026-07-22 (TASK-036):** ``DJ_AppendDecision`` previously
+opened its file with MQL5's ``FILE_ANSI`` flag using the terminal's default
+codepage, while this reader decodes as UTF-8 -- byte-identical for
+pure-ASCII content, but a latent mismatch for a future non-ASCII value.
+``DecisionJournal.mqh`` now passes ``CP_UTF8`` as ``FileOpen``'s explicit
+codepage argument (still ``FILE_ANSI`` mode -- single-byte-per-character --
+but encoded as real UTF-8, not the system codepage), verified against a
+real non-ASCII round trip in ``Test_DecisionJournal.mq5`` (a raw-byte check
+for the UTF-8 encoding of an accented character, not just an ASCII smoke
+test). This reader's own UTF-8 decode now matches the writer's actual
+on-disk encoding.
 """
 
 from __future__ import annotations

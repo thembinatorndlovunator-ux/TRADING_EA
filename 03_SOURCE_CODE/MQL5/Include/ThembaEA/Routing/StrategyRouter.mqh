@@ -81,6 +81,8 @@ struct SRoutedCandidate
    bool            eligible;
    double          eligibility_multiplier;
    double          base_score;
+   double          r_component;      // TASK-036: SS_ComputeBaseScore's own r_component_out
+   double          regime_component; // TASK-036: SS_ComputeBaseScore's own regime_component_out
    double          final_score;
    string          reason;
   };
@@ -106,6 +108,8 @@ int STR_RouteCandidates(STradeCandidate &candidates[], const int count,
       routed[i].eligible = false;
       routed[i].eligibility_multiplier = 0.0;
       routed[i].base_score = 0.0;
+      routed[i].r_component = 0.0;
+      routed[i].regime_component = 0.0;
       routed[i].final_score = 0.0;
       routed[i].reason = "";
 
@@ -122,8 +126,9 @@ int STR_RouteCandidates(STradeCandidate &candidates[], const int count,
          continue;
         }
 
-      double base;
-      if(!SS_ComputeBaseScore(candidates[i], regime_confidence, base))
+      double base, r_component, regime_component;
+      if(!SS_ComputeBaseScore(candidates[i], regime_confidence, base, r_component,
+                                regime_component))
         {
          routed[i].reason = "score_undefined";
          continue;
@@ -132,6 +137,8 @@ int STR_RouteCandidates(STradeCandidate &candidates[], const int count,
       routed[i].eligible = true;
       routed[i].eligibility_multiplier = mult;
       routed[i].base_score = base;
+      routed[i].r_component = r_component;
+      routed[i].regime_component = regime_component;
       routed[i].final_score = MathMax(0.0, MathMin(100.0, base * mult));
       eligible_count++;
      }

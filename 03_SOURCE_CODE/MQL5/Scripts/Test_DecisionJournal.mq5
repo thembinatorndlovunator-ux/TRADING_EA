@@ -91,6 +91,9 @@ void OnStart()
    full.reasons_rejected_json = "[]";
    full.ea_version = "0.1.0-task009";
    full.git_commit = "unknown";
+   // order_id deliberately left unset (empty) to test null-handling;
+   // deal_id set, to test the non-null path — TASK-036.
+   full.deal_id = "123456789";
 
    string json = DJ_SerializeDecision(full);
    PrintFormat("INFO: serialized decision = %s", json);
@@ -112,6 +115,11 @@ void OnStart()
    Check("serialized JSON is a single well-formed brace pair",
          StringGetCharacter(json, 0) == '{' &&
          StringGetCharacter(json, StringLen(json) - 1) == '}');
+   // TASK-036: order_id/deal_id nullable-string handling.
+   Check("serialized JSON has order_id as null (unset)",
+         Contains(json, "\"order_id\":null"));
+   Check("serialized JSON has deal_id as the set string value",
+         Contains(json, "\"deal_id\":\"123456789\""));
 
    //--- 5. Journal file path format ---------------------------------------
    string path = DJ_JournalFilePath(known_time);
@@ -141,7 +149,8 @@ void OnStart()
    bool append2_ok = DJ_AppendDecision(t2, err);
    Check("second append succeeds (does not overwrite the first)", append2_ok);
 
-   int read_handle = FileOpen(test_path, FILE_READ | FILE_TXT | FILE_ANSI);
+   int read_handle = FileOpen(test_path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_SHARE_READ, 0,
+                               CP_UTF8);
    Check("journal file can be reopened for reading", read_handle != INVALID_HANDLE);
    if(read_handle != INVALID_HANDLE)
      {
@@ -154,6 +163,46 @@ void OnStart()
       Check("second written line contains TASK009_TEST_LINE_2",
             Contains(line2, "TASK009_TEST_LINE_2"));
      }
+
+   //--- 7. Non-ASCII encoding round trip (TASK-036): the ONLY realistic --
+   //--- way to actually verify the FILE_ANSI+CP_UTF8 fix, not just an -----
+   //--- ASCII smoke test that would pass under any single-byte codepage. --
+   string e_acute = ShortToString(0x00E9); // 'é' (U+00E9)
+   string non_ascii_setup = "cafe" + e_acute + "_pattern";
+
+   STradeDecision t3 = DJ_NewDecision();
+   t3.signal_id = "TASK009_TEST_LINE_3_NONASCII";
+   t3.timestamp = TimeCurrent();
+   t3.symbol = "TESTSYMBOL";
+   t3.setup = non_ascii_setup;
+
+   bool append3_ok = DJ_AppendDecision(t3, err);
+   Check("non-ASCII decision append succeeds", append3_ok);
+
+   int bin_handle = FileOpen(test_path, FILE_READ | FILE_BIN | FILE_SHARE_READ);
+   Check("journal file can be reopened in binary mode", bin_handle != INVALID_HANDLE);
+   bool found_utf8_e_acute = false;
+   if(bin_handle != INVALID_HANDLE)
+     {
+      ulong size = FileSize(bin_handle);
+      uchar raw_bytes[];
+      ArrayResize(raw_bytes, (int)size);
+      FileReadArray(bin_handle, raw_bytes, 0, (int)size);
+      FileClose(bin_handle);
+
+      for(int i = 0; i + 1 < ArraySize(raw_bytes); i++)
+        {
+         // UTF-8 encoding of U+00E9 is the two-byte sequence 0xC3 0xA9 --
+         // CP-1252/Latin-1 would instead store the single byte 0xE9.
+         if(raw_bytes[i] == 0xC3 && raw_bytes[i + 1] == 0xA9)
+           {
+            found_utf8_e_acute = true;
+            break;
+           }
+        }
+     }
+   Check("non-ASCII character is stored as real UTF-8 bytes (0xC3 0xA9), not a "
+         "single-byte codepage (0xE9)", found_utf8_e_acute);
 
    //--- Cleanup: leave no residue ------------------------------------------
    if(FileIsExist(test_path))
