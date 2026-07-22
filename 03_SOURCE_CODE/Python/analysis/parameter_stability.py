@@ -34,6 +34,39 @@ sequence (bar_index 0 = entry, increasing = later bars; the final
 bar_index per path_id is that path's own "actual final R", matching
 `analyse_giveback.py`'s own R-path convention). Rows are grouped by
 path_id and sorted by bar_index to reconstruct each path.
+
+**Extended, 2026-07-22 Codex review finding (fifth round):
+`profit_giveback_diagnosis_plan.md` requires neighbouring sweeps of BOTH
+V6.37 controls AND BOTH V8.11 controls -- this module previously
+implemented only a one-dimensional V6.37 `giveback_percent` sweep.**
+``sweep_v811_arm_and_floor``/``run_v811_sweep`` (new) add a genuine 2-D
+grid sweep over V8.11's own two controls (`arm_r`, `floor_r`), using the
+SAME `r_paths.csv` schema and the same like-for-like "mean over the full
+path set" discipline as the V6.37 sweep. ``arm_rr``/``close_trigger_floor_r``
+(V6.37) and ``arm_r``/``floor_r`` (V8.11) are now all validated against
+their REAL model domain (not just finiteness) -- see
+``MIN_V637_ARM_RR``/``MIN_V637_CLOSE_TRIGGER_FLOOR_R``/``MIN_V811_ARM_R``/
+``MIN_V811_FLOOR_R``'s own comments for exactly which silent clamp each
+one closes.
+
+**Still not extended to a full 2-D sweep of V6.37's OWN two controls
+(`arm_rr` x `giveback_percent` together) -- a disclosed, not-yet-closed
+residual gap.** `sweep_giveback_percent` still varies `giveback_percent`
+alone, holding `arm_rr`/`close_trigger_floor_r` fixed at whatever the
+caller passed; a genuine "neighbouring sweep of both V6.37 controls"
+would vary both together, matching what this round did for V8.11.
+
+**Bar-boundary convention, disclosed but not yet unified across the
+giveback family (Codex review finding, 2026-07-22, fifth round):** this
+module's own schema requires `bar_index` 0 to be EXACTLY `0.0` (entry,
+before any bar has closed) -- but `analyse_giveback.py` builds its
+R-paths from bar CLOSE prices (its own index 0 already reflects the
+entry bar's close, not a pre-bar `0.0`), and notebook 02's synthetic
+fixtures begin a path at `+0.5R`. All three currently use a DIFFERENT
+convention for what "index/bar 0" means. Picking one canonical
+convention and updating the other two to match is a real, not-yet-done
+follow-up; do not assume R-paths from these three sources are
+interchangeable today.
 """
 
 from __future__ import annotations
@@ -70,11 +103,42 @@ REQUIRED_COLUMNS = {"path_id", "bar_index", "r_value"}
 # Rejected outright now rather than silently clamped-and-mislabelled.
 MIN_GIVEBACK_PERCENT = 10.0
 MAX_GIVEBACK_PERCENT = 90.0
+# **Added, 2026-07-22 Codex review finding (fifth round): arm_rr/
+# close_trigger_floor_r were previously validated only for finiteness --
+# EM_ShouldGivebackCloseV637 clamps arm_rr to `max(0.25, arm_rr)`, so a
+# requested arm_rr of -5 and 0.25 silently produced IDENTICAL behavior
+# while the artifact recorded -5 as if it were the effective arm.
+# close_trigger_floor_r has no code-level clamp but a negative value
+# contradicts the spec's own stated 0.05R floor and would let the guard
+# trigger in negative-R territory, which is not a legitimate "floor".
+# Both are now rejected outright when out of domain, matching the same
+# reject-not-clamp discipline giveback_percent already has.**
+MIN_V637_ARM_RR = 0.25
+MIN_V637_CLOSE_TRIGGER_FLOOR_R = 0.0
+# **Added, 2026-07-22 Codex review finding (fifth round): the V8.11
+# equivalents -- EM_ShouldGivebackCloseV811 clamps arm_r to
+# `max(0.3, arm_r)` and floor_r to `max(0.0, floor_r)`.**
+MIN_V811_ARM_R = 0.3
+MIN_V811_FLOOR_R = 0.0
 
 
 @dataclass(frozen=True)
 class StabilityRow:
     giveback_percent: float
+    n_paths: int
+    n_triggered: int
+    mean_r_diff_over_all_paths: float
+    r_diff_ci_lower: Optional[float]
+    r_diff_ci_upper: Optional[float]
+
+
+@dataclass(frozen=True)
+class V811StabilityRow:
+    """One row of a V8.11 (`arm_r`, `floor_r`) grid sweep -- see
+    ``sweep_v811_arm_and_floor``'s own docstring."""
+
+    arm_r: float
+    floor_r: float
     n_paths: int
     n_triggered: int
     mean_r_diff_over_all_paths: float
@@ -199,6 +263,22 @@ def sweep_giveback_percent(
         raise ValueError(
             f"sweep_giveback_percent: close_trigger_floor_r must be finite, got {close_trigger_floor_r}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round): finiteness
+    # alone is not the real model domain -- see MIN_V637_ARM_RR/
+    # MIN_V637_CLOSE_TRIGGER_FLOOR_R's own comment.**
+    if arm_rr < MIN_V637_ARM_RR:
+        raise ValueError(
+            f"sweep_giveback_percent: arm_rr {arm_rr} is below {MIN_V637_ARM_RR} -- "
+            "EM_ShouldGivebackCloseV637 would silently clamp it to a different EFFECTIVE "
+            "value, so an out-of-domain setting must be rejected rather than reported "
+            "under its own requested label"
+        )
+    if close_trigger_floor_r < MIN_V637_CLOSE_TRIGGER_FLOOR_R:
+        raise ValueError(
+            f"sweep_giveback_percent: close_trigger_floor_r {close_trigger_floor_r} is below "
+            f"{MIN_V637_CLOSE_TRIGGER_FLOOR_R} -- a negative floor contradicts the spec's own "
+            "stated non-negative floor and would let the guard trigger in negative-R territory"
+        )
     for pct in giveback_percents:
         if not math.isfinite(pct):
             raise ValueError(f"sweep_giveback_percent: giveback_percent must be finite, got {pct}")
@@ -269,6 +349,124 @@ def sweep_giveback_percent(
                 r_diff_ci_upper=ci_upper,
             )
         )
+    return rows
+
+
+def sweep_v811_arm_and_floor(
+    r_paths: Sequence[Sequence[float]],
+    arm_r_values: Sequence[float],
+    floor_r_values: Sequence[float],
+    *,
+    seed: int = 42,
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
+) -> list[V811StabilityRow]:
+    """**Added, 2026-07-22 Codex review finding (fifth round):
+    `profit_giveback_diagnosis_plan.md` requires neighbouring sweeps of
+    BOTH V8.11 controls (`arm_r`, `floor_r`), not just a one-dimensional
+    V6.37 `giveback_percent` sweep -- this was previously entirely
+    unimplemented.** For every (arm_r, floor_r) pair in the cartesian
+    product of 'arm_r_values' x 'floor_r_values', simulates the V8.11
+    giveback guard against every path in 'r_paths' and computes the mean
+    R-diff over the SAME FULL set of paths (0.0 contribution for any path
+    the guard never triggers on) -- identical like-for-like discipline to
+    ``sweep_giveback_percent``, so every row of the output grid is
+    comparable to every other row, including across the two models'
+    otherwise-separate tables.
+
+    Raises ValueError if 'r_paths', 'arm_r_values', or 'floor_r_values' is
+    empty, any path is empty or contains a non-finite value, or any
+    arm_r/floor_r is non-finite or below the real model domain
+    (``EM_ShouldGivebackCloseV811`` clamps arm_r to `max(0.3, arm_r)` and
+    floor_r to `max(0.0, floor_r)` -- an out-of-domain requested value is
+    rejected outright rather than silently executed under a different
+    effective value, same discipline as V6.37's own giveback_percent).
+    """
+
+    if not r_paths:
+        raise ValueError("sweep_v811_arm_and_floor: r_paths must not be empty")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(
+            f"sweep_v811_arm_and_floor: confidence must be in (0, 1), got {confidence}"
+        )
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"sweep_v811_arm_and_floor: n_resamples must be in [{MIN_N_RESAMPLES}, "
+            f"{MAX_N_RESAMPLES}], got {n_resamples}"
+        )
+    if not arm_r_values:
+        raise ValueError("sweep_v811_arm_and_floor: arm_r_values must not be empty")
+    if not floor_r_values:
+        raise ValueError("sweep_v811_arm_and_floor: floor_r_values must not be empty")
+    if any(not p for p in r_paths):
+        raise ValueError("sweep_v811_arm_and_floor: every path in r_paths must be non-empty")
+    if any(not math.isfinite(v) for p in r_paths for v in p):
+        raise ValueError("sweep_v811_arm_and_floor: every r_path value must be finite")
+    for arm_r in arm_r_values:
+        if not math.isfinite(arm_r):
+            raise ValueError(f"sweep_v811_arm_and_floor: arm_r must be finite, got {arm_r}")
+        if arm_r < MIN_V811_ARM_R:
+            raise ValueError(
+                f"sweep_v811_arm_and_floor: arm_r {arm_r} is below {MIN_V811_ARM_R} -- "
+                "EM_ShouldGivebackCloseV811 would silently clamp it to a different EFFECTIVE "
+                "value, so an out-of-domain setting must be rejected rather than reported "
+                "under its own requested label"
+            )
+    for floor_r in floor_r_values:
+        if not math.isfinite(floor_r):
+            raise ValueError(f"sweep_v811_arm_and_floor: floor_r must be finite, got {floor_r}")
+        if floor_r < MIN_V811_FLOOR_R:
+            raise ValueError(
+                f"sweep_v811_arm_and_floor: floor_r {floor_r} is below {MIN_V811_FLOOR_R} -- "
+                "EM_ShouldGivebackCloseV811 would silently clamp it to a different EFFECTIVE "
+                "value, so an out-of-domain setting must be rejected rather than reported "
+                "under its own requested label"
+            )
+
+    rows: list[V811StabilityRow] = []
+    for arm_r in arm_r_values:
+        for floor_r in floor_r_values:
+            r_diffs: list[float] = []
+            n_triggered = 0
+            for path in r_paths:
+                actual_final_r = path[-1]
+                triggered = simulate_giveback_path(path, "v811", arm_r=arm_r, floor_r=floor_r)
+                if triggered is not None:
+                    n_triggered += 1
+                    _, trigger_r = triggered
+                    r_diffs.append(trigger_r - actual_final_r)
+                else:
+                    r_diffs.append(0.0)  # same "no effect" convention as sweep_giveback_percent
+
+            mean_r_diff = sum(r_diffs) / len(r_diffs)
+            if not math.isfinite(mean_r_diff):
+                raise ValueError(
+                    f"sweep_v811_arm_and_floor: mean_r_diff_over_all_paths overflowed to a "
+                    f"non-finite value ({mean_r_diff}) at arm_r={arm_r}, floor_r={floor_r} -- "
+                    "individual r_diffs are finite but their sum/mean is not"
+                )
+            ci_lower = ci_upper = None
+            if len(r_diffs) >= 2:
+                boot = bootstrap_confidence_interval(
+                    r_diffs,
+                    statistic="mean",
+                    seed=seed,
+                    n_resamples=n_resamples,
+                    confidence=confidence,
+                )
+                ci_lower, ci_upper = boot.ci_lower, boot.ci_upper
+
+            rows.append(
+                V811StabilityRow(
+                    arm_r=arm_r,
+                    floor_r=floor_r,
+                    n_paths=len(r_paths),
+                    n_triggered=n_triggered,
+                    mean_r_diff_over_all_paths=mean_r_diff,
+                    r_diff_ci_lower=ci_lower,
+                    r_diff_ci_upper=ci_upper,
+                )
+            )
     return rows
 
 
@@ -359,17 +557,93 @@ def run(
     return result
 
 
+def run_v811_sweep(
+    r_paths_csv: Path,
+    arm_r_values: Sequence[float],
+    floor_r_values: Sequence[float],
+    output_csv: Optional[Path] = None,
+    summary_json: Optional[Path] = None,
+    *,
+    seed: int = 42,
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
+    symbol: Optional[str] = None,
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
+    repo_path: Optional[Path] = None,
+) -> pd.DataFrame:
+    """As ``run()``, but for ``sweep_v811_arm_and_floor`` -- reads the SAME
+    ``r_paths.csv`` schema and runs the V8.11 (arm_r, floor_r) grid sweep
+    instead of V6.37's giveback_percent sweep (added, 2026-07-22 Codex
+    review finding, fifth round: `profit_giveback_diagnosis_plan.md`
+    requires both models' neighbouring sweeps, not V6.37 alone).
+    """
+
+    for out_path in (output_csv, summary_json):
+        assert_path_not_same_file(out_path, r_paths_csv, "output path")
+    assert_output_paths_distinct([output_csv, summary_json])
+
+    r_paths = _load_r_paths_from_csv(r_paths_csv)
+    rows = sweep_v811_arm_and_floor(
+        r_paths,
+        arm_r_values,
+        floor_r_values,
+        seed=seed,
+        n_resamples=n_resamples,
+        confidence=confidence,
+    )
+    result = pd.DataFrame([r.__dict__ for r in rows])
+
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_dataframe_csv(result, output_csv)
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        metadata = build_report_metadata(
+            [r_paths_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
+        )
+        payload = {
+            "metadata": metadata.to_dict(),
+            "summary": {
+                "n_paths": len(r_paths),
+                "arm_r_values_swept": list(arm_r_values),
+                "floor_r_values_swept": list(floor_r_values),
+                "seed": seed,
+                "bootstrap_confidence": confidence,
+                "bootstrap_n_resamples": n_resamples,
+            },
+        }
+        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+
+    return result
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--r-paths-csv", required=True, type=Path)
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
+    # **Added, 2026-07-22 Codex review finding (fifth round): selects
+    # which model's sweep to run -- V6.37's one-dimensional
+    # giveback_percent sweep (unchanged, still the default for backward
+    # compatibility) or the new V8.11 (arm_r, floor_r) grid sweep.**
+    parser.add_argument("--model", choices=["v637", "v811"], default="v637")
     parser.add_argument("--giveback-percents", type=float, nargs="+", default=[40.0, 60.0, 80.0])
     # **Added, 2026-07-22 Codex review finding (fourth round): neither was
     # previously CLI-exposed, despite being effective configuration for
     # every row of the sweep.**
     parser.add_argument("--arm-rr", type=float, default=1.25)
     parser.add_argument("--close-trigger-floor-r", type=float, default=0.05)
+    # **Added, 2026-07-22 Codex review finding (fifth round): V8.11's own
+    # two controls, only used when --model=v811.**
+    parser.add_argument("--arm-r-values", type=float, nargs="+", default=[0.5, 0.8, 1.1])
+    parser.add_argument("--floor-r-values", type=float, nargs="+", default=[0.0, 0.1, 0.2])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-resamples", type=int, default=2000)
     parser.add_argument("--confidence", type=float, default=0.95)
@@ -382,25 +656,40 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
-        result = run(
-            r_paths_csv=args.r_paths_csv,
-            giveback_percents=args.giveback_percents,
-            output_csv=args.output_csv,
-            summary_json=args.summary_json,
-            arm_rr=args.arm_rr,
-            close_trigger_floor_r=args.close_trigger_floor_r,
-            seed=args.seed,
-            n_resamples=args.n_resamples,
-            confidence=args.confidence,
-            symbol=args.symbol,
-            spread_note=args.spread_note,
-            slippage_note=args.slippage_note,
-        )
+        if args.model == "v811":
+            result = run_v811_sweep(
+                r_paths_csv=args.r_paths_csv,
+                arm_r_values=args.arm_r_values,
+                floor_r_values=args.floor_r_values,
+                output_csv=args.output_csv,
+                summary_json=args.summary_json,
+                seed=args.seed,
+                n_resamples=args.n_resamples,
+                confidence=args.confidence,
+                symbol=args.symbol,
+                spread_note=args.spread_note,
+                slippage_note=args.slippage_note,
+            )
+        else:
+            result = run(
+                r_paths_csv=args.r_paths_csv,
+                giveback_percents=args.giveback_percents,
+                output_csv=args.output_csv,
+                summary_json=args.summary_json,
+                arm_rr=args.arm_rr,
+                close_trigger_floor_r=args.close_trigger_floor_r,
+                seed=args.seed,
+                n_resamples=args.n_resamples,
+                confidence=args.confidence,
+                symbol=args.symbol,
+                spread_note=args.spread_note,
+                slippage_note=args.slippage_note,
+            )
     except (FileNotFoundError, CsvSchemaError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"parameter_stability: {len(result)} settings swept.")
+    print(f"parameter_stability ({args.model}): {len(result)} settings swept.")
     return 0
 
 

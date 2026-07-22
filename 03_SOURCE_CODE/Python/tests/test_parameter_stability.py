@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pytest
 
 from analysis.csv_io import CsvSchemaError
-from analysis.parameter_stability import run, sweep_giveback_percent
+from analysis.parameter_stability import (
+    main,
+    run,
+    run_v811_sweep,
+    sweep_giveback_percent,
+    sweep_v811_arm_and_floor,
+)
 
 
 # Hand-traced against ExitManager.mqh's EM_ShouldGivebackCloseV637 formula
@@ -113,6 +121,29 @@ def test_sweep_rejects_out_of_range_giveback_percent():
         sweep_giveback_percent([PATH_B], [95.0])  # above 90
 
 
+def test_sweep_rejects_out_of_domain_arm_rr():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    arm_rr was previously validated only for finiteness --
+    EM_ShouldGivebackCloseV637 clamps arm_rr to max(0.25, arm_rr), so a
+    requested arm_rr of -5 and 0.25 previously produced IDENTICAL
+    behavior while the artifact recorded -5 as if it were the effective
+    arm."""
+
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B], [40.0], arm_rr=-5.0)
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B], [40.0], arm_rr=0.1)  # below 0.25
+
+
+def test_sweep_rejects_negative_close_trigger_floor_r():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a negative close_trigger_floor_r previously passed despite
+    contradicting the spec's own stated non-negative floor."""
+
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B], [40.0], close_trigger_floor_r=-0.1)
+
+
 def test_sweep_rejects_overflowing_mean_r_diff():
     """Regression for a Codex review finding (2026-07-22, fifth round):
     each individual r_diff (trigger_r - actual_final_r) is finite, but
@@ -148,6 +179,136 @@ def test_sweep_rejects_n_resamples_above_upper_bound():
 
     with pytest.raises(ValueError):
         sweep_giveback_percent([PATH_B, PATH_C], [40.0], n_resamples=10_000_000)
+
+
+# --- sweep_v811_arm_and_floor (Codex review finding, 2026-07-22, fifth round) -
+
+
+def test_sweep_v811_hand_computed():
+    """Hand-traced against ExitManager.mqh's EM_ShouldGivebackCloseV811
+    formula (effective_arm=max(0.3,arm_r), effective_floor=max(0.0,floor_r),
+    current_r<=effective_floor once armed).
+
+    Path B = [0.0, 2.0, 1.0, 0.5], actual_final_r=0.5. arm_r=0.8, floor_r=1.5:
+      idx1: peak=2.0>=0.8 -> armed; current=2.0<=1.5? No.
+      idx2: current=1.0<=1.5? Yes -> triggers at idx2, r=1.0.
+      r_diff = 1.0 - 0.5 = 0.5.
+
+    Path C = [0.0, 1.25, 1.25], actual_final_r=1.25. arm_r=0.8, floor_r=1.5:
+      idx1: peak=1.25>=0.8 -> armed; current=1.25<=1.5? Yes -> triggers at
+      idx1, r=1.25. r_diff = 1.25 - 1.25 = 0.0.
+
+    mean_r_diff_over_all_paths = (0.5 + 0.0) / 2 = 0.25, n_triggered=2.
+    """
+
+    rows = sweep_v811_arm_and_floor([PATH_B, PATH_C], [0.8], [1.5])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.arm_r == pytest.approx(0.8)
+    assert row.floor_r == pytest.approx(1.5)
+    assert row.n_paths == 2
+    assert row.n_triggered == 2
+    assert row.mean_r_diff_over_all_paths == pytest.approx(0.25)
+
+
+def test_sweep_v811_produces_full_grid():
+    rows = sweep_v811_arm_and_floor([PATH_B, PATH_C], [0.5, 0.8], [0.0, 1.5])
+    assert len(rows) == 4  # 2 arm_r values x 2 floor_r values
+    pairs = {(r.arm_r, r.floor_r) for r in rows}
+    assert pairs == {(0.5, 0.0), (0.5, 1.5), (0.8, 0.0), (0.8, 1.5)}
+
+
+def test_sweep_v811_rejects_empty_inputs():
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([], [0.8], [0.5])
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [], [0.5])
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [0.8], [])
+
+
+def test_sweep_v811_rejects_out_of_domain_arm_r():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    EM_ShouldGivebackCloseV811 clamps arm_r to max(0.3, arm_r) -- a
+    requested arm_r below 0.3 must be rejected outright, not silently
+    executed under a different effective value."""
+
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [0.1], [0.5])  # below 0.3
+
+
+def test_sweep_v811_rejects_negative_floor_r():
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [0.8], [-0.1])
+
+
+def test_sweep_v811_rejects_non_finite_values():
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [float("nan")], [0.5])
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([PATH_B], [0.8], [float("inf")])
+
+
+def test_sweep_v811_rejects_empty_path():
+    with pytest.raises(ValueError):
+        sweep_v811_arm_and_floor([[]], [0.8], [0.5])
+
+
+# --- run_v811_sweep (CSV wrapper) ---------------------------------------------
+
+
+def test_run_v811_sweep_reads_real_csv_and_reproduces_hand_traced_numbers(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+
+    result = run_v811_sweep(r_paths_csv, [0.8], [1.5])
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert row["arm_r"] == pytest.approx(0.8)
+    assert row["floor_r"] == pytest.approx(1.5)
+    assert row["mean_r_diff_over_all_paths"] == pytest.approx(0.25)
+
+
+def test_run_v811_sweep_writes_output_csv_and_summary_json(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+
+    output_csv = tmp_path / "out" / "v811_stability.csv"
+    summary_json = tmp_path / "out" / "v811_summary.json"
+    run_v811_sweep(
+        r_paths_csv,
+        [0.5, 0.8],
+        [0.0, 1.5],
+        output_csv=output_csv,
+        summary_json=summary_json,
+    )
+    assert output_csv.exists()
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["arm_r_values_swept"] == [0.5, 0.8]
+    assert payload["summary"]["floor_r_values_swept"] == [0.0, 1.5]
+
+
+# --- CLI --model dispatch (Codex review finding, 2026-07-22, fifth round) -----
+
+
+def test_cli_main_dispatches_to_v811_sweep(tmp_path, capsys):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+
+    exit_code = main(
+        [
+            "--r-paths-csv",
+            str(r_paths_csv),
+            "--model",
+            "v811",
+            "--arm-r-values",
+            "0.8",
+            "--floor-r-values",
+            "1.5",
+        ]
+    )
+    assert exit_code == 0
+    assert "parameter_stability (v811): 1 settings swept." in capsys.readouterr().out
 
 
 # --- run() (CSV wrapper) ------------------------------------------------------
