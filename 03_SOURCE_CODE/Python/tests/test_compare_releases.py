@@ -776,12 +776,16 @@ def test_surface_diff_hand_computed_all_winners_vs_all_losers(tmp_path):
 
     # candidate: balance_curve=[1000, 940] -- one 6% drawdown, all losers,
     # so profit_factor is defined (0.0, gross_profit=0) but
-    # avg_winner/None since there are no winners.
+    # avg_winner/None since there are no winners. All 12 trades share the
+    # SAME exit_time instant, so per the order-independent streak fix
+    # (Codex review finding, 2026-07-22, fifth round) they collapse into
+    # ONE balance step -- the streak is 1, not 12 (one loss STEP, not one
+    # per row).
     assert candidate_summary["net_profit"] == pytest.approx(-60.0)
     assert candidate_summary["profit_factor"] == pytest.approx(0.0)
     assert candidate_summary["max_balance_drawdown_pct"] == pytest.approx(60.0 / 1000.0)
     assert candidate_summary["recovery_factor"] == pytest.approx(-1.0)
-    assert candidate_summary["longest_losing_streak"] == 12
+    assert candidate_summary["longest_losing_streak"] == 1
     assert candidate_summary["avg_winner_dollars"] is None
     assert candidate_summary["avg_loser_dollars"] == pytest.approx(-5.0)
 
@@ -791,7 +795,7 @@ def test_surface_diff_hand_computed_all_winners_vs_all_losers(tmp_path):
     assert diff["profit_factor"] is None  # baseline's is None
     assert diff["max_balance_drawdown_pct"] == pytest.approx(60.0 / 1000.0)
     assert diff["recovery_factor"] is None  # baseline's is None
-    assert diff["longest_losing_streak"] == 12
+    assert diff["longest_losing_streak"] == 1
     assert diff["avg_winner_dollars"] is None  # candidate's is None
     assert diff["avg_loser_dollars"] is None  # baseline's is None
     assert diff["avg_trade_duration_minutes"] == pytest.approx(0.0)

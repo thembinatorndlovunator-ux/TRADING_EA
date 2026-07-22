@@ -102,6 +102,15 @@ def compute_trade_summary(
     seed: int = 42,
     giveback_arm_percent: float = 1.0,
     giveback_floor_percent: float = 0.5,
+    # **Added, 2026-07-22 Codex review finding (fifth round): 'trades_per_day'
+    # previously always divided by the ACTIVE trade envelope (earliest
+    # entry to latest exit), silently misrepresenting a short burst of
+    # trades within a much longer authenticated backtest/evaluation
+    # period as a much higher daily rate. A caller who knows the real
+    # evaluation window can supply it explicitly here; when omitted, the
+    # active envelope is still used but the summary now discloses which
+    # denominator was actually applied (see 'trades_per_day_denominator_source').
+    evaluation_period_days: Optional[float] = None,
 ) -> dict:
     """Computes the full baseline summary dict (win rate, expectancy,
     profit factor, drawdown, net profit, recovery factor, balance-peak
@@ -133,6 +142,13 @@ def compute_trade_summary(
             f"compute_trade_summary: starting_balance must be a finite number > 0, "
             f"got {starting_balance}"
         )
+    if evaluation_period_days is not None and (
+        not math.isfinite(evaluation_period_days) or evaluation_period_days <= 0
+    ):
+        raise ValueError(
+            f"compute_trade_summary: evaluation_period_days must be a finite number > 0 if "
+            f"given, got {evaluation_period_days}"
+        )
 
     # **Fixed, 2026-07-22 Codex review finding:** sorting only by
     # exit_time leaves ties (multiple trades closing at the identical
@@ -163,10 +179,20 @@ def compute_trade_summary(
     net_profit = balance_curve[-1] - starting_balance
     recovery_factor = net_profit / dd.max_drawdown_abs if dd.max_drawdown_abs > 0 else None
 
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): this
+    # previously iterated 'profits' in trades_sorted's own row order,
+    # which is ARBITRARY among trades sharing the same exit_time (the
+    # same tie-break problem the drawdown calculation above already
+    # solves by summing same-instant P/L into one balance step).
+    # Reordering three simultaneous outcomes from loss/win/loss to
+    # loss/loss/win changed the reported streak from 1 to 2 with
+    # identical timestamps and net P/L. The streak is now computed over
+    # the SAME order-independent 'balance_steps' series drawdown uses --
+    # one outcome per DISTINCT exit_time (summed), not one per row.**
     longest_losing_streak = 0
     current_losing_streak = 0
-    for p in profits:
-        if p < 0:
+    for step_pnl in balance_steps:
+        if step_pnl < 0:
             current_losing_streak += 1
             longest_losing_streak = max(longest_losing_streak, current_losing_streak)
         else:
@@ -182,9 +208,23 @@ def compute_trade_summary(
     ).dt.total_seconds() / 60.0
     avg_trade_duration_minutes = float(durations_minutes.mean())
 
-    period_days = (
-        trades_sorted["exit_time"].max() - trades_sorted["entry_time"].min()
-    ).total_seconds() / 86400.0
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): this
+    # previously ALWAYS divided by the active trade envelope (earliest
+    # entry to latest exit) -- a data-derived span that can be far
+    # shorter than the actual backtest/evaluation period a caller ran
+    # (e.g. 4 trades clustered in one week of a month-long run
+    # previously inflated to a misleading "trades/day" figure for the
+    # whole month). When 'evaluation_period_days' is supplied, it is now
+    # used as the authenticated denominator instead; the summary always
+    # discloses which source was actually used.**
+    if evaluation_period_days is not None:
+        period_days = evaluation_period_days
+        trades_per_day_source = "authenticated_evaluation_period"
+    else:
+        period_days = (
+            trades_sorted["exit_time"].max() - trades_sorted["entry_time"].min()
+        ).total_seconds() / 86400.0
+        trades_per_day_source = "active_trade_envelope"
     trades_per_day = (len(trades_sorted) / period_days) if period_days > 0 else None
 
     return {
@@ -246,10 +286,20 @@ def compute_trade_summary(
             ),
         },
         "longest_losing_streak": longest_losing_streak,
+        # **Added, 2026-07-22 Codex review finding (fifth round): these
+        # carried neither a subgroup sample size nor uncertainty, despite
+        # the task's sample-size/uncertainty contract -- a caller could
+        # not tell a well-supported average from one based on a single
+        # observation.**
         "avg_winner_dollars": avg_winner,
+        "avg_winner_dollars_n": len(winners),
         "avg_loser_dollars": avg_loser,
+        "avg_loser_dollars_n": len(losers),
         "avg_trade_duration_minutes": avg_trade_duration_minutes,
+        "avg_trade_duration_minutes_n": len(trades_sorted),
         "trades_per_day": trades_per_day,
+        "trades_per_day_denominator_days": period_days,
+        "trades_per_day_denominator_source": trades_per_day_source,
     }
 
 
@@ -280,6 +330,12 @@ def run(
     # purely as a starting point for this distinct balance-based proxy.
     giveback_arm_percent: float = 1.0,
     giveback_floor_percent: float = 0.5,
+    # **Added, 2026-07-22 Codex review finding (fifth round): see
+    # compute_trade_summary's own docstring/comment -- when omitted,
+    # 'trades_per_day' still falls back to the active trade envelope, but
+    # the summary now discloses that fact rather than reporting the same
+    # figure under an unqualified label.**
+    evaluation_period_days: Optional[float] = None,
     spread_note: Optional[str] = None,
     slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
@@ -354,6 +410,7 @@ def run(
         seed=seed,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
+        evaluation_period_days=evaluation_period_days,
     )
 
     if output_json is not None:
@@ -395,6 +452,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-source", default=None)
     parser.add_argument("--giveback-arm-percent", type=float, default=1.0)
     parser.add_argument("--giveback-floor-percent", type=float, default=0.5)
+    parser.add_argument("--evaluation-period-days", type=float, default=None)
     parser.add_argument("--spread-note", default=None)
     parser.add_argument("--slippage-note", default=None)
     return parser
@@ -415,6 +473,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             data_source=args.data_source,
             giveback_arm_percent=args.giveback_arm_percent,
             giveback_floor_percent=args.giveback_floor_percent,
+            evaluation_period_days=args.evaluation_period_days,
             spread_note=args.spread_note,
             slippage_note=args.slippage_note,
         )

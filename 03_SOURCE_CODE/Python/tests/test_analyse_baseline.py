@@ -238,6 +238,113 @@ def test_same_timestamp_trades_give_deterministic_drawdown(tmp_path):
     assert summary_a["final_balance"] == summary_b["final_balance"] == pytest.approx(1050.0)
 
 
+def test_same_timestamp_trades_give_deterministic_losing_streak(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    longest_losing_streak previously iterated 'profits' in trades_sorted's
+    own row order, which is ARBITRARY among same-instant trades (the same
+    tie-break problem drawdown above already solves). Reordering three
+    simultaneous outcomes (loss/win/loss vs. loss/loss/win, net -40 at
+    that one instant) previously changed the reported streak from 1 to 2.
+    The streak is now computed over one order-independent balance STEP
+    per distinct exit_time (net -40, a single loss step), so it must be
+    identical regardless of row order."""
+
+    same_time = "2026-07-21T00:00:00Z"
+    loss_win_loss = [
+        {
+            "trade_id": "a",
+            "symbol": "XAUUSD",
+            "is_long": "True",
+            "entry_time": same_time,
+            "exit_time": same_time,
+            "entry_price": 100.0,
+            "exit_price": 85.0,
+            "stop_price": 98.0,
+            "profit": -30.0,
+        },
+        {
+            "trade_id": "b",
+            "symbol": "XAUUSD",
+            "is_long": "True",
+            "entry_time": same_time,
+            "exit_time": same_time,
+            "entry_price": 100.0,
+            "exit_price": 110.0,
+            "stop_price": 98.0,
+            "profit": 20.0,
+        },
+        {
+            "trade_id": "c",
+            "symbol": "XAUUSD",
+            "is_long": "True",
+            "entry_time": same_time,
+            "exit_time": same_time,
+            "entry_price": 100.0,
+            "exit_price": 85.0,
+            "stop_price": 98.0,
+            "profit": -30.0,
+        },
+    ]
+    loss_loss_win = [loss_win_loss[0], loss_win_loss[2], loss_win_loss[1]]
+
+    path_a = tmp_path / "a.csv"
+    _write_trades(path_a, loss_win_loss)
+    path_b = tmp_path / "b.csv"
+    _write_trades(path_b, loss_loss_win)
+
+    summary_a = run(path_a, starting_balance=1000.0)
+    summary_b = run(path_b, starting_balance=1000.0)
+
+    assert summary_a["longest_losing_streak"] == summary_b["longest_losing_streak"] == 1
+
+
+def test_trades_per_day_uses_authenticated_evaluation_period_when_given(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    trades_per_day previously ALWAYS divided by the active trade envelope
+    (earliest entry to latest exit) -- 4 trades spanning 7 active hours
+    were blessed as ~13.7/day even if they actually came from a
+    month-long run. A caller who knows the real evaluation window can now
+    supply it explicitly, overriding the active-envelope denominator."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)  # default fixture: 4 trades spanning 7 active hours
+
+    summary_default = run(path, starting_balance=1000.0)
+    assert summary_default["trades_per_day_denominator_source"] == "active_trade_envelope"
+    assert summary_default["trades_per_day"] == pytest.approx(4 / (7.0 / 24.0))
+
+    summary_authenticated = run(path, starting_balance=1000.0, evaluation_period_days=30.0)
+    assert (
+        summary_authenticated["trades_per_day_denominator_source"]
+        == "authenticated_evaluation_period"
+    )
+    assert summary_authenticated["trades_per_day_denominator_days"] == pytest.approx(30.0)
+    assert summary_authenticated["trades_per_day"] == pytest.approx(4 / 30.0)
+
+
+def test_evaluation_period_days_rejects_non_positive(tmp_path):
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    with pytest.raises(ValueError):
+        run(path, evaluation_period_days=0.0)
+    with pytest.raises(ValueError):
+        run(path, evaluation_period_days=-5.0)
+
+
+def test_avg_winner_loser_duration_report_sample_sizes(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    average winner, average loser, and duration carried neither subgroup
+    sample sizes nor uncertainty, despite the task's sample-size/
+    uncertainty contract."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)  # default fixture: 2 winners, 2 losers, 4 trades total
+    summary = run(path, starting_balance=1000.0)
+    assert summary["avg_winner_dollars_n"] == 2
+    assert summary["avg_loser_dollars_n"] == 2
+    assert summary["avg_trade_duration_minutes_n"] == 4
+
+
 def test_duplicate_trade_id_rejected(tmp_path):
     """Regression for a Codex review finding: duplicate trade_id values
     were never checked, silently double-counting a trade."""

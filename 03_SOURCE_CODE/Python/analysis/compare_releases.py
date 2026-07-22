@@ -402,13 +402,22 @@ def run(
     # side-by-side comparison surface (profit, profit factor, drawdowns,
     # recovery, giveback, streaks, duration, frequency) -- computed via
     # the SAME function analyse_baseline.py itself uses, so this and that
-    # module can never silently diverge on what these numbers mean.**
+    # module can never silently diverge on what these numbers mean.
+    # 'trades_per_day' uses the CLAIMED comparison period (already the
+    # authenticated window both datasets are required to fall within,
+    # see the period_start/period_end enforcement above) as its
+    # denominator, not each dataset's own active trade envelope -- the
+    # exact fix finding 11 required, and compare_releases.py already had
+    # the one input (a caller-asserted period) analyse_baseline.py alone
+    # never has.**
+    claimed_period_days = (parsed_period_end - parsed_period_start).total_seconds() / 86400.0
     baseline_summary = compute_trade_summary(
         baseline.sort_values("exit_time"),
         starting_balance=starting_balance,
         seed=seed,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
+        evaluation_period_days=claimed_period_days,
     )
     candidate_summary = compute_trade_summary(
         candidate.sort_values("exit_time"),
@@ -416,6 +425,7 @@ def run(
         seed=seed,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
+        evaluation_period_days=claimed_period_days,
     )
 
     def _point_diff(
