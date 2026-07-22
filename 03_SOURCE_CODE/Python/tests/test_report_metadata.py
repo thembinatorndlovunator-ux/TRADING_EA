@@ -10,6 +10,7 @@ from analysis.report_metadata import (
     GitMetadataError,
     build_report_metadata,
     capture_git_commit,
+    combine_labeled_hashes,
     compute_dataset_hash,
     compute_file_sha256,
 )
@@ -66,6 +67,57 @@ def test_compute_dataset_hash_changes_when_content_changes(tmp_path):
     hash_after = compute_dataset_hash([file_a])
 
     assert hash_before != hash_after
+
+
+def test_combine_labeled_hashes_matches_compute_dataset_hash(tmp_path):
+    """combine_labeled_hashes is compute_dataset_hash's own combination
+    step, factored out (Codex review finding, 2026-07-22, fifth round) so
+    a caller with its own ABA-safe, single-pass-computed component hashes
+    can combine them without re-hashing anything -- the two must agree
+    exactly when fed the same underlying (label, hash) pairs."""
+
+    file_a = tmp_path / "a.jsonl"
+    file_b = tmp_path / "b.jsonl"
+    file_a.write_text("line-a\n", encoding="utf-8")
+    file_b.write_text("line-b\n", encoding="utf-8")
+
+    via_compute_dataset_hash = compute_dataset_hash([file_a, file_b], repo_root=tmp_path)
+    via_combine = combine_labeled_hashes(
+        [
+            ("a.jsonl", compute_file_sha256(file_a)),
+            ("b.jsonl", compute_file_sha256(file_b)),
+        ]
+    )
+    assert via_compute_dataset_hash == via_combine
+
+
+def test_combine_labeled_hashes_order_independent():
+    a = combine_labeled_hashes([("x", "hash1"), ("y", "hash2")])
+    b = combine_labeled_hashes([("y", "hash2"), ("x", "hash1")])
+    assert a == b
+
+
+def test_combine_labeled_hashes_changes_when_a_component_hash_changes():
+    a = combine_labeled_hashes([("x", "hash1"), ("y", "hash2")])
+    b = combine_labeled_hashes([("x", "hash1"), ("y", "hash2-changed")])
+    assert a != b
+
+
+def test_build_report_metadata_dataset_hash_override(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round): a
+    caller that already computed its own ABA-safe hash (e.g. from a
+    single-pass reader) should be able to supply it directly instead of
+    triggering a second, independent re-read of 'dataset_paths' via
+    compute_dataset_hash."""
+
+    repo_root = Path(__file__).resolve().parents[3]
+    file_a = tmp_path / "a.csv"
+    file_a.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+
+    metadata = build_report_metadata(
+        [file_a], repo_path=repo_root, dataset_hash_override="deadbeef" * 8
+    )
+    assert metadata.dataset_hash == "deadbeef" * 8
 
 
 def test_build_report_metadata(tmp_path):

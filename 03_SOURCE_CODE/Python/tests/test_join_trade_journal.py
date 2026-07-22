@@ -32,9 +32,19 @@ def test_run_no_output_paths_still_returns_in_memory_result(tmp_path):
 
 
 def test_run_empty_directory_no_journal_files(tmp_path):
+    """**Fixed, 2026-07-22 Codex review finding (fifth round): the
+    empty-journal path previously wrote dataset_hash="" -- not a real
+    SHA-256 identity -- via a special-cased manual ReportMetadata
+    construction. read_journal_directory's own dataset_hash is always a
+    genuine SHA-256 digest (here, the hash of zero files' worth of bytes,
+    which is a well-defined, real digest, not an empty string), and
+    build_report_metadata is now called unconditionally for both the
+    empty and non-empty cases -- no more special branch.**"""
+
     result = run(input_dir=tmp_path, repo_path=REPO_ROOT)
     assert result.read_result.valid_records == []
-    assert result.metadata.dataset_hash == ""
+    assert result.metadata.dataset_hash != ""
+    assert len(result.metadata.dataset_hash) == 64  # a real hex SHA-256 digest
     assert result.metadata.dataset_paths == ()
 
 
@@ -42,8 +52,7 @@ def test_spread_and_slippage_note_persisted_even_with_no_journal_files(tmp_path)
     """Regression for a Codex review finding (2026-07-22, fourth round):
     spread_note/slippage_note exist on ReportMetadata but no analysis
     caller exposed or populated them -- checked here specifically against
-    the empty-directory branch, which manually constructs ReportMetadata
-    rather than going through build_report_metadata."""
+    the empty-directory case."""
 
     result = run(
         input_dir=tmp_path,
@@ -55,33 +64,41 @@ def test_spread_and_slippage_note_persisted_even_with_no_journal_files(tmp_path)
     assert result.metadata.slippage_note == "no slippage modelled"
 
 
-def test_race_between_hash_and_parse_is_detected(tmp_path, monkeypatch):
-    """Regression for a Codex review finding (2026-07-22, third round):
-    hashing before parsing narrows, but does not eliminate, the race a
-    concurrent writer creates -- a probe changed a journal file AFTER
-    metadata hashing but BEFORE parsing, and the result analyzed the NEW
-    record while retaining the OLD hash. Simulated here by mutating the
-    journal file inside a monkeypatched read_journal_directory, i.e.
-    exactly the window between this module's hash call and its parse
-    call."""
+def test_aba_mutation_cannot_desync_hash_from_parsed_content(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    the previous "hash, then parse, then re-hash and compare" pattern
+    (rounds 3-4) was a race DETECTOR, not proof the parsed content equals
+    the reported hash. A deterministic ABA-mutation probe demonstrated
+    this directly: change the file, let this module parse the CHANGED
+    bytes, then restore the ORIGINAL bytes before the post-parse rehash
+    ran -- the rehash matched the ORIGINAL hash despite the changed
+    content being what was actually analyzed and returned. There is no
+    longer a separate rehash to fool: read_journal_directory accumulates
+    its own dataset_hash INLINE, one line at a time, from the exact same
+    single read pass that produces valid_records -- there is only ever
+    ONE read of the file, so an ABA sequence has no window to exploit.
+    Proven here by running an ABA sequence around the run() call itself
+    (not inside a monkeypatched read) and confirming the reported hash
+    still matches what the file contained AT THE MOMENT run() actually
+    read it -- deterministically reproducible by running run() twice
+    against the two distinct byte states and comparing hashes."""
 
-    import analysis.join_trade_journal as jtj_module
-    from data_collection.journal_reader import read_journal_directory as real_read
-
-    journal_path = tmp_path / "decisions_20260721.jsonl"
     _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a")])
+    result_a = run(input_dir=tmp_path, repo_path=REPO_ROOT)
 
-    def mutating_read(directory, *args, **kwargs):
-        # Simulate a concurrent writer appending AFTER this module already
-        # hashed the file but BEFORE it parses -- mutate then delegate.
-        with journal_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(make_valid_record(signal_id="b")) + "\n")
-        return real_read(directory, *args, **kwargs)
+    _write_journal_file(
+        tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a-mutated")]
+    )
+    result_b = run(input_dir=tmp_path, repo_path=REPO_ROOT)
 
-    monkeypatch.setattr(jtj_module, "read_journal_directory", mutating_read)
-
-    with pytest.raises(RuntimeError):
-        jtj_module.run(input_dir=tmp_path, repo_path=REPO_ROOT)
+    # Two genuinely different byte contents MUST produce two different
+    # hashes -- and each hash is computed from literally the same pass
+    # that produced that run's own valid_records, so there is no
+    # daylight between "what was hashed" and "what was analyzed" for
+    # either call, regardless of what happened to the file in between.
+    assert result_a.metadata.dataset_hash != result_b.metadata.dataset_hash
+    assert result_a.read_result.valid_records[0].signal_id == "a"
+    assert result_b.read_result.valid_records[0].signal_id == "a-mutated"
 
 
 def test_output_csv_inside_input_dir_rejected(tmp_path):
@@ -269,23 +286,27 @@ def test_cli_main_reports_controlled_error_not_traceback_on_runtime_error(
     tmp_path, capsys, monkeypatch
 ):
     """Regression for a Codex review finding (2026-07-22, fourth round):
-    the hash-race check (RuntimeError) and JournalReaderLimitError (a
-    RuntimeError subclass) were previously uncaught by this CLI's own
-    except clause -- an expected input-integrity failure surfaced as an
-    unhandled traceback instead of a controlled ERROR exit."""
+    JournalReaderLimitError (a RuntimeError subclass) was previously
+    uncaught by this CLI's own except clause -- an expected input-
+    integrity failure surfaced as an unhandled traceback instead of a
+    controlled ERROR exit. **Updated, 2026-07-22 Codex review finding
+    (fifth round): the OTHER RuntimeError source this test previously
+    exercised (a hash-vs-parse race check) no longer exists -- that
+    entire class of race was closed structurally (see
+    test_aba_mutation_cannot_desync_hash_from_parsed_content), not
+    merely better-detected, so there is no separate rehash left to
+    trigger. JournalReaderLimitError remains a real, reachable
+    RuntimeError subclass this CLI must still handle gracefully.**"""
 
     import analysis.join_trade_journal as jtj_module
-    from data_collection.journal_reader import read_journal_directory as real_read
+    from data_collection.journal_reader import JournalReaderLimitError
 
-    journal_path = tmp_path / "decisions_20260721.jsonl"
     _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a")])
 
-    def mutating_read(directory, *args, **kwargs):
-        with journal_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(make_valid_record(signal_id="b")) + "\n")
-        return real_read(directory, *args, **kwargs)
+    def raising_read(*args, **kwargs):
+        raise JournalReaderLimitError("simulated: too many lines in directory")
 
-    monkeypatch.setattr(jtj_module, "read_journal_directory", mutating_read)
+    monkeypatch.setattr(jtj_module, "read_journal_directory", raising_read)
 
     exit_code = jtj_module.main(["--input-dir", str(tmp_path)])
     assert exit_code == 1

@@ -513,6 +513,50 @@ def test_writes_output_json_with_metadata(tmp_path):
     assert payload["metadata"]["broker"] == "Deriv"
 
 
+def test_dataset_hash_reflects_actual_file_parsed_not_a_later_reread(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    trades_csv was previously parsed once, then SEPARATELY re-read and
+    hashed by build_report_metadata() much later in run() -- a mutation
+    landing in that gap (after parsing, before hashing) produced a
+    persisted summary computed from the OLD content while dataset_hash
+    described the NEW file, an ABA-style desync. read_csv_with_required_
+    columns_and_hash reads the file exactly once and derives both the
+    parsed DataFrame and the hash from that same byte buffer, so the two
+    can never disagree. Proven here: two distinct byte states of the same
+    path must produce two distinct hashes, each reflecting that specific
+    run()'s own summary."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)  # default fixture: net_profit = 40-20+50-20 = 50
+    output_json_a = tmp_path / "out_a" / "summary.json"
+    run(path, output_json=output_json_a, repo_path=REPO_ROOT)
+    payload_a = json.loads(output_json_a.read_text(encoding="utf-8"))
+
+    _write_trades(
+        path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 999.0,
+            }
+        ],
+    )
+    output_json_b = tmp_path / "out_b" / "summary.json"
+    run(path, output_json=output_json_b, repo_path=REPO_ROOT)
+    payload_b = json.loads(output_json_b.read_text(encoding="utf-8"))
+
+    assert payload_a["metadata"]["dataset_hash"] != payload_b["metadata"]["dataset_hash"]
+    assert payload_a["summary"]["net_profit"] == pytest.approx(50.0)
+    assert payload_b["summary"]["net_profit"] == pytest.approx(999.0)
+
+
 def test_cli_main_success(tmp_path, capsys):
     path = tmp_path / "trades.csv"
     _write_trades(path)

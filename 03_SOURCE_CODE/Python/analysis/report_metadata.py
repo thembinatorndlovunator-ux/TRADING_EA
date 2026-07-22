@@ -125,6 +125,29 @@ def _portable_label(path: Path, repo_root: Optional[Path]) -> str:
     return resolved.name
 
 
+def combine_labeled_hashes(labeled_hashes: Sequence[tuple[str, str]]) -> str:
+    """Combines (label, hex-digest) pairs from possibly-heterogeneous
+    sources (e.g. a journal directory's own inline hash plus a separately
+    hashed news CSV) into ONE order-independent identity: sorts the pairs,
+    then hashes that sorted manifest -- so the same set of (label, hash)
+    pairs always produces the same combined hash regardless of input
+    order, and any single differing hash is detected. This is
+    ``compute_dataset_hash``'s own combination step, factored out so a
+    caller that already computed one or more of its component hashes
+    ABA-safely (e.g. via ``data_collection.journal_reader.read_journal_directory``'s
+    inline ``dataset_hash``, or ``analysis.csv_io.read_csv_with_required_columns_and_hash``)
+    can combine them without re-hashing anything.
+
+    **Added, 2026-07-22 Codex review finding (fifth round).**
+    """
+
+    combined = hashlib.sha256()
+    for name, file_hash in sorted(labeled_hashes):
+        combined.update(name.encode("utf-8"))
+        combined.update(file_hash.encode("utf-8"))
+    return combined.hexdigest()
+
+
 def compute_dataset_hash(paths: Sequence[Path], repo_root: Optional[Path] = None) -> str:
     """Combined dataset identity for a MULTI-file input (e.g. a whole
     journal directory of daily .jsonl files): hashes each file
@@ -141,17 +164,25 @@ def compute_dataset_hash(paths: Sequence[Path], repo_root: Optional[Path] = None
     into a committed report. Now uses a path relative to 'repo_root'
     (falling back to the bare filename for anything outside the repo,
     e.g. a test's temp directory).
+
+    **Still a separate-read hash, stated explicitly (Codex review
+    finding, 2026-07-22, fifth round):** this opens and reads each path a
+    SECOND time, independently of wherever a caller's own parsing
+    happens -- a race detector (via a before/after comparison), not proof
+    the hashed bytes equal whatever was actually parsed elsewhere. A
+    caller that can read+hash+parse from one single pass (journal
+    directories via ``read_journal_directory``, single CSVs via
+    ``read_csv_with_required_columns_and_hash``) should prefer that and
+    combine the results with ``combine_labeled_hashes`` instead of this
+    function, which remains appropriate only when no such single-pass
+    reader exists yet for a given input.
     """
 
     if not paths:
         raise ValueError("compute_dataset_hash: no input paths given")
 
-    manifest = sorted((_portable_label(p, repo_root), compute_file_sha256(p)) for p in paths)
-    combined = hashlib.sha256()
-    for name, file_hash in manifest:
-        combined.update(name.encode("utf-8"))
-        combined.update(file_hash.encode("utf-8"))
-    return combined.hexdigest()
+    manifest = [(_portable_label(p, repo_root), compute_file_sha256(p)) for p in paths]
+    return combine_labeled_hashes(manifest)
 
 
 def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
@@ -231,6 +262,17 @@ def build_report_metadata(
     spread_note: Optional[str] = None,
     slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
+    # **Added, 2026-07-22 Codex review finding (fifth round):** a caller
+    # that already computed a hash INLINE during its own single read pass
+    # (e.g. data_collection.journal_reader.read_journal_directory's own
+    # JournalReadResult.dataset_hash, accumulated one line at a time from
+    # the same file handle used to parse -- see that function's docstring
+    # for why this is the only way to structurally close the ABA-mutation
+    # race a separate hash-then-parse-then-rehash pattern cannot) should
+    # pass it here instead of falling through to a SECOND, independent
+    # re-read of 'dataset_paths' below, which would reopen exactly the
+    # race window the caller's own single-pass hash already avoided.
+    dataset_hash_override: Optional[str] = None,
 ) -> ReportMetadata:
     """Convenience constructor: captures git commit/dirty state and the
     dataset hash automatically; the caller supplies everything only it
@@ -244,7 +286,11 @@ def build_report_metadata(
 
     root = repo_path if repo_path is not None else default_repo_root()
     commit, dirty = capture_git_commit(root)
-    dataset_hash = compute_dataset_hash(list(dataset_paths), repo_root=root)
+    dataset_hash = (
+        dataset_hash_override
+        if dataset_hash_override is not None
+        else compute_dataset_hash(list(dataset_paths), repo_root=root)
+    )
 
     return ReportMetadata(
         git_commit=commit,

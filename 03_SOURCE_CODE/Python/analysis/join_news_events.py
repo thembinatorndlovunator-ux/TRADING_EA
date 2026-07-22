@@ -50,14 +50,13 @@ from analysis.csv_io import (
     assert_path_not_same_file,
     assert_unique_ids,
     atomic_write_dataframe_csv,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
     sanitize_for_csv,
 )
 from analysis.report_metadata import (
     atomic_write_text,
     build_report_metadata,
-    compute_dataset_hash,
-    default_repo_root,
+    combine_labeled_hashes,
 )
 from analysis.time_utils import TimezoneValidationError, parse_utc_series
 from data_collection.journal_reader import (
@@ -219,31 +218,26 @@ def run(
             assert_path_not_same_file(out_path, journal_file, "output path")
     assert_output_paths_distinct([output_csv, summary_json, errors_json])
 
-    # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
-    # previously computed AFTER read_journal_directory had already parsed
-    # every journal file -- hashing the journal files here, BEFORE
-    # parsing, narrows the window in which a concurrent append or a torn
-    # final line could make the reported hash describe different bytes
-    # than the ones actually analyzed. The resulting metadata is reused
-    # for both summary_json and errors_json below rather than recomputed
-    # (which would re-read the files a second time anyway).
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): the previous
+    # "hash, then parse, then re-hash and compare" pattern (rounds 3-4)
+    # was a race DETECTOR, not proof the parsed content equals the
+    # reported hash -- an ABA-mutation probe changed a file, had it
+    # parsed with the CHANGED bytes, then restored the ORIGINAL bytes
+    # before the post-parse rehash ran, which matched the ORIGINAL hash
+    # despite the changed content being what was actually analyzed.
+    # read_journal_directory (below) accumulates its own dataset_hash
+    # INLINE from the exact same single-pass read that produces
+    # valid_records; read_csv_with_required_columns_and_hash (further
+    # below, for news_events_csv) does the same for a single CSV. Neither
+    # has a second read, so neither has a window for this race. The two
+    # ABA-safe hashes are combined into one dataset identity via the same
+    # sorted-manifest scheme compute_dataset_hash itself uses, so the
+    # combined shape is unchanged even though neither component was
+    # produced by re-reading a path a second time. Passing the
+    # pre-enumerated 'journal_files' list to read_journal_directory still
+    # closes the separate ENUMERATION race (a file added between two
+    # independent globs) the fourth round fixed.**
     journal_files = sorted(journal_dir.glob("decisions_*.jsonl"))
-    dataset_paths = [news_events_csv, *journal_files] if journal_files else [news_events_csv]
-    metadata = build_report_metadata(
-        dataset_paths,
-        currency=currency,
-        random_seed=seed,
-        spread_note=spread_note,
-        slippage_note=slippage_note,
-        repo_path=repo_path,
-    )
-
-    # **Fixed, 2026-07-22 Codex review finding (fourth round):** previously
-    # read_journal_directory re-globbed journal_dir independently of the
-    # 'journal_files' list already hashed above -- the same enumeration
-    # race fixed in join_trade_journal.py (a file added between the two
-    # globs was silently analyzed under the stale hash). Passing the SAME
-    # pre-enumerated list closes that race entirely.
     read_result = read_journal_directory(journal_dir, files=journal_files)
     decisions_df = to_dataframe(read_result.valid_records)
 
@@ -268,7 +262,7 @@ def run(
     # "001" was silently re-emitted as "1", and "001"/"1" then collapsed
     # into a false duplicate (the same identifier class of bug already
     # fixed for order_id/deal_id/trade_id in join_signal_to_outcome.py).**
-    news = read_csv_with_required_columns(
+    news, news_file_hash = read_csv_with_required_columns_and_hash(
         news_events_csv, REQUIRED_NEWS_COLUMNS, dtype={"event_id": str}
     )
     assert_unique_ids(news, "event_id", news_events_csv)
@@ -298,24 +292,27 @@ def run(
     if currency is not None:
         news = news[news["currency"] == currency]
 
-    # **Fixed, 2026-07-22 Codex review finding (fourth round): the
-    # "post-parse" re-hash previously ran BEFORE news_events_csv was
-    # actually read (immediately after the journal parse, several lines
-    # above this point) -- mutating the news CSV inside its reader
-    # produced a blackout result computed from the NEW bytes while the
-    # check still only compared the OLD hash, since the check ran before
-    # the read it was meant to guard. It is also no longer conditioned on
-    # 'journal_files' being non-empty: news_events_csv is unconditionally
-    # part of 'dataset_paths', so a journal-file-free run still needs this
-    # check to catch a mutated news CSV, not skip it entirely.**
-    hash_root = repo_path if repo_path is not None else default_repo_root()
-    post_parse_hash = compute_dataset_hash(dataset_paths, repo_root=hash_root)
-    if post_parse_hash != metadata.dataset_hash:
-        raise RuntimeError(
-            f"{journal_dir}: input files changed between hashing and parsing -- "
-            "the analyzed content and the reported dataset_hash would not match. "
-            "Re-run against a stable snapshot."
-        )
+    # Combines the journal directory's own inline hash (from
+    # read_journal_directory, accumulated during the single pass that
+    # produced 'decisions_df' above) with the news CSV's own inline hash
+    # (from read_csv_with_required_columns_and_hash, accumulated during
+    # the single pass that produced 'news' above) -- both ABA-safe by
+    # construction, so there is no post-parse rehash left to run: neither
+    # component hash could ever have drifted from what was actually
+    # parsed, since neither involved a second read of anything.
+    dataset_paths_for_metadata = [news_events_csv, *journal_files]
+    combined_hash = combine_labeled_hashes(
+        [(news_events_csv.name, news_file_hash), ("journal_directory", read_result.dataset_hash)]
+    )
+    metadata = build_report_metadata(
+        dataset_paths_for_metadata,
+        currency=currency,
+        random_seed=seed,
+        spread_note=spread_note,
+        slippage_note=slippage_note,
+        repo_path=repo_path,
+        dataset_hash_override=combined_hash,
+    )
 
     in_blackout_flags = []
     triggering_ids = []

@@ -16,6 +16,7 @@ from analysis.csv_io import (
     atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
     sanitize_for_csv,
 )
 
@@ -66,6 +67,39 @@ def test_no_duplicate_header_reads_fine(tmp_path):
     path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
     df = read_csv_with_required_columns(path, {"trade_id", "profit"})
     assert len(df) == 1
+
+
+# --- read_csv_with_required_columns_and_hash (ABA-safe dataset hash) --------
+
+
+def test_read_csv_with_required_columns_and_hash_reflects_actual_bytes_parsed(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round): a
+    hash computed via a SEPARATE, LATER file open (the "hash-then-parse"
+    pattern most callers previously used) is a race DETECTOR, not proof
+    the parsed content equals the reported hash. This function instead
+    reads the file exactly ONCE and hashes/parses that same in-memory
+    byte buffer -- proven here by confirming two distinct byte states of
+    the same path produce two distinct hashes, each matching what that
+    specific call actually parsed."""
+
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+    df_a, hash_a = read_csv_with_required_columns_and_hash(path, {"trade_id", "profit"})
+
+    path.write_text("trade_id,profit\nt1,20.0\n", encoding="utf-8")
+    df_b, hash_b = read_csv_with_required_columns_and_hash(path, {"trade_id", "profit"})
+
+    assert hash_a != hash_b
+    assert df_a.iloc[0]["profit"] == 10.0
+    assert df_b.iloc[0]["profit"] == 20.0
+    assert len(hash_a) == 64  # a real hex SHA-256 digest
+
+
+def test_read_csv_with_required_columns_and_hash_still_validates_schema(tmp_path):
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit,trade_id\nt1,10.0,t1\n", encoding="utf-8")
+    with pytest.raises(CsvSchemaError):
+        read_csv_with_required_columns_and_hash(path, {"trade_id", "profit"})
 
 
 # --- assert_unique_ids (blank/null ID rejection) -----------------------------

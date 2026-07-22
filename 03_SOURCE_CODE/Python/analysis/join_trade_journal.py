@@ -33,12 +33,9 @@ from analysis.csv_io import (
     sanitize_for_csv,
 )
 from analysis.report_metadata import (
-    PIPELINE_VERSION,
     ReportMetadata,
     atomic_write_text,
     build_report_metadata,
-    capture_git_commit,
-    compute_dataset_hash,
     default_repo_root,
 )
 from data_collection.journal_reader import (
@@ -125,85 +122,41 @@ def run(
         for journal_file in input_dir.glob("decisions_*.jsonl"):
             assert_path_not_same_file(out_path, journal_file, "output path")
 
-    # **Fixed, 2026-07-22 Codex review finding:** the dataset hash was
-    # previously computed AFTER read_journal_directory had already parsed
-    # every file -- a concurrent append or a torn final line completing
-    # between the two reads could make the reported hash describe
-    # different bytes than the ones actually analyzed. Hashing first
-    # narrows (does not perfectly eliminate, absent a single atomic read)
-    # that window.
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): the previous
+    # "hash, then parse, then re-hash and compare" pattern (rounds 3-4)
+    # was a race DETECTOR, not proof the parsed content equals the
+    # reported hash -- an ABA-mutation probe changed a journal file,
+    # had this parse the changed bytes, then restored the original bytes
+    # before the post-parse rehash ran; the rehash matched the ORIGINAL
+    # hash despite the changed content being what was actually analyzed.
+    # read_journal_directory now accumulates its own dataset_hash INLINE,
+    # one line at a time, from the exact same single-pass read that
+    # produces valid_records/parse_errors/validation_errors below -- there
+    # is no second read and therefore no window for this exact race.
+    # Passing the pre-enumerated 'journal_files' list still closes the
+    # separate ENUMERATION race (a file added between two independent
+    # globs) the fourth round fixed.**
     journal_files = sorted(input_dir.glob("decisions_*.jsonl"))
     root = repo_path if repo_path is not None else default_repo_root()
-    if journal_files:
-        metadata = build_report_metadata(
-            journal_files,
-            symbol=symbol,
-            broker=broker,
-            random_seed=seed,
-            spread_note=spread_note,
-            slippage_note=slippage_note,
-            repo_path=root,
-        )
-    else:
-        # No journal files at all is a legitimate (if unusual) input state
-        # -- e.g. a brand-new EA that has not run yet -- not a script
-        # failure. There is no DATASET to hash, but the CODE provenance
-        # (git commit) is always determinable regardless of whether any
-        # input data exists, so it is captured for real here too rather
-        # than special-cased to an empty string (a Codex review finding:
-        # the previous code silently reported an empty commit/hash pair
-        # here instead of the still-knowable commit).
-        commit, dirty = capture_git_commit(root)
-        metadata = ReportMetadata(
-            git_commit=commit,
-            git_dirty=dirty,
-            dataset_paths=(),
-            dataset_hash="",
-            symbol=symbol,
-            currency=None,
-            broker=broker,
-            period_start=None,
-            period_end=None,
-            timeframe=None,
-            modelling_mode=None,
-            costs_note=None,
-            set_file=None,
-            timezone="UTC",
-            random_seed=seed,
-            pipeline_version=PIPELINE_VERSION,
-            spread_note=spread_note,
-            slippage_note=slippage_note,
-        )
-
-    # **Fixed, 2026-07-22 Codex review finding (fourth round):** previously
-    # this passed only 'input_dir' to read_journal_directory, which
-    # re-globbed the directory independently of the 'journal_files' list
-    # already hashed above -- a probe added a second decisions_*.jsonl
-    # file after the initial glob/hash; both files got analyzed here, but
-    # 'metadata'/the post-parse re-hash below both still only knew about
-    # the first file, so the mismatch went undetected. Passing the SAME
-    # pre-enumerated 'journal_files' list closes the enumeration race
-    # entirely (no second glob can see a new file); the post-parse re-hash
-    # of that same fixed list still catches a concurrent CONTENT mutation.
     read_result = read_journal_directory(input_dir, files=journal_files)
 
-    # **Fixed, 2026-07-22 Codex review finding (third round): hashing
-    # before parsing narrows, but does NOT eliminate, the race a
-    # concurrent writer creates -- a probe changed a journal file AFTER
-    # metadata hashing but BEFORE parsing, and the result analyzed the
-    # NEW record while retaining the OLD hash. Re-hashing after parsing
-    # and comparing catches exactly that case (this is a detection, not
-    # a full transactional guarantee -- a change occurring in the tiny
-    # window during this second hash computation itself remains
-    # possible, though vanishingly unlikely for local files).**
-    if journal_files:
-        post_parse_hash = compute_dataset_hash(journal_files, repo_root=root)
-        if post_parse_hash != metadata.dataset_hash:
-            raise RuntimeError(
-                f"{input_dir}: journal files changed between hashing and parsing -- "
-                "the analyzed content and the reported dataset_hash would not match. "
-                "Re-run against a stable snapshot."
-            )
+    # **Fixed, 2026-07-22 Codex review finding: the empty-journal path
+    # previously wrote dataset_hash="" (not a real SHA-256 identity) via a
+    # special-cased manual ReportMetadata construction. read_result.dataset_hash
+    # is always a genuine SHA-256 digest (the hash of zero files' worth of
+    # bytes when 'journal_files' is empty, per read_journal_directory's own
+    # definition), so build_report_metadata can now be called unconditionally
+    # -- no more empty-vs-nonempty branch needed.**
+    metadata = build_report_metadata(
+        journal_files,
+        symbol=symbol,
+        broker=broker,
+        random_seed=seed,
+        spread_note=spread_note,
+        slippage_note=slippage_note,
+        repo_path=root,
+        dataset_hash_override=read_result.dataset_hash,
+    )
 
     df = to_dataframe(read_result.valid_records)
 

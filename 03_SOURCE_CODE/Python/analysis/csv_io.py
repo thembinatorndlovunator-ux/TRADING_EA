@@ -7,6 +7,8 @@ place that check is implemented."""
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -23,6 +25,55 @@ class CsvSchemaError(ValueError):
     problem per the reproducibility contract's "visible failures, never
     silently coerced" rule, not something a caller should filter out
     quietly."""
+
+
+def _read_csv_bytes_checked(
+    path: Path, required_columns: set[str], dtype: Optional[dict]
+) -> tuple[pd.DataFrame, bytes]:
+    """Shared core of ``read_csv_with_required_columns``/
+    ``read_csv_with_required_columns_and_hash``: reads 'path' exactly
+    ONCE as raw bytes, then performs every check (duplicate header, parse,
+    required columns) against that SAME in-memory byte buffer -- never a
+    second file open. Returns (df, raw_bytes) so a caller wanting a
+    dataset-identity hash can hash 'raw_bytes' directly, guaranteed by
+    construction to be the exact bytes 'df' was parsed from.
+
+    **Added, 2026-07-22 Codex review finding (fifth round): every prior
+    caller of this module computed a dataset hash via a SEPARATE, LATER
+    (or earlier) file open (``report_metadata.compute_file_sha256``/
+    ``compute_dataset_hash``) -- a race DETECTOR at best (a before/after
+    rehash comparison), not proof the hashed bytes equal the parsed ones.
+    A deterministic ABA-mutation probe changed a file, had it parsed with
+    the changed bytes, then restored the original bytes before a caller's
+    own post-parse rehash ran -- the rehash matched the ORIGINAL hash
+    despite the changed content being what was actually analyzed. Reading
+    once and hashing/parsing that same buffer makes this structurally
+    impossible: there is only one read, so there is no window for the
+    file to change in between.**
+    """
+
+    raw_bytes = path.read_bytes()
+    # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
+    # leading BOM, identical to plain "utf-8" otherwise) without a second
+    # file open.
+    decoded = raw_bytes.decode("utf-8-sig")
+
+    raw_headers = next(csv.reader(io.StringIO(decoded, newline="")), [])
+    seen: set[str] = set()
+    dupe_set: set[str] = set()
+    for h in raw_headers:
+        if h in seen:
+            dupe_set.add(h)
+        seen.add(h)
+    dupes = sorted(dupe_set)
+    if dupes:
+        raise CsvSchemaError(f"{path}: duplicate column header(s) in raw file: {dupes}")
+
+    df = pd.read_csv(io.StringIO(decoded), dtype=dtype)
+    missing = required_columns - set(df.columns)
+    if missing:
+        raise CsvSchemaError(f"{path}: missing required columns: {sorted(missing)}")
+    return df, raw_bytes
 
 
 def read_csv_with_required_columns(
@@ -58,25 +109,33 @@ def read_csv_with_required_columns(
     column as ``float64`` and collapsed the first two IDs to the SAME
     value (float64 cannot represent every int64 exactly), and leading
     zeroes (``"001"``) were silently discarded by numeric inference.
+
+    See ``read_csv_with_required_columns_and_hash`` for a variant that
+    also returns an ABA-safe dataset-identity hash of the exact bytes
+    this was parsed from.
     """
 
-    with path.open("r", newline="", encoding="utf-8-sig") as fh:
-        raw_headers = next(csv.reader(fh), [])
-    seen: set[str] = set()
-    dupe_set: set[str] = set()
-    for h in raw_headers:
-        if h in seen:
-            dupe_set.add(h)
-        seen.add(h)
-    dupes = sorted(dupe_set)
-    if dupes:
-        raise CsvSchemaError(f"{path}: duplicate column header(s) in raw file: {dupes}")
-
-    df = pd.read_csv(path, dtype=dtype)
-    missing = required_columns - set(df.columns)
-    if missing:
-        raise CsvSchemaError(f"{path}: missing required columns: {sorted(missing)}")
+    df, _raw_bytes = _read_csv_bytes_checked(path, required_columns, dtype)
     return df
+
+
+def read_csv_with_required_columns_and_hash(
+    path: Path, required_columns: set[str], dtype: Optional[dict] = None
+) -> tuple[pd.DataFrame, str]:
+    """As ``read_csv_with_required_columns``, but also returns a hex
+    SHA-256 digest of the exact bytes 'df' was parsed from -- computed
+    from the SAME single read, never a separate later/earlier file open
+    (see ``_read_csv_bytes_checked``'s own docstring for why that
+    structurally closes the ABA-mutation race a caller's own before/after
+    rehash comparison cannot). A caller previously hashing this same path
+    via ``report_metadata.compute_file_sha256``/``compute_dataset_hash``
+    (a second, independent file open) should switch to this hash instead.
+
+    **Added, 2026-07-22 Codex review finding (fifth round).**
+    """
+
+    df, raw_bytes = _read_csv_bytes_checked(path, required_columns, dtype)
+    return df, hashlib.sha256(raw_bytes).hexdigest()
 
 
 def _same_file_identity(a: Path, b: Path) -> bool:

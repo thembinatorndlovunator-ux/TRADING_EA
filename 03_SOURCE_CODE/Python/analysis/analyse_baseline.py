@@ -66,7 +66,7 @@ from analysis.csv_io import (
     assert_valid_stop_geometry,
     atomic_write_dataframe_csv,
     parse_is_long,
-    read_csv_with_required_columns,
+    read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
 )
 from analysis.metrics import (
@@ -372,7 +372,15 @@ def run(
         assert_path_not_same_file(out_path, trades_csv, "output path")
     assert_output_paths_distinct([output_json, per_trade_csv])
 
-    trades = read_csv_with_required_columns(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): 'trades_csv'
+    # was previously parsed here, then SEPARATELY re-read and hashed by
+    # build_report_metadata() far below -- a mutation landing in that gap
+    # (after parsing, before hashing) produced a result computed from the
+    # OLD content while the persisted dataset_hash described the NEW
+    # file. read_csv_with_required_columns_and_hash reads the file exactly
+    # ONCE and derives both the parsed DataFrame and the hash from that
+    # same byte buffer, so the two can never desync.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
@@ -425,6 +433,7 @@ def run(
             spread_note=spread_note,
             slippage_note=slippage_note,
             repo_path=repo_path,
+            dataset_hash_override=trades_csv_hash,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
         atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))

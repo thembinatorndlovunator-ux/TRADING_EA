@@ -33,6 +33,7 @@ around here by ignoring decode errors.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -164,6 +165,23 @@ class JournalReadResult:
     valid_records: list[TradeDecision]
     parse_errors: list[ParseError]
     validation_errors: list[ValidationError]
+    # **Added, 2026-07-22 Codex review finding (fifth round):** a combined
+    # SHA-256 identity of exactly the files/bytes this result was actually
+    # produced from -- computed INLINE during the same read pass that
+    # produced 'valid_records'/'parse_errors'/'validation_errors' above
+    # (see '_read_lines_from_file's own docstring), never via a separate
+    # later re-read of the same paths. A caller should use THIS hash as
+    # the dataset identity for whatever it derives from this result,
+    # instead of independently calling analysis.report_metadata's
+    # compute_dataset_hash on the same file list -- that separate call
+    # (a) reopens each file a second time, reintroducing the ABA-mutation
+    # race this hash exists to avoid, and (b) would also include any
+    # candidate path (e.g. an outward symlink resolving outside
+    # 'directory') that THIS reader itself skipped as out-of-scope,
+    # producing nonempty provenance for zero analyzed rows -- structurally
+    # impossible here, since only files this loop actually entered ever
+    # contribute to the hash.
+    dataset_hash: str = ""
 
     @property
     def total_lines(self) -> int:
@@ -172,7 +190,7 @@ class JournalReadResult:
 
 def _read_lines_from_file(
     path: Path, source_label: str, remaining_budget: int
-) -> tuple[list[tuple[int, dict]], list[ParseError], int]:
+) -> tuple[list[tuple[int, dict]], list[ParseError], int, str]:
     """Parses each non-blank line of 'path' as JSON, STREAMING line-by-line
     (never loading the whole file into memory at once) and raising
     ``JournalReaderLimitError`` as soon as more than 'remaining_budget'
@@ -203,11 +221,28 @@ def _read_lines_from_file(
     the real line on disk is; an oversized line is reported as a single
     ParseError (its remainder consumed and discarded, not re-parsed as
     if it were multiple lines) rather than exhausting memory.**
+
+    **Returns a 4th element, a hex SHA-256 digest, added 2026-07-22 (Codex
+    review finding, fifth round): a hash computed from a SEPARATE, LATER
+    file open (the "hash-then-parse" or "parse-then-rehash" pattern every
+    caller previously used) is a race DETECTOR, not proof the parsed
+    content equals the reported hash -- a deterministic ABA-mutation
+    probe changed the file, had THIS reader parse the changed bytes, then
+    restored the original bytes before a caller's own post-parse rehash,
+    which matched the ORIGINAL (pre-mutation) hash despite the changed
+    content being what was actually parsed. The digest returned here is
+    instead accumulated INLINE, one line at a time, from the very same
+    read calls that produce 'parsed'/'errors' below -- computed from a
+    single open file handle in a single pass, so it is structurally
+    impossible for the hashed bytes to differ from the parsed ones: there
+    is no second read, and therefore no window for the file to change
+    in between.**
     """
 
     parsed: list[tuple[int, dict]] = []
     errors: list[ParseError] = []
     non_blank_count = 0
+    hasher = hashlib.sha256()
 
     try:
         # "utf-8-sig" tolerates a leading UTF-8 BOM (transparently
@@ -222,6 +257,11 @@ def _read_lines_from_file(
                 if raw_line == "":
                     break  # EOF
                 line_number += 1
+                # Hashed INLINE, immediately after this exact read call
+                # and before anything else touches the file -- see the
+                # docstring's ABA-race explanation for why this must
+                # happen here, not via a separate later re-read.
+                hasher.update(raw_line.encode("utf-8"))
 
                 oversized = len(raw_line) > MAX_LINE_BYTES and not raw_line.endswith("\n")
                 if oversized:
@@ -230,6 +270,7 @@ def _read_lines_from_file(
                     # correctly at the start of the NEXT real line.
                     while True:
                         chunk = fh.readline(MAX_LINE_BYTES + 1)
+                        hasher.update(chunk.encode("utf-8"))
                         if chunk == "" or chunk.endswith("\n"):
                             break
 
@@ -301,6 +342,12 @@ def _read_lines_from_file(
                     continue
                 parsed.append((line_number, record))
     except UnicodeDecodeError as exc:
+        # The file was not successfully decodable at all -- the hasher
+        # already reflects whatever raw bytes were actually consumed (via
+        # the per-readline() updates above) up to the failure point;
+        # deliberately NOT re-opening the file a second time to hash "the
+        # whole thing", which would reintroduce exactly the race this
+        # digest exists to avoid.
         errors.append(
             ParseError(
                 source_file=source_label,
@@ -310,7 +357,7 @@ def _read_lines_from_file(
             )
         )
 
-    return parsed, errors, non_blank_count
+    return parsed, errors, non_blank_count, hasher.hexdigest()
 
 
 def read_journal_directory(
@@ -357,6 +404,7 @@ def read_journal_directory(
     all_parse_errors: list[ParseError] = []
     all_validation_errors: list[ValidationError] = []
     total_records_seen = 0
+    per_file_hashes: list[tuple[str, str]] = []
 
     candidate_paths = sorted(files) if files is not None else sorted(directory.glob(pattern))
 
@@ -367,6 +415,12 @@ def read_journal_directory(
         # escape 'directory' -- Path.glob itself does not prevent this.
         # Every legitimate match's immediate parent is 'directory' itself
         # (glob's default is non-recursive); anything else is rejected.
+        # **Also closes, 2026-07-22 Codex review finding (fifth round):**
+        # an outward symlink resolving outside 'directory' is skipped
+        # HERE, before it ever contributes to 'dataset_hash' below --
+        # unlike a caller's separate compute_dataset_hash(glob(...)) call,
+        # which would hash it anyway despite this reader never analyzing
+        # a single row from it.
         if path.resolve().parent != resolved_directory:
             continue
 
@@ -377,11 +431,12 @@ def read_journal_directory(
         # portable-metadata discipline.
         source_label = str(path.resolve().relative_to(resolved_directory))
         remaining_budget = max_records - total_records_seen
-        parsed, parse_errors, non_blank_count = _read_lines_from_file(
+        parsed, parse_errors, non_blank_count, file_hash = _read_lines_from_file(
             path, source_label, remaining_budget
         )
         all_parse_errors.extend(parse_errors)
         total_records_seen += non_blank_count
+        per_file_hashes.append((source_label, file_hash))
 
         for line_number, raw_record in parsed:
             try:
@@ -396,10 +451,20 @@ def read_journal_directory(
                     )
                 )
 
+    # Combined, order-independent identity of every file actually read --
+    # same sorted-manifest scheme as analysis.report_metadata.compute_dataset_hash
+    # (so the two remain comparable in shape), but computed entirely from
+    # the per-file hashes accumulated INLINE above, never a second re-read.
+    combined = hashlib.sha256()
+    for name, file_hash in sorted(per_file_hashes):
+        combined.update(name.encode("utf-8"))
+        combined.update(file_hash.encode("utf-8"))
+
     return JournalReadResult(
         valid_records=all_valid,
         parse_errors=all_parse_errors,
         validation_errors=all_validation_errors,
+        dataset_hash=combined.hexdigest(),
     )
 
 

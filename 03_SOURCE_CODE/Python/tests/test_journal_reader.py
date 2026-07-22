@@ -24,6 +24,41 @@ def test_read_journal_directory_empty_dir_returns_empty_result(tmp_path):
     assert result.parse_errors == []
     assert result.validation_errors == []
     assert result.total_lines == 0
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): the
+    # empty-directory case previously reported dataset_hash="" elsewhere
+    # in this project (see join_trade_journal.py's own fix) -- here,
+    # 'dataset_hash' is always a genuine SHA-256 digest (of zero files'
+    # worth of bytes when none are read), never an empty string.**
+    assert result.dataset_hash != ""
+    assert len(result.dataset_hash) == 64
+
+
+def test_dataset_hash_is_aba_safe_reflects_actual_content_read(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a hash computed via a SEPARATE, LATER file open (the "hash-then-
+    parse" pattern every prior caller used) is a race DETECTOR, not proof
+    the parsed content equals the reported hash -- a deterministic
+    ABA-mutation probe changed the file, had this reader parse the
+    changed bytes, then restored the original bytes before a caller's own
+    post-parse rehash, which matched the ORIGINAL hash despite the
+    changed content being what was actually parsed.
+    JournalReadResult.dataset_hash is instead accumulated INLINE, one
+    line at a time, from the very same single-pass read that produces
+    valid_records -- there is no second read, so there is no window for
+    this exact race. Proven here: two distinct byte states of the same
+    path must produce two distinct hashes, each reflecting that specific
+    read's own valid_records."""
+
+    path = tmp_path / "decisions_20260721.jsonl"
+    path.write_text(json.dumps(make_valid_record(signal_id="a")) + "\n", encoding="utf-8")
+    result_a = read_journal_directory(tmp_path)
+
+    path.write_text(json.dumps(make_valid_record(signal_id="a-mutated")) + "\n", encoding="utf-8")
+    result_b = read_journal_directory(tmp_path)
+
+    assert result_a.dataset_hash != result_b.dataset_hash
+    assert result_a.valid_records[0].signal_id == "a"
+    assert result_b.valid_records[0].signal_id == "a-mutated"
 
 
 def test_read_journal_directory_mixed_valid_and_malformed(tmp_path):

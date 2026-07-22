@@ -686,43 +686,47 @@ def test_news_input_named_like_derived_errors_path_rejected(tmp_path):
         run(tmp_path, news_path, output_csv=out_dir / "joined.csv")
 
 
-def test_news_csv_mutated_between_hash_and_read_is_detected(tmp_path, monkeypatch):
-    """Regression for a Codex review finding (2026-07-22, fourth round):
-    the "post-parse" re-hash previously ran BEFORE news_events_csv was
-    actually read -- mutating the news CSV inside its reader produced a
-    blackout result computed from the NEW bytes while the check still
-    compared against the OLD hash, since the check ran before the read
-    it was meant to guard. Simulated here by mutating the news CSV inside
-    a monkeypatched read_csv_with_required_columns, i.e. exactly the
-    window between this module's hash call and its actual news-CSV read."""
-
-    import analysis.join_news_events as jne_module
-    from analysis.csv_io import read_csv_with_required_columns as real_read_csv
+def test_aba_mutation_of_news_csv_cannot_desync_hash_from_parsed_content(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    the previous "hash, then parse, then re-hash and compare" pattern
+    (rounds 3-4) was a race DETECTOR, not proof the parsed content equals
+    the reported hash. A deterministic ABA-mutation probe demonstrated
+    this directly for news_events_csv: change the file, let this module
+    parse the CHANGED bytes, then restore the ORIGINAL bytes before the
+    post-parse rehash ran -- the rehash matched the ORIGINAL hash despite
+    the changed content being what was actually analyzed. There is no
+    longer a separate rehash to fool: read_csv_with_required_columns_and_hash
+    computes its hash from the exact same single read that produces the
+    parsed DataFrame -- there is only ever ONE read of the file, so an
+    ABA sequence has no window to exploit. Proven here the same way as
+    join_trade_journal's equivalent test: two distinct byte states of the
+    SAME path must produce two distinct hashes, each matching what that
+    call actually parsed."""
 
     _write_journal(tmp_path, [make_valid_record()])
     news_path = tmp_path / "news.csv"
-    _write_valid_news(news_path)
+    _write_valid_news(news_path)  # event_name="NFP" (see _write_valid_news)
+    summary_json_a = tmp_path / "out_a" / "summary.json"
+    run(tmp_path, news_path, summary_json=summary_json_a, repo_path=REPO_ROOT)
+    hash_a = json.loads(summary_json_a.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
 
-    def mutating_read(path, *args, **kwargs):
-        if path == news_path:
-            _write_news(
-                news_path,
-                [
-                    {
-                        "event_id": "e1",
-                        "event_name": "NFP -- MUTATED",
-                        "currency": "USD",
-                        "importance": 2,
-                        "scheduled_utc": "2026-07-21T14:10:00Z",
-                    }
-                ],
-            )
-        return real_read_csv(path, *args, **kwargs)
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP -- MUTATED",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+    summary_json_b = tmp_path / "out_b" / "summary.json"
+    run(tmp_path, news_path, summary_json=summary_json_b, repo_path=REPO_ROOT)
+    hash_b = json.loads(summary_json_b.read_text(encoding="utf-8"))["metadata"]["dataset_hash"]
 
-    monkeypatch.setattr(jne_module, "read_csv_with_required_columns", mutating_read)
-
-    with pytest.raises(RuntimeError):
-        jne_module.run(tmp_path, news_path)
+    assert hash_a != hash_b
 
 
 def test_new_journal_file_added_after_hash_is_not_silently_analyzed(tmp_path, monkeypatch):
