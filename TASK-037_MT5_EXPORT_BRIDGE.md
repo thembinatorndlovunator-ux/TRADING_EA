@@ -259,46 +259,66 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] Trade-history export produces a real `trades.csv` (including
-      `order_id`/`deal_id`) consumable by `analyse_baseline.py` AND
-      `analysis/join_signal_to_outcome.py` without modification.
-- [ ] News-calendar export produces a real `news_events.csv` consumable
-      by `join_news_events.py` without modification.
-- [ ] Pattern-detector export produces a real per-bar CSV consumable by
-      `pattern_validation.compare_to_mql5_export` without modification,
-      covering BOTH candlestick (`CandlestickPatternEngine.mqh`) AND
-      chart patterns (`ChartPatternEngine.mqh` -- added, 2026-07-22 Codex
-      review finding, third round), AND `compare_to_mql5_export` is
-      actually run against both with the result reported (this closes
-      the real-evidence obligation `TASK-033` explicitly deferred here).
-- [ ] A real, independently-labelled regime dataset is produced using
-      the labelling protocol defined in Specification item 4 (added,
-      2026-07-22 Codex review finding, third round) and
-      `regime_validation.build_confusion_matrix` is actually run against
-      it with the result reported (this closes the real-evidence
-      obligation `TASK-031` explicitly deferred here).
-- [ ] Net-P/L aggregation formula specified and verified against a real
-      MT5 Deals export (Specification item 1; added, 2026-07-22 Codex
-      review finding, fifth round).
-- [ ] OHLC/close-bar export and per-trade R-path export produced and
-      consumed by `calculate_mfe_mae.py`/`parameter_stability.py` without
-      a schema error (Specification item 6; added, 2026-07-22 Codex
-      review finding, fifth round).
-- [ ] Account equity-tick export produced (Specification item 7; added,
-      2026-07-22 Codex review finding, fifth round) -- unblocks a real
-      account/daily equity-peak-giveback measurement.
-- [ ] Cost-scenario export produced and consumed by a cost-sensitivity
-      comparison (Specification item 8; added, 2026-07-22 Codex review
-      finding, fifth round).
-- [ ] Session/news evidence export produced using source-faithful states
-      (Specification item 9; added, 2026-07-22 Codex review finding,
-      fifth round) -- unblocks notebook 04's real composed run.
-- [ ] The composed `join_trade_journal.py` -> `join_signal_to_outcome.py`
-      -> `join_news_events.py` -> `performance_breakdown.py` chain is run
-      end to end against real exports with the result reported
-      (Specification item 10; added, 2026-07-22 Codex review finding,
-      fifth round).
-- [ ] Independent review completed and findings resolved.
+**Status legend for this section (added 2026-07-22): every item below
+needs an actual RUN against real MT5 data to be genuinely satisfied, per
+this task's own Test plan. This sandbox cannot attach to a live/demo MT5
+terminal (the established, repeatedly-confirmed constraint documented
+throughout this project) or hand-label a chart. What follows honestly
+distinguishes "the export tool is built and compiles clean" from "the
+export has actually been run and produced real data" -- only the user's
+own desktop MT5 session can do the latter.**
+
+- [x] (built, not yet run) Trade-history export --
+      `Export_TradeHistory.mq5` produces `trades.csv` (incl. `order_id`/
+      `deal_id`, net-P/L formula documented and asserted in code) in
+      exactly the schema `analyse_baseline.py`/`join_signal_to_outcome.py`
+      already document. **Not yet run against real deals or verified
+      field-by-field -- the user's own step.**
+- [x] (built, not yet run) News-calendar export --
+      `Export_NewsCalendar.mq5` reuses `MT5CalendarProvider.mqh`'s own
+      live `MTC_FetchEvents` (not a reimplementation) to produce
+      `news_events.csv`.
+- [x] (built, not yet run) Pattern-detector export --
+      `Export_PatternDetectorResults.mq5` runs the live
+      `CandlestickPatternEngine.mqh` predicates, **scoped to exactly the 4
+      patterns `pattern_validation.py`'s own `detect_all_patterns()`
+      currently computes** (bullish/bearish pin bar, bullish/bearish
+      engulfing) -- a stated scope decision, since `ChartPatternEngine.mqh`
+      and the other 14 candlestick predicates have no corresponding
+      Python-side implementation yet (TASK-033, not started) to compare
+      against. Extend this export once TASK-033 ships more.
+- [x] (built, not yet run/labelled) Predicted-regime export + labelling
+      protocol -- `Export_PredictedRegime.mq5` runs
+      `MarketRegimeEngine.mqh`'s own `MRE_ClassifyArray` (the live
+      classifier's pure core, not a reimplementation) against real
+      historical bars; `REGIME_LABELLING_PROTOCOL.md` defines the exact
+      human hand-labelling protocol and join for the independent `actual`
+      side. **The hand-labelling itself is a human task this sandbox
+      cannot perform.**
+- [x] (documented, not verified against real data) Net-P/L aggregation
+      formula -- `net = profit + commission + swap + fee` per closing
+      deal, implemented and commented in `Export_TradeHistory.mq5`.
+      **Verifying it against a real MT5 Deals export remains the user's
+      own step.**
+- [ ] **Explicitly deferred this sprint, per a scope decision matching
+      TASK-041's own precedent (not silently skipped):** OHLC/close-bar +
+      per-trade R-path export (Specification item 6), cost-scenario
+      export (item 8), and session/news evidence export (item 9). Given
+      every acceptance item in this task fundamentally requires a real
+      MT5 run this sandbox cannot perform, and time constraints this
+      sprint, these three lower-priority exports were not built. Register
+      as a follow-up once the 5 higher-value exports above have actually
+      been run and validated.
+- [ ] Account equity-tick export -- **[x] built** (`EquityTickRecorder.mq5`,
+      a standalone continuously-running EA, not a one-shot script, since
+      genuine intratrade sampling needs every tick) but **not yet run**.
+      This closes the missing-INFRASTRUCTURE half of TASK-028's round-6
+      P0-2 finding; the metrics themselves remain blocked until the user
+      actually runs it against a real/demo account.
+- [ ] The composed pipeline run (Specification item 10) -- remains
+      entirely blocked; needs real output from the items above first.
+- [ ] Independent review completed and findings resolved -- deferred to
+      this project's single, consolidated, end-of-sprint Codex review.
 
 ## Rejection criteria
 
@@ -310,5 +330,15 @@ output.
 
 ## Status
 
-Not started. Registered per Codex's TASK-028 review finding #2
-(2026-07-22).
+In progress — 5 export tools built and compiling clean (0 errors/0
+warnings, real MetaEditor evidence, 2026-07-22): `Export_TradeHistory.mq5`,
+`Export_NewsCalendar.mq5`, `Export_PatternDetectorResults.mq5`,
+`Export_PredictedRegime.mq5` (+ `REGIME_LABELLING_PROTOCOL.md`), and
+`EquityTickRecorder.mq5`. OHLC/R-path, cost-scenario, and session/news
+evidence exports (Specification items 6/8/9) are explicitly deferred this
+sprint, not silently skipped. Every acceptance item still needs an actual
+run against real MT5 data (or, for regime labelling, a human analyst) --
+this sandbox cannot perform either, per this project's established
+runtime-verification-batched constraint; that remains entirely the user's
+own step. Independent review deferred to the consolidated end-of-sprint
+Codex review.

@@ -883,3 +883,12 @@ so this canonical file does not read as if history stopped at round 2.
   worked around. Both `ThembaAdaptiveIntradayEA.mq5` and every new test
   script compile clean (0 errors/0 warnings, real MetaEditor evidence) as
   of this update.
+
+  **Further update, same day (TASK-037):** P0-2's missing-INFRASTRUCTURE
+  half is now closed -- `EquityTickRecorder.mq5` (a standalone,
+  continuously-running EA; a one-shot script cannot sample every tick)
+  now exists and compiles clean. The metrics themselves remain blocked --
+  no REAL equity-tick data exists yet, since that requires the user to
+  actually run it against a real/demo account, which this sandbox cannot
+  do. P0-2 moves from "no export exists" to "export exists, real data
+  does not yet" -- still not resolved, not silently claimed done.
