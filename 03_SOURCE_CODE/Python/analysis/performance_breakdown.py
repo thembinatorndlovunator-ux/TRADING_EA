@@ -96,21 +96,38 @@ OPTIONAL_DIMENSIONS = (
 def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
     """If 'entry_time' is present, derives 'hour_of_day' (UTC, 0-23) and
     'day_of_week' (Monday..Sunday) columns from it -- real, derived
-    dimensions, not invented session buckets. A caller that already
-    supplies these columns directly is left untouched."""
+    dimensions, not invented session buckets.
+
+    **Fixed, 2026-07-22 Codex review finding (fourth round): a
+    caller-supplied 'hour_of_day'/'day_of_week' column was previously
+    trusted UNCONDITIONALLY whenever it already existed, never recomputed
+    or cross-checked against 'entry_time' -- a direct probe with a row at
+    2026-01-01T02:00:00Z carrying hour=15/day="Sunday" (the true UTC
+    values are hour 2 and Thursday) was accepted and grouped under the
+    WRONG values. Since 'entry_time' is the authoritative source whenever
+    it is present, the derived columns are now always RECOMPUTED from it,
+    silently overriding any caller-supplied value rather than trusting an
+    unverifiable one -- there is no way to distinguish a genuinely
+    correct caller-supplied value from a wrong one without recomputing
+    it anyway, so recomputing is strictly safer than trusting.**
+    """
 
     if "entry_time" not in df.columns:
         return df
     df = df.copy()
     parsed = parse_utc_series(df["entry_time"])
-    if "hour_of_day" not in df.columns:
-        df["hour_of_day"] = parsed.dt.hour
-    if "day_of_week" not in df.columns:
-        df["day_of_week"] = parsed.dt.day_name()
+    df["hour_of_day"] = parsed.dt.hour
+    df["day_of_week"] = parsed.dt.day_name()
     return df
 
 
-def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str], seed: int = 42) -> pd.DataFrame:
+def compute_breakdown(
+    df: pd.DataFrame,
+    dimensions: Sequence[str],
+    seed: int = 42,
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
+) -> pd.DataFrame:
     """Groups 'df' by 'dimensions' (each one MUST be a member of
     OPTIONAL_DIMENSIONS -- **fixed, 2026-07-22 Codex review finding
     (third round): this previously accepted ANY column present in 'df',
@@ -157,18 +174,26 @@ def compute_breakdown(df: pd.DataFrame, dimensions: Sequence[str], seed: int = 4
         row: dict = dict(zip(dimensions, key_values))
         row["n_trades"] = len(group_df)
 
-        wr = win_rate([p > 0 for p in profits])
+        wr = win_rate([p > 0 for p in profits], confidence=confidence)
         row["win_rate"] = wr.win_rate
         row["win_rate_ci_lower"] = wr.ci_lower
         row["win_rate_ci_upper"] = wr.ci_upper
 
-        exp = expectancy(profits, seed=seed)
+        # **Fixed, 2026-07-22 Codex review finding (fourth round):**
+        # n_resamples/confidence were previously hard-wired to
+        # expectancy()'s own hidden defaults and never exposed.
+        exp = expectancy(profits, n_resamples=n_resamples, seed=seed, confidence=confidence)
         row["expectancy_dollars"] = exp.expectancy
         row["expectancy_ci_lower"] = exp.ci_lower
         row["expectancy_ci_upper"] = exp.ci_upper
 
         if has_r_multiple:
-            exp_r = expectancy(group_df["r_multiple"].tolist(), seed=seed)
+            exp_r = expectancy(
+                group_df["r_multiple"].tolist(),
+                n_resamples=n_resamples,
+                seed=seed,
+                confidence=confidence,
+            )
             row["expectancy_r"] = exp_r.expectancy
             row["expectancy_r_ci_lower"] = exp_r.ci_lower
             row["expectancy_r_ci_upper"] = exp_r.ci_upper
@@ -207,6 +232,13 @@ def run(
     *,
     symbol: Optional[str] = None,
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (fourth round): these were
+    # previously hard-wired to expectancy()'s/win_rate()'s own hidden
+    # defaults, never exposed at the run()/CLI boundary or persisted.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Reads 'trades_csv' (the unified joined schema -- see module
@@ -219,6 +251,8 @@ def run(
     2026-07-22 Codex review finding (third round): this recorded the
     supplied seed in metadata but never actually passed it to
     compute_breakdown(), which always used a hidden default instead.**
+    'n_resamples'/'confidence' are likewise threaded through and persisted
+    (Codex review finding, fourth round).
     """
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
@@ -236,7 +270,9 @@ def run(
         assert_finite_columns(trades, ["r_multiple"], trades_csv)
 
     trades = _derive_time_dimensions(trades)
-    result = compute_breakdown(trades, dimensions, seed=seed)
+    result = compute_breakdown(
+        trades, dimensions, seed=seed, n_resamples=n_resamples, confidence=confidence
+    )
 
     if output_csv is not None:
         output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -249,7 +285,12 @@ def run(
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [trades_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -257,6 +298,12 @@ def run(
                 "dimensions": list(dimensions),
                 "n_groups": len(result),
                 "n_trades_total": int(trades["trade_id"].nunique()),
+                # **Added, 2026-07-22 Codex review finding (fourth round):**
+                # n_resamples/confidence were previously omitted despite
+                # every per-group win_rate/expectancy interval depending
+                # on them.
+                "n_resamples": n_resamples,
+                "confidence": confidence,
             },
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -272,6 +319,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-resamples", type=int, default=2000)
+    parser.add_argument("--confidence", type=float, default=0.95)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -285,6 +336,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             summary_json=args.summary_json,
             symbol=args.symbol,
             seed=args.seed,
+            n_resamples=args.n_resamples,
+            confidence=args.confidence,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

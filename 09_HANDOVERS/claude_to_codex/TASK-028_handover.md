@@ -236,3 +236,131 @@ All 11 notebooks re-executed via `jupyter execute`, all exit 0.
    other 7 scripts; TASK-036/037/038 are registered but not started.
    Confirm these are accurately disclosed as incomplete, not
    overclaimed.
+
+---
+
+## UPDATE — third independent review round resolved (2026-07-22)
+
+**Added, 2026-07-22 Codex review finding (fourth round): this handover
+previously ended at the second review round, with no update reflecting
+round 3's remediation or round 4's review target at all -- both closed
+here.**
+
+Everything in this section covers the remediation of your third review
+pass (`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in
+place, 17 findings: 3 P0/10 P1/4 P2, reviewed against HEAD `fd07473`),
+committed as `b88b63a`. Full detail in that commit's own message and in
+`TASK-028_PYTHON_STATISTICAL_LAB.md`'s Reviewer section — not duplicated
+here. Highlights: `join_signal_to_outcome.py` (new, the durable
+journal-decision-to-trade-outcome join); seed-threading fixed
+project-wide (`seed or 42` silently dropped `seed=0`); a real
+look-ahead regression in `trade_math.compute_mfe_mae` from round 2's own
+fix, corrected; `ruff format` declared and run as a real gate (46 files
+reformatted); numerous task-ledger/canonical-history corrections.
+
+**Current, real state at that commit:** 395 tests passing, ruff (incl.
+`ruff format`) and mypy both clean, all 11 notebooks re-executed.
+
+## UPDATE — fourth independent review round resolved (2026-07-22)
+
+Everything in this section covers the remediation of your fourth review
+pass (`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in
+place, 18 findings: 3 P0/11 P1/4 P2, reviewed against HEAD `b88b63a`).
+Full detail in `TASK-028_PYTHON_STATISTICAL_LAB.md`'s Reviewer section
+and in the branch's commit history — not duplicated here.
+
+**What changed this round (highlights, not exhaustive):**
+
+1. **Required deliverables that were still absent, now built:**
+   `metrics.compute_equity_peak_giveback` (the master-prompt-required
+   "Equity-peak giveback" metric, ported from
+   `TASK-002_PHASE2_SPECIFICATION.md`'s own arm/trigger formula) and the
+   remaining `TEST_PLAN.md` baseline-comparison minimum surface
+   (recovery factor, longest losing streak, average winner/loser,
+   duration, trades/day), wired into `analyse_baseline.py`. A real
+   session/mode/news OUTCOME breakdown (win rate/expectancy by
+   `session_state`/`intraday_mode`/`news_state`/`in_news_blackout`) on
+   clearly-labelled synthetic data in notebook 04 and
+   `tests/test_performance_breakdown.py` — the dimensions already existed
+   in `performance_breakdown.py`, only the demonstration/test was
+   missing. Spread/slippage cost-scenario SENSITIVITY analysis remains a
+   disclosed, separate, still-open deliverable -- not attempted this
+   round.
+2. **`join_signal_to_outcome.py` redesigned** to fix several integrity
+   defects your review found: a null/blank journal `order_id` is now
+   correctly filtered as a normal "unsubmitted decision" instead of
+   aborting the entire journal; `deal_id` is now actually read and
+   validated (null/duplicate checks, matching `trade_id`); durable
+   identifiers (`order_id`/`deal_id`/`trade_id`) are read as `str` via a
+   new `dtype` parameter on `read_csv_with_required_columns`, never
+   pandas' inferred numeric type (closes the float64-collapse and
+   leading-zero-loss counterexamples); shared fields (e.g. `symbol`)
+   between journal and trade records now raise a row-level conflict error
+   on disagreement instead of silently letting the trade row win;
+   partial fills are aggregated into ONE output row per `order_id`
+   (position), not one row per fill, so a downstream statistical
+   pipeline no longer double-counts correlated fills as independent
+   observations.
+3. **Numerous smaller correctness/provenance fixes:** derived-sidecar
+   path collisions in `join_news_events.py`/`join_trade_journal.py`
+   fixed by deriving every implicit path before the collision check
+   runs; the hash/re-hash race in `join_news_events.py` fixed (the
+   "post-parse" hash previously ran before the news CSV was actually
+   read); the atomic CSV writer's missing UTF-8 encoding fixed; the
+   MFE/MAE same-bar case now correctly rejected as unmeasurable at bar
+   resolution instead of using the exit bar's full contaminated range;
+   duplicate-bar checks moved to run after UTC normalization;
+   `parameter_stability.py`'s R-path CSV schema hardened (blank
+   path_id, duplicate/fractional/negative bar_index, missing index 0,
+   nonzero entry R all now rejected); giveback/news/pattern numeric
+   controls validated instead of silently clamped;
+   `compare_releases.py`'s comparability contract strengthened
+   (mandatory shared `period_start`/`period_end` window instead of a
+   weaker overlap check, role-specific broker/timeframe/modelling_mode/
+   set_file manifest fields cross-checked for equality, role-preserving
+   per-dataset hashes); provenance (`spread_note`/`slippage_note`) now
+   threaded through every pipeline that persists metadata;
+   resample/confidence config now exposed and persisted in
+   `walk_forward.py`/`performance_breakdown.py`/`analyse_giveback.py`;
+   post-compute finiteness checks added to `metrics.py`/
+   `compare_releases.py` (sums of individually-finite values can still
+   overflow); a caller-supplied `hour_of_day`/`day_of_week` is now always
+   recomputed from `entry_time`, never trusted; journal-reader hardening
+   (a single oversized physical line is now bounded while reading, not
+   just when retained in an error record; `ValidationError.raw_record`
+   size-capped; CLI `RuntimeError`/`JournalReaderLimitError` handling
+   added to `join_trade_journal.py`/`join_news_events.py`); TASK-031/
+   033/034/035/036/037 task-ledger corrections (transition-history
+   buffer distinguished from hysteresis state, `session_state` bucket
+   thresholds defined, chart-pattern export added to TASK-037's scope,
+   score-correlation misattribution to TASK-024 corrected throughout).
+
+**Current, real state (verify independently, don't trust this line):**
+459 tests passing, `ruff check .` all checks passed, `ruff format
+--check .` all files already formatted, `mypy analysis data_collection
+--ignore-missing-imports` success (24 source files). All 11 notebooks
+re-executed via `jupyter execute`, all exit 0.
+
+### What to specifically re-audit this round
+
+1. **The `join_signal_to_outcome.py` redesign** — this is the highest-risk
+   change: re-derive the partial-fill aggregation logic by hand against
+   `tests/test_join_signal_to_outcome.py`'s own fixtures, and confirm the
+   `dtype=str` fix actually prevents the float64-collapse counterexample
+   (a test for this exists — verify it actually exercises the bug, not
+   just the fix).
+2. **`compute_equity_peak_giveback`'s formula** — this is a genuinely new,
+   somewhat interpretive metric (TASK-002's spec gives an exact formula
+   for the DAILY-resetting variant; this module applies it at ACCOUNT
+   scope since no daily-reset intraday equity data exists yet). Confirm
+   the arm/trigger/re-arm state machine matches the spec's intent, and
+   that the "BALANCE-based, not equity" caveat is applied consistently
+   with the rest of `analyse_baseline.py`.
+3. **`compare_releases.py`'s now-mandatory `period_start`/`period_end`** —
+   confirm every trade in both datasets is actually checked against the
+   window (not just the reported data-driven period), and that this
+   closes the "touching ranges" counterexample your review reproduced.
+4. **The journal-reader line-length cap** — confirm the
+   `readline(MAX_LINE_BYTES + 1)` approach genuinely bounds memory for an
+   oversized line with no trailing newline, and that subsequent lines in
+   the same file are still read correctly afterward (not desynced).

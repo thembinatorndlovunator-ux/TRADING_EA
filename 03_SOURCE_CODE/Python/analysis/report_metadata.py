@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
-PIPELINE_VERSION = "0.2.0"  # bump when a pipeline's OUTPUT SHAPE changes,
+PIPELINE_VERSION = "0.3.0"  # bump when a pipeline's OUTPUT SHAPE changes,
 # not on every code edit -- matches this
 # project's #property version discipline of
 # marking meaningful revisions, not churn.
@@ -30,6 +30,15 @@ PIPELINE_VERSION = "0.2.0"  # bump when a pipeline's OUTPUT SHAPE changes,
 # changes (renamed fields, new CI columns,
 # new required checks) directly contrary to
 # this comment's own stated rule.
+# **Bumped again, 2026-07-22 Codex review
+# finding (fourth round):** 0.2.0 -> 0.3.0 --
+# b88b63a changed output shapes (renamed
+# guard_helped_rate fields, added
+# monte_carlo.py's bound_type/model/caveat
+# keys, join_signal_to_outcome.py's new
+# schema, compare_releases.py's mandatory
+# period/manifest fields), which this same
+# comment's rule required a bump for.
 
 
 class GitMetadataError(RuntimeError):

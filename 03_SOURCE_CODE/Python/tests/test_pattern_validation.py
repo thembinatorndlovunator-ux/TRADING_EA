@@ -166,6 +166,36 @@ def test_detect_all_patterns_returns_one_row_per_bar():
     assert bool(df.iloc[0]["bullish_engulfing"]) is True
 
 
+def test_negative_size_window_rejected():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a negative size_window makes size_percentile's own "total <= 0"
+    branch return 1.0 ("no comparison history -- cannot be disproven as
+    large"), silently turning any bar into an automatic 100th-percentile
+    pattern pass regardless of its real size."""
+
+    opens = [99.0, 110.0]
+    highs = [113.0, 111.0]
+    lows = [98.0, 99.0]
+    closes = [112.0, 100.0]
+    with pytest.raises(ValueError):
+        detect_all_patterns(opens, highs, lows, closes, size_window=-1)
+
+
+def test_negative_trend_lookback_rejected():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a negative trend_lookback bypasses the k + trend_lookback >= n
+    upper-bound guard while still being used as a list index, so
+    closes[k + trend_lookback] can silently wrap around to the end of
+    the array (Python negative-index semantics) instead of raising."""
+
+    opens = [99.0, 110.0, 105.0]
+    highs = [113.0, 111.0, 108.0]
+    lows = [98.0, 99.0, 100.0]
+    closes = [112.0, 100.0, 104.0]
+    with pytest.raises(ValueError):
+        detect_all_patterns(opens, highs, lows, closes, trend_lookback=-1)
+
+
 def test_run_missing_column_raises(tmp_path):
     path = tmp_path / "ohlc.csv"
     pd.DataFrame({"open": [1.0]}).to_csv(path, index=False)

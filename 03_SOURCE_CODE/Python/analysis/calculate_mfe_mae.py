@@ -81,6 +81,11 @@ def run(
     *,
     symbol: Optional[str] = None,
     seed: Optional[int] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> MfeMaeRunResult:
     """Reads 'trades_csv' and 'bars_csv', computes MFE/MAE per trade.
@@ -110,10 +115,18 @@ def run(
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["high", "low"], bars_csv)
     assert_high_low_geometry(bars, "high", "low", bars_csv)
-    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): the
+    # duplicate-(symbol, timestamp) check previously ran on the RAW
+    # string timestamp column, BEFORE UTC normalization -- two raw
+    # spellings of the same instant ("...Z" and "...+00:00") pass as
+    # distinct strings, then become the same instant once parsed, so a
+    # direct probe with two such rows was accepted with both conflicting
+    # bars silently entering the measurement. Parse first, then enforce
+    # canonical-time uniqueness.**
     bars = bars.copy()
     bars["timestamp"] = parse_utc_series(bars["timestamp"])
+    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
     results: list[MfeMaeResult] = []
     row_errors: list[dict] = []
@@ -178,7 +191,12 @@ def run(
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv, bars_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [trades_csv, bars_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -202,6 +220,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--errors-json", type=Path, default=None)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -215,6 +235,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             errors_json=args.errors_json,
             symbol=args.symbol,
             seed=args.seed,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, TradesSchemaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

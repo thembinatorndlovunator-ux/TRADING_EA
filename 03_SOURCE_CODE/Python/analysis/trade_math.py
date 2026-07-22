@@ -61,6 +61,23 @@ class BarAlignmentError(ValueError):
     docstring for why this matters."""
 
 
+class ZeroDurationTradeUnmeasurableError(ValueError):
+    """Raised when entry_time == exit_time (a trade with zero recorded
+    duration). Under this module's own bar-OPEN convention, equal
+    entry/exit timestamps describe a trade open for ZERO time at the bar
+    open instant -- MFE/MAE cannot be measured from that single bar's
+    full high/low range, since that range spans the bar's ENTIRE
+    [timestamp, next_bar_open) period, almost all of which occurs AFTER
+    the trade already exited. **Fixed, 2026-07-22 Codex review finding
+    (fourth round): a previous same-bar exception used the single aligned
+    bar's full range for exactly this case -- a probe with one bar
+    (high=999, low=0, entry=100, stop=98) returned mfe_r=449.5 and a
+    large-magnitude mae_r, almost entirely from price action after the
+    recorded exit. This is genuinely unmeasurable at bar resolution
+    (would require tick/sub-bar data), so it is now rejected outright
+    rather than silently approximated.**"""
+
+
 def compute_mfe_mae(
     trade_id: str,
     is_long: bool,
@@ -90,9 +107,17 @@ def compute_mfe_mae(
     ``[entry_time, exit_time)`` -- the exit bar itself is excluded
     (its price action happens after the exit instant), while the entry
     bar IS included (its price action begins at the entry instant). The
-    one exception is a same-bar trade (``entry_time == exit_time``),
-    where excluding "the bar at exit_time" would exclude the ONLY bar
-    the trade was ever open during -- that single bar is used instead.
+    one exception previously used was a same-bar trade
+    (``entry_time == exit_time``), which used the single aligned bar
+    instead. **Fixed, 2026-07-22 Codex review finding (fourth round):
+    that same-bar case is a ZERO-DURATION trade at the bar-open instant
+    -- that bar's FULL high/low range spans its entire
+    [timestamp, next_bar_open) period, almost all of which occurs AFTER
+    the trade already exited (a probe with one extreme bar returned
+    mfe_r=449.5 almost entirely from post-exit price action). This is
+    genuinely unmeasurable at bar resolution (it would require tick/
+    sub-bar data), so it now raises ZeroDurationTradeUnmeasurableError
+    instead of approximating it from that bar's range.**
 
     **Alignment is still REQUIRED, not silently tolerated:** entry_time
     and exit_time must each exactly match a bar timestamp present in
@@ -103,9 +128,11 @@ def compute_mfe_mae(
     misalignment across multiple bars. Raises BarAlignmentError if
     either timestamp is not an exact bar timestamp.
 
-    Raises NoBarsInWindowError if no bar falls within the window -- a
-    trade with a computable MFE/MAE of exactly 0.0 is different from a
-    trade with no data at all, and the two must never be conflated.
+    Raises ZeroDurationTradeUnmeasurableError if entry_time == exit_time
+    (see above). Raises NoBarsInWindowError if no bar falls within the
+    window -- a trade with a computable MFE/MAE of exactly 0.0 is
+    different from a trade with no data at all, and the two must never
+    be conflated.
     """
 
     if entry_time > exit_time:
@@ -124,9 +151,13 @@ def compute_mfe_mae(
         )
 
     if entry_time == exit_time:
-        window = bars[bars["timestamp"] == entry_time]
-    else:
-        window = bars[(bars["timestamp"] >= entry_time) & (bars["timestamp"] < exit_time)]
+        raise ZeroDurationTradeUnmeasurableError(
+            f"trade_id={trade_id}: entry_time == exit_time ({entry_time}) -- MFE/MAE for a "
+            "zero-duration trade is unmeasurable at bar resolution (see "
+            "ZeroDurationTradeUnmeasurableError's own docstring); requires tick/sub-bar data"
+        )
+
+    window = bars[(bars["timestamp"] >= entry_time) & (bars["timestamp"] < exit_time)]
     if window.empty:
         raise NoBarsInWindowError(
             f"trade_id={trade_id}: no bars found between {entry_time} and {exit_time}"

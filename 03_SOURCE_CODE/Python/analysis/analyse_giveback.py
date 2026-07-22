@@ -117,8 +117,50 @@ def run(
     # real seed of 0, a real reproducibility-breaking mismatch. Always an
     # explicit int now, matching monte_carlo.py/compare_releases.py.**
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> GivebackRunResult:
+    # **Added, 2026-07-22 Codex review finding (fourth round):** none of
+    # the five giveback-model parameters were validated or persisted --
+    # passing NaN for all five previously produced "valid" comparisons
+    # with zero row errors, because should_giveback_close_v637/v811's own
+    # max()/min() clamps silently select an effective value from a NaN
+    # input (Python's max(a, nan) returns 'a', since 'nan > a' is False).
+    # A caller-supplied NaN/inf is not a legitimate model configuration
+    # (unlike a merely out-of-range-but-finite value, which mirrors the
+    # live guard's own deliberate clamp behavior) and must be rejected
+    # outright rather than silently substituted.
+    model_params = {
+        "v637_arm_rr": v637_arm_rr,
+        "v637_giveback_percent": v637_giveback_percent,
+        "v637_floor_r": v637_floor_r,
+        "v811_arm_r": v811_arm_r,
+        "v811_floor_r": v811_floor_r,
+    }
+    non_finite_params = {
+        name: value for name, value in model_params.items() if not math.isfinite(value)
+    }
+    if non_finite_params:
+        raise ValueError(
+            f"analyse_giveback: model parameters must be finite, got non-finite: {non_finite_params}"
+        )
+    # The effective (post-clamp) values applied by exit_simulation.py's own
+    # should_giveback_close_v637/v811 -- mirrored here (not re-derived) so
+    # the requested vs. effective distinction can be disclosed in the
+    # summary artifact even when a caller passes an out-of-range-but-finite
+    # setting that gets silently clamped downstream.
+    effective_params = {
+        "v637_arm_rr": max(0.25, v637_arm_rr),
+        "v637_giveback_percent": max(10.0, min(90.0, v637_giveback_percent)),
+        "v637_floor_r": v637_floor_r,
+        "v811_arm_r": max(0.3, v811_arm_r),
+        "v811_floor_r": max(0.0, v811_floor_r),
+    }
+
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
     for out_path in (output_csv, summary_json):
@@ -136,10 +178,16 @@ def run(
     assert_unique_ids(trades, "trade_id", trades_csv)
     assert_finite_columns(trades, ["entry_price", "stop_price"], trades_csv)
     assert_finite_columns(bars, ["close"], bars_csv)
-    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): the
+    # duplicate-(symbol, timestamp) check previously ran on the RAW
+    # string timestamp column, BEFORE UTC normalization -- two raw
+    # spellings of the same instant ("...Z" and "...+00:00") pass as
+    # distinct strings, then become the same instant once parsed. Parse
+    # first, then enforce canonical-time uniqueness.**
     bars = bars.copy()
     bars["timestamp"] = parse_utc_series(bars["timestamp"])
+    assert_unique_composite_key(bars, ["symbol", "timestamp"], bars_csv)
 
     comparisons: list[TradeGivebackComparison] = []
     row_errors: list[dict] = []
@@ -256,13 +304,25 @@ def run(
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv, bars_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [trades_csv, bars_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         summary = {
             "metadata": metadata.to_dict(),
             "n_trades_compared": len(comparisons),
             "n_row_errors": len(row_errors),
             "row_errors": row_errors,
+            # **Added, 2026-07-22 Codex review finding (fourth round):**
+            # requested vs. effective (post-clamp) model parameters are
+            # both persisted, so an out-of-range-but-finite setting's
+            # silent clamp is disclosed in the artifact rather than
+            # hidden.
+            "requested_model_params": model_params,
+            "effective_model_params": effective_params,
         }
         for model in ("v637", "v811"):
             triggered = [c for c in comparisons if getattr(c, f"{model}_trigger_r") is not None]
@@ -285,6 +345,26 @@ def run(
                     boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed)
                     r_diff_ci_lower = boot.ci_lower
                     r_diff_ci_upper = boot.ci_upper
+            # **Added, 2026-07-22 Codex review finding (fourth round):**
+            # the conditional mean above cannot be compared like-for-like
+            # between v637 and v811 (their triggered subsets are
+            # generally different trades of different sizes) -- a
+            # full-cohort mean effect magnitude, using the SAME
+            # denominator (every comparison) and r_diff's own documented
+            # 0.0-when-never-triggered convention for both models, is the
+            # actual like-for-like comparison figure.
+            full_cohort_r_diffs = [getattr(c, f"{model}_r_diff") for c in comparisons]
+            mean_r_diff_full_cohort = (
+                sum(full_cohort_r_diffs) / len(full_cohort_r_diffs) if full_cohort_r_diffs else None
+            )
+            full_cohort_ci_lower = None
+            full_cohort_ci_upper = None
+            if len(full_cohort_r_diffs) >= 2:
+                boot_full = bootstrap_confidence_interval(
+                    full_cohort_r_diffs, statistic="mean", seed=seed
+                )
+                full_cohort_ci_lower = boot_full.ci_lower
+                full_cohort_ci_upper = boot_full.ci_upper
             model_summary: dict = {
                 "n_triggered": len(triggered),
                 "n_not_triggered": len(comparisons) - len(triggered),
@@ -297,6 +377,16 @@ def run(
                 "mean_r_diff_confidence": 0.95 if len(triggered) >= 2 else None,
                 "mean_r_diff_n_resamples": 2000 if len(triggered) >= 2 else None,
                 "mean_r_diff_seed": seed if len(triggered) >= 2 else None,
+                "mean_r_diff_full_cohort": mean_r_diff_full_cohort,
+                "mean_r_diff_full_cohort_ci_lower": full_cohort_ci_lower,
+                "mean_r_diff_full_cohort_ci_upper": full_cohort_ci_upper,
+                "mean_r_diff_full_cohort_confidence": (
+                    0.95 if len(full_cohort_r_diffs) >= 2 else None
+                ),
+                "mean_r_diff_full_cohort_n_resamples": (
+                    2000 if len(full_cohort_r_diffs) >= 2 else None
+                ),
+                "mean_r_diff_full_cohort_seed": seed if len(full_cohort_r_diffs) >= 2 else None,
             }
             if triggered:
                 # **Renamed, 2026-07-22 Codex review finding (third
@@ -317,6 +407,11 @@ def run(
                         wr.ci_upper,
                     ]
                     model_summary["guard_helped_rate_when_triggered_n"] = wr.n
+                    # **Added, 2026-07-22 Codex review finding (fourth
+                    # round): the Wilson confidence level used for this
+                    # interval was never persisted, unlike the
+                    # mean_r_diff_confidence field above.**
+                    model_summary["guard_helped_rate_when_triggered_confidence"] = wr.confidence
                 except InsufficientSampleError:
                     pass
             try:
@@ -332,6 +427,7 @@ def run(
                     wr_full.ci_upper,
                 ]
                 model_summary["guard_helped_rate_full_cohort_n"] = wr_full.n
+                model_summary["guard_helped_rate_full_cohort_confidence"] = wr_full.confidence
             except InsufficientSampleError:
                 pass
             summary[model] = model_summary
@@ -353,6 +449,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v811-floor-r", type=float, default=0.1)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -371,8 +469,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             v811_floor_r=args.v811_floor_r,
             symbol=args.symbol,
             seed=args.seed,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
-    except (FileNotFoundError, CsvSchemaError) as exc:
+    except (FileNotFoundError, CsvSchemaError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

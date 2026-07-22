@@ -25,7 +25,9 @@ class CsvSchemaError(ValueError):
     quietly."""
 
 
-def read_csv_with_required_columns(path: Path, required_columns: set[str]) -> pd.DataFrame:
+def read_csv_with_required_columns(
+    path: Path, required_columns: set[str], dtype: Optional[dict] = None
+) -> pd.DataFrame:
     """Reads 'path' as CSV and raises CsvSchemaError if any of
     'required_columns' is absent, OR if the raw header row contains a
     duplicate column name. Raises FileNotFoundError (pandas' own,
@@ -47,6 +49,15 @@ def read_csv_with_required_columns(path: Path, required_columns: set[str]) -> pd
     header previously bypassed this check entirely. ``csv.reader`` is now
     used directly on the file handle so the first LOGICAL row is read
     correctly regardless of embedded newlines within quoted fields.
+
+    **Added, 2026-07-22 Codex review finding (fourth round): 'dtype', if
+    given, is passed straight through to ``pandas.read_csv``** -- durable
+    identifier columns (order_id, deal_id, trade_id) must be read as
+    ``str``, never pandas' own inferred numeric type: an in-memory probe
+    of ``9007199254740992``/``9007199254740993``/a blank ID loaded the
+    column as ``float64`` and collapsed the first two IDs to the SAME
+    value (float64 cannot represent every int64 exactly), and leading
+    zeroes (``"001"``) were silently discarded by numeric inference.
     """
 
     with path.open("r", newline="", encoding="utf-8-sig") as fh:
@@ -61,7 +72,7 @@ def read_csv_with_required_columns(path: Path, required_columns: set[str]) -> pd
     if dupes:
         raise CsvSchemaError(f"{path}: duplicate column header(s) in raw file: {dupes}")
 
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, dtype=dtype)
     missing = required_columns - set(df.columns)
     if missing:
         raise CsvSchemaError(f"{path}: missing required columns: {sorted(missing)}")
@@ -341,7 +352,15 @@ def atomic_write_dataframe_csv(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", newline="") as fh:
+        # **Fixed, 2026-07-22 Codex review finding (fourth round):** no
+        # explicit encoding was given here, so this defaulted to the
+        # active locale's code page (cp1252 on the tested Windows
+        # environment) -- writing "Café" produced byte 0xE9 and reopening
+        # the result as UTF-8 raised UnicodeDecodeError. Every reader in
+        # this project (journal_reader.py, pandas.read_csv elsewhere)
+        # assumes UTF-8; this writer must match that contract explicitly
+        # rather than depend on the runtime's locale.
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
             df.to_csv(fh, index=False)
         os.replace(tmp_name, path)
     except BaseException:

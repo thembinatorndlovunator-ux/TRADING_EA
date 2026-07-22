@@ -328,16 +328,21 @@ market_family/intraday_mode finding above.
 ## Commit
 
 19+ commits on `claude/task-028-python-statistical-lab` (part 1 through
-both Codex-review remediation series) — see `git log` on that branch for
-the full, current list rather than trusting a specific count/hash
-recorded here, which has gone stale at least twice already (a lesson
-this document itself is a live example of — see the round-2 doc-staleness
-findings above).
+all three Codex-review remediation series completed so far — corrected,
+2026-07-22 Codex review finding, fourth round: this previously said
+"both," stale since the third round landed; round 4's own independent
+count is 20 commits, `e37bbec` through `b88b63a` — the durable "19+"
+wording itself is still accurate and deliberately not being replaced
+with a moving target) — see `git log` on that branch for the full,
+current list rather than trusting a specific count/hash recorded here,
+which has gone stale at least twice already (a lesson this document
+itself is a live example of — see the round-2 doc-staleness findings
+above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — three independent review rounds
-completed** (2026-07-21, 2026-07-22, 2026-07-22; see
+**Codex, via `/code-review ultra` — four independent review rounds
+completed** (2026-07-21, 2026-07-22, 2026-07-22, 2026-07-22; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
 round). Round 1: 15 findings (2 P0/11 P1/2 P2), remediation applied with
 regression tests. Round 2: 16 findings (2 P0/11 P1/3 P2), remediation
@@ -349,13 +354,17 @@ bootstrap CI validation, the Wilson interval, Monte Carlo's minimum-
 trade-count and caveats, path-collision/atomic-write handling, CSV/JSON
 hardening, journal reading, and all declared quality-gate commands were
 all independently verified genuinely improved or resolved), while also
-surfacing 17 NEW findings (3 P0/10 P1/4 P2) against the round-2 HEAD —
-**corrected, 2026-07-22 Codex review finding, third round: prior wording
-here declared rounds 1-2 "all resolved" before any independent review
-had confirmed it; "remediation applied, pending independent review" is
-the honest phrasing until a review actually runs.** Round 3's 17
-findings are being remediated now; a fourth review round should be
-requested once the user is ready.
+surfacing 17 NEW findings (3 P0/10 P1/4 P2) against the round-2 HEAD,
+remediated in commit `b88b63a` with regression tests per finding.
+**Round 4 independently confirmed round 3's remediation was genuinely
+applied** (see that review's own "Corrections independently confirmed"
+section), while surfacing 18 further findings (3 P0/11 P1/4 P2) against
+`b88b63a` -- required deliverables that remained absent (equity-peak
+giveback, the missing baseline-comparison metrics, a real session/mode/
+news outcome breakdown), integrity defects in the new signal-to-outcome
+join, and numerous smaller correctness/provenance gaps. Round 4's 18
+findings have now been remediated with regression tests per finding; a
+fifth review round should be requested once the user is ready.
 
 ## Implementation notes (Claude, part 2 of N — completes the 9 scripts + 10 notebooks)
 
@@ -512,15 +521,19 @@ paired to their scripts, and executed for real from a clean kernel. One
 bonus module (`regime_validation.py`) partially addresses TASK-016's
 deferred item (7 of 9 states, formula-only, no gating/hysteresis, no
 confusion matrix against real evidence — full completion now tracked as
-`TASK-031_REGIME_VALIDATION_COMPLETION.md`). Two full independent Codex
-review rounds completed, 31 total findings across both, remediation
-applied with regression tests reproducing each reported counterexample
-(340 tests passing, ruff and mypy both clean at the time) — **a third
-independent review round subsequently confirmed most of this genuinely
-resolved (see the Reviewer section above) while surfacing 17 further
-findings, remediated separately; corrected, 2026-07-22 Codex review
-finding, third round: this line previously said "all resolved" before
-any independent confirmation had actually happened.**
+`TASK-031_REGIME_VALIDATION_COMPLETION.md`). Four independent Codex
+review rounds completed so far (see the Reviewer section above for the
+full breakdown of each): rounds 1-2 (31 findings) and round 3 (17
+findings) each had remediation applied with regression tests reproducing
+every reported counterexample, and round 3's remediation was
+independently confirmed genuinely resolved by round 4, which itself
+surfaced 18 further findings now also remediated — 459 tests passing,
+ruff (incl. `ruff format`) and mypy both clean as of this line. **This
+line previously said "31 total findings... all resolved" (corrected,
+third round) and then stopped at round 3 without reflecting round 4
+(corrected, 2026-07-22 Codex review finding, fourth round) -- "remediation
+applied, pending independent review" remains the honest phrasing for
+round 4's own 18 findings until a fifth review actually runs.**
 
 ## Implementation notes (Claude, part 3 of N — Codex review remediation)
 

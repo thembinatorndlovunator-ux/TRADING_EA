@@ -195,6 +195,30 @@ def test_seed_is_exposed_and_actually_used(tmp_path):
     assert payload_a["summary"]["seed"] == 7
 
 
+def test_n_resamples_and_confidence_exposed_and_actually_used(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    n_resamples/confidence were hard-wired to expectancy()'s own hidden
+    defaults and never exposed at the run()/CLI boundary or persisted in
+    the report."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+    summary_json = tmp_path / "out" / "summary.json"
+    run(
+        path,
+        train_days=3,
+        test_days=2,
+        step_days=2,
+        seed=7,
+        n_resamples=500,
+        confidence=0.90,
+        summary_json=summary_json,
+    )
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["n_resamples"] == 500
+    assert payload["summary"]["confidence"] == 0.90
+
+
 def test_train_and_expectancy_confidence_intervals_present(tmp_path):
     """Regression for a Codex review finding: walk-forward omitted train
     win-rate intervals and all expectancy intervals entirely."""
@@ -391,6 +415,41 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     payload = json.loads(summary_json.read_text(encoding="utf-8"))
     assert payload["summary"]["n_windows"] == 3
     assert payload["summary"]["train_days"] == 3
+
+
+def test_summary_discloses_overlap_and_partial_window_status(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    'mean_test_expectancy_r' is an unlabelled, unweighted mean of
+    per-window means -- final windows can be partial and test windows
+    can overlap when step_days < test_days, so trades may receive
+    unequal weight or appear more than once. Both facts must now be
+    persisted explicitly."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+
+    # step_days (1) < test_days (2) -- test windows must overlap.
+    summary_json = tmp_path / "overlap.json"
+    run(
+        path, train_days=3, test_days=2, step_days=1, summary_json=summary_json, repo_path=REPO_ROOT
+    )
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["test_windows_overlap"] is True
+    assert "mean_test_expectancy_r_estimand" in payload["summary"]
+    assert "final_window_test_period_is_partial" in payload["summary"]
+
+    # step_days (2) == test_days (2) -- test windows must NOT overlap.
+    summary_json2 = tmp_path / "no_overlap.json"
+    run(
+        path,
+        train_days=3,
+        test_days=2,
+        step_days=2,
+        summary_json=summary_json2,
+        repo_path=REPO_ROOT,
+    )
+    payload2 = json.loads(summary_json2.read_text(encoding="utf-8"))
+    assert payload2["summary"]["test_windows_overlap"] is False
 
 
 def test_cli_main_success(tmp_path, capsys):

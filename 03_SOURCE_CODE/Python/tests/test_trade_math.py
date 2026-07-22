@@ -3,7 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from analysis.trade_math import BarAlignmentError, compute_mfe_mae, compute_r_multiple
+from analysis.trade_math import (
+    BarAlignmentError,
+    ZeroDurationTradeUnmeasurableError,
+    compute_mfe_mae,
+    compute_r_multiple,
+)
 
 
 # --- compute_r_multiple (mirrors ExitManager.mqh's own TASK-030 test cases) --
@@ -96,24 +101,34 @@ def test_compute_mfe_mae_exit_bar_excluded_from_window():
     assert result.mae_price == pytest.approx(1.0)  # 100 - 99, bar 0 only
 
 
-def test_compute_mfe_mae_same_bar_trade_uses_that_single_bar():
-    """entry_time == exit_time (a trade opened and closed within the same
-    bar) is the one case where the exit bar must NOT be excluded -- it is
-    the only bar the trade was ever open during."""
+def test_compute_mfe_mae_same_bar_trade_is_unmeasurable():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    entry_time == exit_time (a zero-duration trade at the bar-open
+    instant) previously used that single aligned bar's FULL high/low
+    range -- but that range spans the bar's entire
+    [timestamp, next_bar_open) period, almost all of which occurs AFTER
+    the trade already exited. A direct probe with one extreme bar
+    (high=999, low=0) reproduced mfe_r=449.5, almost entirely post-exit
+    contamination. This must now be rejected as unmeasurable at bar
+    resolution, not approximated."""
 
-    bars = _bars()
-    result = compute_mfe_mae(
-        trade_id="t_same_bar",
-        is_long=True,
-        entry_price=100.0,
-        stop_price=98.0,
-        entry_time=bars["timestamp"].iloc[1],
-        exit_time=bars["timestamp"].iloc[1],
-        bars=bars,
+    bars = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-07-21T00:00:00Z"]),
+            "high": [999.0],
+            "low": [0.0],
+        }
     )
-    assert result.n_bars == 1
-    assert result.mfe_price == pytest.approx(5.0)  # bar1 high 105 - 100
-    assert result.mae_price == pytest.approx(0.0)  # bar1 low 100 - 100
+    with pytest.raises(ZeroDurationTradeUnmeasurableError):
+        compute_mfe_mae(
+            trade_id="t_same_bar",
+            is_long=True,
+            entry_price=100.0,
+            stop_price=98.0,
+            entry_time=bars["timestamp"].iloc[0],
+            exit_time=bars["timestamp"].iloc[0],
+            bars=bars,
+        )
 
 
 def test_compute_mfe_mae_short_hand_computed():

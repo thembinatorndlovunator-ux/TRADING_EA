@@ -54,14 +54,20 @@ change. `01_BASELINE/` must not be modified.
 ## Evidence
 
 - `TASK-028_PYTHON_STATISTICAL_LAB.md` — the "genuinely NOT done" note
-  on 4/18 candlestick coverage and zero chart-pattern coverage.
+  on 4/20 candlestick coverage (corrected, 2026-07-22 Codex review
+  finding, fourth round -- this Evidence section still said "4/18" and
+  "18" functions despite this task's own Objective already using the
+  corrected count) and zero chart-pattern coverage.
 - `09_HANDOVERS/codex_to_claude/TASK-028_review.md` finding #1.
 - `03_SOURCE_CODE/Python/analysis/pattern_validation.py` — the existing
   4-pattern implementation and its `compare_to_mql5_export` merge logic
   (already fixed for outer-merge/duplicate-key coverage per a separate
   Codex finding; reuse that logic for the newly ported patterns).
-- `03_SOURCE_CODE/MQL5/.../CandlestickPatternEngine.mqh` — the 18
-  candlestick pattern functions.
+- `03_SOURCE_CODE/MQL5/.../CandlestickPatternEngine.mqh` — 19
+  `CP_Is*Array` boolean pattern predicates plus the non-boolean
+  `CP_DetectHaramiArray` helper, 20 detector/predicate functions total
+  (corrected count, 2026-07-22 Codex review finding, fourth round --
+  this line previously said "the 18 candlestick pattern functions").
 - `03_SOURCE_CODE/MQL5/.../ChartPatternEngine.mqh` — the chart-pattern
   functions (double top/bottom, head-and-shoulders/inverse).
 - `TASK-017_CANDLESTICK_REFERENCE_CROSSCHECK.md` — the reference PDF

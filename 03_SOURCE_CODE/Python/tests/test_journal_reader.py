@@ -47,6 +47,30 @@ def test_read_journal_directory_mixed_valid_and_malformed(tmp_path):
     assert result.total_lines == 5  # blank line excluded from the count entirely
 
 
+def test_oversized_validation_error_raw_record_is_capped(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    ValidationError.raw_record previously retained the FULL parsed dict
+    verbatim with no size bound -- unlike ParseError.raw_line (already
+    capped at 2000 chars). An unconstrained nested field (score_breakdown
+    has no schema of its own) could make one validation-error record an
+    unbounded in-memory payload."""
+
+    bad_record = make_current_ea_record()  # schema-invalid (see conftest)
+    # Large enough to exceed the 2000-char ValidationError.raw_record cap,
+    # but well under MAX_LINE_BYTES so this exercises the raw_record cap
+    # specifically, not the oversized-physical-line path.
+    bad_record["score_breakdown"] = {f"component_{i}": float(i) for i in range(300)}
+
+    path = tmp_path / "decisions_20260721.jsonl"
+    path.write_text(json.dumps(bad_record) + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.validation_errors) == 1
+    raw_record = result.validation_errors[0].raw_record
+    assert raw_record.get("_truncated") is True
+    assert len(raw_record["preview"]) <= 2000
+
+
 def test_read_journal_directory_processes_files_in_sorted_order(tmp_path):
     (tmp_path / "decisions_20260722.jsonl").write_text(
         json.dumps(make_valid_record(signal_id="second-day")) + "\n", encoding="utf-8"
@@ -234,3 +258,30 @@ def test_max_records_limit_raises(tmp_path):
 
     with pytest.raises(JournalReaderLimitError):
         read_journal_directory(tmp_path, max_records=3)
+
+
+def test_oversized_single_line_is_a_parse_error_not_unbounded_memory(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a single physical line with no newline was previously materialized
+    in full (arbitrarily large) via plain line iteration BEFORE any
+    length check -- the 2000-char cap only applied to what got RETAINED
+    in the error record, not to what was read into memory to produce it.
+    An oversized line must now be capped while reading, reported as one
+    ParseError, and the file must continue reading subsequent lines
+    correctly (proving the discarded remainder didn't desync line
+    tracking)."""
+
+    from data_collection.journal_reader import MAX_LINE_BYTES
+
+    oversized_line = "x" * (MAX_LINE_BYTES + 500)  # no trailing newline until after this
+    good_record = make_valid_record(signal_id="after-oversized")
+    (tmp_path / "decisions_20260721.jsonl").write_text(
+        oversized_line + "\n" + json.dumps(good_record) + "\n", encoding="utf-8"
+    )
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.valid_records) == 1
+    assert result.valid_records[0].signal_id == "after-oversized"
+    assert len(result.parse_errors) == 1
+    assert "exceeds max line length" in result.parse_errors[0].error
+    assert len(result.parse_errors[0].raw_line) <= 2000

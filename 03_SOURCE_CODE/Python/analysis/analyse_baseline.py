@@ -1,6 +1,15 @@
 """analyse_baseline.py -- aggregate performance summary over a normalized
 trade-export CSV: win rate (with Wilson CI), expectancy ($  and R), profit
-factor, and max drawdown on the resulting BALANCE curve.
+factor, max drawdown, net profit, recovery factor, equity-peak giveback,
+longest losing streak, average winner/loser, average trade duration, and
+trades-per-day on the resulting BALANCE curve -- **extended, 2026-07-22
+Codex review finding (fourth round): every one of these except win rate/
+expectancy/profit factor/max drawdown was previously absent, despite
+TEST_PLAN.md naming all of them as the minimum baseline-comparison
+surface.** Spread/slippage SENSITIVITY (running the same trades through
+multiple assumed cost scenarios) remains a separate, larger deliverable
+-- not attempted here; ``spread_note``/``slippage_note`` record a single
+caller-asserted cost assumption as provenance, they do not vary it.
 
 **Balance, not equity, and stated explicitly (Codex review finding,
 2026-07-21):** the curve this module builds is cumulative CLOSED-TRADE
@@ -48,6 +57,7 @@ from analysis.csv_io import (
 )
 from analysis.metrics import (
     InsufficientSampleError,
+    compute_equity_peak_giveback,
     compute_max_drawdown,
     expectancy,
     profit_factor,
@@ -87,6 +97,17 @@ def run(
     seed: int = 42,
     ea_version: Optional[str] = None,
     data_source: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): the
+    # master-prompt-required "Equity-peak giveback" metric -- see
+    # metrics.compute_equity_peak_giveback's own docstring for the ported
+    # formula. Defaults match TASK-002_PHASE2_SPECIFICATION.md's own
+    # "Daily equity-peak giveback" defaults (InpDailyGivebackArmPercent/
+    # InpDailyGivebackFloorPercent), reused here for the ACCOUNT-scope
+    # variant since the spec gives no separate default for it.
+    giveback_arm_percent: float = 1.0,
+    giveback_floor_percent: float = 0.5,
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
     """Reads 'trades_csv', computes the aggregate summary, and (if given)
@@ -176,6 +197,39 @@ def run(
     exp_r = expectancy(r_multiples, seed=seed)
     pf = profit_factor(profits)
     dd = compute_max_drawdown(balance_curve)
+    # **Added, 2026-07-22 Codex review finding (fourth round): TEST_PLAN.md's
+    # required minimum comparability surface (recovery factor, longest
+    # losing streak, average winner/loser, duration, trades/day) was
+    # computable from this schema but never reported by any pipeline.**
+    giveback = compute_equity_peak_giveback(
+        balance_curve, arm_percent=giveback_arm_percent, floor_percent=giveback_floor_percent
+    )
+    net_profit = balance_curve[-1] - starting_balance
+    recovery_factor = net_profit / dd.max_drawdown_abs if dd.max_drawdown_abs > 0 else None
+
+    longest_losing_streak = 0
+    current_losing_streak = 0
+    for p in profits:
+        if p < 0:
+            current_losing_streak += 1
+            longest_losing_streak = max(longest_losing_streak, current_losing_streak)
+        else:
+            current_losing_streak = 0
+
+    winners = [p for p in profits if p > 0]
+    losers = [p for p in profits if p < 0]
+    avg_winner = sum(winners) / len(winners) if winners else None
+    avg_loser = sum(losers) / len(losers) if losers else None
+
+    durations_minutes = (
+        trades_sorted["exit_time"] - trades_sorted["entry_time"]
+    ).dt.total_seconds() / 60.0
+    avg_trade_duration_minutes = float(durations_minutes.mean())
+
+    period_days = (
+        trades_sorted["exit_time"].max() - trades_sorted["entry_time"].min()
+    ).total_seconds() / 86400.0
+    trades_per_day = (len(trades_sorted) / period_days) if period_days > 0 else None
 
     summary = {
         "n_trades": len(trades_sorted),
@@ -222,6 +276,25 @@ def run(
         "max_equity_drawdown": None,  # not computable -- see module docstring
         "final_balance": balance_curve[-1],
         "starting_balance": starting_balance,
+        # **Added, 2026-07-22 Codex review finding (fourth round): the
+        # remaining minimum comparability surface TEST_PLAN.md requires.**
+        "net_profit": net_profit,
+        "recovery_factor": recovery_factor,
+        "equity_peak_giveback": {
+            "arm_percent": giveback.arm_percent,
+            "floor_percent": giveback.floor_percent,
+            "armed": giveback.armed,
+            "n_trigger_events": giveback.n_trigger_events,
+            "trigger_indices": giveback.trigger_indices,
+            "max_giveback_pct": giveback.max_giveback_pct,
+            "max_giveback_pct_index": giveback.max_giveback_pct_index,
+            "note": "BALANCE-based (not equity), same disclosed limitation as the rest of this module",
+        },
+        "longest_losing_streak": longest_losing_streak,
+        "avg_winner_dollars": avg_winner,
+        "avg_loser_dollars": avg_loser,
+        "avg_trade_duration_minutes": avg_trade_duration_minutes,
+        "trades_per_day": trades_per_day,
     }
 
     if output_json is not None:
@@ -233,6 +306,8 @@ def run(
             random_seed=seed,
             ea_version=ea_version,
             data_source=data_source,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
             repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
@@ -259,6 +334,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ea-version", default=None)
     parser.add_argument("--data-source", default=None)
+    parser.add_argument("--giveback-arm-percent", type=float, default=1.0)
+    parser.add_argument("--giveback-floor-percent", type=float, default=0.5)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -275,8 +354,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             seed=args.seed,
             ea_version=args.ea_version,
             data_source=args.data_source,
+            giveback_arm_percent=args.giveback_arm_percent,
+            giveback_floor_percent=args.giveback_floor_percent,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
-    except (FileNotFoundError, CsvSchemaError, InsufficientSampleError) as exc:
+    except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

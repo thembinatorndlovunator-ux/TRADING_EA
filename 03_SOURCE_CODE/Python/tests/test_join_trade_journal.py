@@ -38,6 +38,23 @@ def test_run_empty_directory_no_journal_files(tmp_path):
     assert result.metadata.dataset_paths == ()
 
 
+def test_spread_and_slippage_note_persisted_even_with_no_journal_files(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    spread_note/slippage_note exist on ReportMetadata but no analysis
+    caller exposed or populated them -- checked here specifically against
+    the empty-directory branch, which manually constructs ReportMetadata
+    rather than going through build_report_metadata."""
+
+    result = run(
+        input_dir=tmp_path,
+        repo_path=REPO_ROOT,
+        spread_note="2-pip fixed spread assumed",
+        slippage_note="no slippage modelled",
+    )
+    assert result.metadata.spread_note == "2-pip fixed spread assumed"
+    assert result.metadata.slippage_note == "no slippage modelled"
+
+
 def test_race_between_hash_and_parse_is_detected(tmp_path, monkeypatch):
     """Regression for a Codex review finding (2026-07-22, third round):
     hashing before parsing narrows, but does not eliminate, the race a
@@ -105,6 +122,56 @@ def test_output_csv_sanitizes_formula_injection(tmp_path):
     raw = out_csv.read_text(encoding="utf-8")
     assert "'=CMD" in raw  # neutralized with a leading single-quote
     assert "\n=CMD" not in raw  # never appears as a live formula prefix
+
+
+def test_derived_provenance_path_does_not_overwrite_requested_output_json(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the derived provenance path was computed AFTER the collision check
+    already ran -- output_csv=foo.csv, output_json=foo.provenance.json,
+    errors_json=None derived a sidecar path that collided with (and
+    silently overwrote) the explicitly requested output_json. This must
+    now be rejected as a path collision, not silently accepted."""
+
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record()])
+    out_dir = tmp_path / "out"
+    with pytest.raises(ValueError):
+        run(
+            input_dir=tmp_path,
+            output_csv=out_dir / "foo.csv",
+            output_json=out_dir / "foo.provenance.json",
+            repo_path=REPO_ROOT,
+        )
+
+
+def test_new_journal_file_added_after_hash_is_not_silently_analyzed(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    read_journal_directory used to re-glob 'input_dir' independently of
+    the file list this module already hashed -- a probe added a SECOND
+    decisions_*.jsonl file after the initial glob/hash; both files were
+    analyzed, but metadata/the post-parse re-hash both still only knew
+    about the first file, so the mismatch went undetected. Simulated here
+    by writing the second file at the exact moment read_journal_directory
+    is invoked (the real concurrent-writer window) -- since this module
+    now passes its own pre-hashed 'journal_files' list explicitly, the
+    new file must NOT be picked up even though it exists on disk by the
+    time parsing actually happens."""
+
+    import analysis.join_trade_journal as jtj_module
+    from data_collection.journal_reader import read_journal_directory as real_read
+
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a")])
+
+    def read_that_races_a_new_file_in(directory, *args, **kwargs):
+        _write_journal_file(
+            tmp_path, "decisions_20260722.jsonl", [make_valid_record(signal_id="b")]
+        )
+        return real_read(directory, *args, **kwargs)
+
+    monkeypatch.setattr(jtj_module, "read_journal_directory", read_that_races_a_new_file_in)
+
+    result = jtj_module.run(input_dir=tmp_path, repo_path=REPO_ROOT)
+    assert len(result.read_result.valid_records) == 1
+    assert result.metadata.dataset_paths == ("decisions_20260721.jsonl",)
 
 
 def test_provenance_auto_written_even_without_explicit_errors_json(tmp_path):
@@ -196,3 +263,30 @@ def test_cli_main_exit_code_missing_dir(tmp_path, capsys):
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "ERROR" in captured.err
+
+
+def test_cli_main_reports_controlled_error_not_traceback_on_runtime_error(
+    tmp_path, capsys, monkeypatch
+):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the hash-race check (RuntimeError) and JournalReaderLimitError (a
+    RuntimeError subclass) were previously uncaught by this CLI's own
+    except clause -- an expected input-integrity failure surfaced as an
+    unhandled traceback instead of a controlled ERROR exit."""
+
+    import analysis.join_trade_journal as jtj_module
+    from data_collection.journal_reader import read_journal_directory as real_read
+
+    journal_path = tmp_path / "decisions_20260721.jsonl"
+    _write_journal_file(tmp_path, "decisions_20260721.jsonl", [make_valid_record(signal_id="a")])
+
+    def mutating_read(directory, *args, **kwargs):
+        with journal_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(make_valid_record(signal_id="b")) + "\n")
+        return real_read(directory, *args, **kwargs)
+
+    monkeypatch.setattr(jtj_module, "read_journal_directory", mutating_read)
+
+    exit_code = jtj_module.main(["--input-dir", str(tmp_path)])
+    assert exit_code == 1
+    assert "ERROR" in capsys.readouterr().err

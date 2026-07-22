@@ -5,6 +5,7 @@ import pytest
 from analysis.metrics import (
     InsufficientSampleError,
     bootstrap_confidence_interval,
+    compute_equity_peak_giveback,
     compute_max_drawdown,
     expectancy,
     profit_factor,
@@ -108,6 +109,17 @@ def test_expectancy_rejects_non_finite_value_even_at_n_equals_1():
         expectancy([1.0, float("inf"), 3.0])
 
 
+def test_expectancy_rejects_overflow_to_non_finite_from_finite_inputs():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    every individual pnl value is finite, but summing them can still
+    overflow -- the exact reproduced counterexample,
+    expectancy([1e308, 1e308], n_resamples=100), previously returned
+    mean/std_dev=inf and ci=[nan, nan] instead of raising."""
+
+    with pytest.raises(ValueError):
+        expectancy([1e308, 1e308], n_resamples=100)
+
+
 def test_expectancy_single_observation_has_no_estimable_uncertainty():
     """Regression for a Codex review finding (2026-07-22): reporting
     std_dev=0.0 for a single observation is FALSE PRECISION -- spread is
@@ -147,6 +159,30 @@ def test_profit_factor_rejects_non_finite_value():
 
     with pytest.raises(ValueError):
         profit_factor([float("nan")])
+
+
+def test_profit_factor_n_recovers_true_total_including_breakeven():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    n_wins + n_losses previously silently dropped break-even (exactly
+    zero P/L) observations, making the true total sample size
+    unrecoverable from the result. ProfitFactorResult.n must report the
+    real total (3), not n_wins + n_losses (2)."""
+
+    result = profit_factor([10.0, -5.0, 0.0])
+    assert result.n_wins == 1
+    assert result.n_losses == 1
+    assert result.n == 3
+
+
+def test_profit_factor_rejects_overflow_to_non_finite_from_finite_inputs():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    every individual pnl value is finite, but summing them can still
+    overflow -- the exact reproduced counterexample,
+    profit_factor([1e308, 1e308, -1]), previously returned an inf gross
+    profit and an inf factor instead of raising."""
+
+    with pytest.raises(ValueError):
+        profit_factor([1e308, 1e308, -1])
 
 
 def test_profit_factor_no_losses_is_none_not_infinity():
@@ -313,6 +349,82 @@ def test_max_drawdown_pct_can_exceed_one_when_balance_goes_negative():
     result = compute_max_drawdown([100.0, -50.0])
     assert result.max_drawdown_pct == pytest.approx(1.5)
     assert result.max_drawdown_pct_trough_index == 1
+
+
+# --- compute_equity_peak_giveback -------------------------------------------
+# Regression for a Codex review finding (2026-07-22, fourth round): no
+# Python code computed the master-prompt-required "Equity-peak giveback"
+# metric at all (distinct from compute_max_drawdown -- a single global
+# worst-case figure -- this reports arm/trigger EVENTS, matching
+# TASK-002_PHASE2_SPECIFICATION.md's own guard formula).
+
+
+def test_equity_peak_giveback_empty_raises():
+    with pytest.raises(InsufficientSampleError):
+        compute_equity_peak_giveback([])
+
+
+def test_equity_peak_giveback_rejects_non_positive_first_value():
+    with pytest.raises(ValueError):
+        compute_equity_peak_giveback([0.0, 10.0])
+
+
+def test_equity_peak_giveback_rejects_non_finite_value():
+    with pytest.raises(ValueError):
+        compute_equity_peak_giveback([100.0, float("nan")])
+
+
+def test_equity_peak_giveback_rejects_non_positive_arm_or_floor_percent():
+    with pytest.raises(ValueError):
+        compute_equity_peak_giveback([100.0, 110.0], arm_percent=0.0)
+    with pytest.raises(ValueError):
+        compute_equity_peak_giveback([100.0, 110.0], floor_percent=-1.0)
+
+
+def test_equity_peak_giveback_hand_computed():
+    # start=1000, arm_percent=1.0%, floor_percent=0.5%.
+    # i=0 value=1000 peak=1000 -- not armed ((1000-1000)/1000=0%).
+    # i=1 value=1010 peak=1010 -- arms ((1010-1000)/1000=1.0% >= 1.0%);
+    #     giveback=(1010-1010)/1010=0%.
+    # i=2 value=1020 peak=1020 (new peak) -- giveback=0%.
+    # i=3 value=1005 peak=1020 -- giveback=(1020-1005)/1020=1.47% >= 0.5%
+    #     -> FIRST trigger event.
+    # i=4 value=1000 peak=1020 -- giveback=(1020-1000)/1020=1.96% (new
+    #     max, still triggered, not a NEW event).
+    # i=5 value=1015 peak=1020 -- giveback=(1020-1015)/1020=0.49% < 0.5%
+    #     -> recovers below floor, currently_triggered resets.
+    # i=6 value=1025 peak=1025 (new peak) -- giveback=0%.
+    curve = [1000.0, 1010.0, 1020.0, 1005.0, 1000.0, 1015.0, 1025.0]
+    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    assert result.armed is True
+    assert result.n_trigger_events == 1
+    assert result.trigger_indices == [3]
+    assert result.max_giveback_pct == pytest.approx((1020.0 - 1000.0) / 1020.0)
+    assert result.max_giveback_pct_index == 4
+
+
+def test_equity_peak_giveback_never_arms_if_peak_never_rises_enough():
+    curve = [1000.0, 1002.0, 998.0, 1001.0]  # never reaches 1% above start
+    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    assert result.armed is False
+    assert result.n_trigger_events == 0
+    assert result.max_giveback_pct == 0.0
+
+
+def test_equity_peak_giveback_two_separate_declines_count_as_two_events():
+    # Two independent arm->trigger->recover->re-trigger cycles must be
+    # counted as two separate events, not merged into one.
+    curve = [
+        1000.0,
+        1020.0,  # arms (2% >= 1%), giveback=0%
+        1005.0,  # giveback=1.47% -> trigger #1
+        1020.0,  # recovers to peak, giveback=0% -> currently_triggered resets
+        1040.0,  # new peak
+        1025.0,  # giveback=(1040-1025)/1040=1.44% -> trigger #2
+    ]
+    result = compute_equity_peak_giveback(curve, arm_percent=1.0, floor_percent=0.5)
+    assert result.n_trigger_events == 2
+    assert result.trigger_indices == [2, 5]
 
 
 # --- wilson_diff_confidence_interval ---------------------------------------

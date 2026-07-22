@@ -289,6 +289,25 @@ def test_atomic_write_dataframe_csv_leaves_no_temp_file_on_success(tmp_path):
     assert remaining == [out_path]
 
 
+def test_atomic_write_dataframe_csv_round_trips_non_ascii_text(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the temp file was opened with no explicit encoding, so it defaulted
+    to the active locale's code page (cp1252 on the tested Windows
+    environment) -- writing "Café" produced byte 0xE9 instead of UTF-8's
+    two-byte sequence, and reopening the result as UTF-8 raised
+    UnicodeDecodeError. This writer must always use UTF-8 regardless of
+    the runtime locale."""
+
+    df = pd.DataFrame({"trade_id": ["t1"], "strategy": ["Café"]})
+    out_path = tmp_path / "trades.csv"
+    atomic_write_dataframe_csv(df, out_path)
+
+    raw = out_path.read_text(encoding="utf-8")
+    assert "Café" in raw
+    read_back = pd.read_csv(out_path)
+    assert read_back.iloc[0]["strategy"] == "Café"
+
+
 def test_parse_is_long_rejects_unknown_value():
     with pytest.raises(ValueError):
         parse_is_long("sideways")

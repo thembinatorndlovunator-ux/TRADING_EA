@@ -332,6 +332,50 @@ def test_summary_hand_computed(tmp_path):
     assert summary["max_equity_drawdown"] is None
 
 
+def test_baseline_comparison_metrics_hand_computed(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    TEST_PLAN.md's minimum baseline-comparison surface (recovery factor,
+    equity-peak giveback, longest losing streak, average winner/loser,
+    duration, trades/day) was computable from this schema but never
+    reported by any pipeline."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+
+    summary = run(path, starting_balance=1000.0)
+
+    # balance_curve = [1000, 1040, 1020, 1070, 1050]; net_profit=50,
+    # max_drawdown_abs=20 -> recovery_factor=2.5.
+    assert summary["net_profit"] == pytest.approx(50.0)
+    assert summary["recovery_factor"] == pytest.approx(2.5)
+
+    # Sorted-by-exit-time profits: [40, -20, 50, -20] -- each loss is
+    # isolated (win in between) -> longest losing streak = 1.
+    assert summary["longest_losing_streak"] == 1
+
+    # winners=[40,50] -> avg 45.0; losers=[-20,-20] -> avg -20.0.
+    assert summary["avg_winner_dollars"] == pytest.approx(45.0)
+    assert summary["avg_loser_dollars"] == pytest.approx(-20.0)
+
+    # Every fixture trade is exactly 60 minutes (entry to exit).
+    assert summary["avg_trade_duration_minutes"] == pytest.approx(60.0)
+
+    # Period spans 7 hours (00:00 to 07:00) = 7/24 days; 4 trades.
+    assert summary["trades_per_day"] == pytest.approx(4 / (7.0 / 24.0))
+
+    # Equity-peak giveback (default arm=1.0%, floor=0.5%) -- hand-traced
+    # against the same [1000, 1040, 1020, 1070, 1050] balance curve: arms
+    # at index 1 (4% >= 1%), triggers at index 2 (1.923% giveback from
+    # peak 1040), recovers at the new peak (index 3), triggers again at
+    # index 4 (1.869% giveback from peak 1070).
+    giveback = summary["equity_peak_giveback"]
+    assert giveback["armed"] is True
+    assert giveback["n_trigger_events"] == 2
+    assert giveback["trigger_indices"] == [2, 4]
+    assert giveback["max_giveback_pct"] == pytest.approx(20.0 / 1040.0)
+    assert giveback["max_giveback_pct_index"] == 2
+
+
 def test_r_multiples_hand_computed_per_trade(tmp_path):
     path = tmp_path / "trades.csv"
     _write_trades(path)

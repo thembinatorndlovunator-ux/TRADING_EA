@@ -143,6 +143,120 @@ def test_duplicate_symbol_timestamp_bar_rejected(tmp_path):
         run(trades_path, bars_path)
 
 
+def test_nan_model_parameters_rejected_not_silently_clamped(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    none of the five giveback-model parameters were validated -- passing
+    NaN for all five previously produced valid comparisons/triggers with
+    zero row errors, because should_giveback_close_v637/v811's own
+    max()/min() clamps silently select an effective value from a NaN
+    input (Python's max(a, nan) returns 'a'). Must now be rejected
+    outright."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    nan = float("nan")
+    with pytest.raises(ValueError):
+        run(
+            trades_path,
+            bars_path,
+            v637_arm_rr=nan,
+            v637_giveback_percent=nan,
+            v637_floor_r=nan,
+            v811_arm_r=nan,
+            v811_floor_r=nan,
+        )
+
+
+def test_summary_persists_requested_and_effective_model_params(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    an out-of-range-but-finite setting is silently clamped by
+    should_giveback_close_v637/v811's own max()/min() logic without the
+    artifact disclosing the requested vs. effective value -- both are now
+    persisted in every summary."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    summary_json = tmp_path / "out" / "summary.json"
+    run(
+        trades_path,
+        bars_path,
+        summary_json=summary_json,
+        v637_arm_rr=-5.0,  # out-of-range, clamped to 0.25 downstream
+        v637_giveback_percent=150.0,  # out-of-range, clamped to 90.0
+    )
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["requested_model_params"]["v637_arm_rr"] == -5.0
+    assert payload["effective_model_params"]["v637_arm_rr"] == pytest.approx(0.25)
+    assert payload["requested_model_params"]["v637_giveback_percent"] == 150.0
+    assert payload["effective_model_params"]["v637_giveback_percent"] == pytest.approx(90.0)
+
+
+def test_duplicate_bar_with_differently_spelled_same_instant_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the duplicate-(symbol, timestamp) check previously ran on the RAW
+    string timestamp column BEFORE UTC normalization -- "...Z" and
+    "...+00:00" are different strings describing the SAME instant, so
+    they passed the (string-based) uniqueness check, then collapsed to
+    one conflicting instant once parsed. Both spellings here must be
+    rejected as duplicates."""
+
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    bars_path = tmp_path / "bars.csv"
+    pd.DataFrame(
+        {
+            "symbol": ["XAUUSD", "XAUUSD"],
+            "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T00:00:00+00:00"],
+            "close": [101.0, 102.0],
+        }
+    ).to_csv(bars_path, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(trades_path, bars_path)
+
+
 def test_misaligned_entry_exit_time_captured_as_row_error(tmp_path):
     """Regression for a Codex review finding (2026-07-22, third round): a
     00:30-01:30 trade with only a 01:00 bar previously completed with
@@ -396,6 +510,11 @@ def test_guard_helped_rate_is_scoped_to_triggered_subset_not_full_cohort(tmp_pat
     assert v637["guard_helped_rate_when_triggered"] == pytest.approx(1.0)
     assert v637["guard_helped_rate_full_cohort"] == pytest.approx(0.25)
     assert "guard_helped_rate" not in v637
+    # Regression for a Codex review finding (2026-07-22, fourth round):
+    # the Wilson confidence level used for these intervals was never
+    # persisted.
+    assert v637["guard_helped_rate_when_triggered_confidence"] == pytest.approx(0.95)
+    assert v637["guard_helped_rate_full_cohort_confidence"] == pytest.approx(0.95)
 
 
 def test_writes_output_csv_and_summary_json(tmp_path):

@@ -170,5 +170,8 @@ or if `InpEnableOrderSubmission` is flipped as part of this task.
 
 Not started — drafted while TASK-028's Codex review was in progress, as
 the "Specify" step for the next branch once review findings (if any)
-are resolved and TASK-028 is ready to hand off. Not yet added to
-`TASKS.md` — pending user confirmation this is the right next priority.
+are resolved and TASK-028 is ready to hand off. **Registered in
+`TASKS.md` (row for TASK-034) as of 2026-07-22 -- corrected, Codex
+review finding, fourth round: this line previously said "not yet added
+to TASKS.md," which had already become false once that row was added
+during round-3 remediation.**

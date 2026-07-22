@@ -37,12 +37,21 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Sequence
 
 import pandas as pd
 
 from analysis.schema import SchemaValidationError, TradeDecision, validate_record
 
 DEFAULT_MAX_RECORDS_PER_DIRECTORY = 1_000_000
+# **Added, 2026-07-22 Codex review finding (fourth round):** a single
+# physical line with no newline could previously be materialized in full
+# (arbitrarily large) before any truncation ever applied -- the
+# 2000-char cap on ParseError.raw_line only capped what was RETAINED in
+# the error record, not what was READ into memory to get there. A real
+# DecisionJournal line (one TradeDecision JSON object) is at most a few
+# KB; this is a generous but genuinely bounded ceiling.
+MAX_LINE_BYTES = 1_000_000
 
 
 class JournalReaderLimitError(RuntimeError):
@@ -115,6 +124,29 @@ class ValidationError:
     error: str
 
 
+_MAX_RETAINED_RAW_RECORD_CHARS = 2000
+
+
+def _cap_raw_record(raw_record: dict) -> dict:
+    """Bounds how much of a syntactically-valid-but-schema-invalid JSON
+    record is RETAINED in a ``ValidationError`` -- **added, 2026-07-22
+    Codex review finding (fourth round): unlike ``ParseError.raw_line``
+    (already capped at 2000 chars), ``ValidationError.raw_record``
+    previously retained the FULL parsed dict verbatim, with no size
+    bound -- an unconstrained nested field (e.g. ``score_breakdown``,
+    a caller-controlled dict with no schema of its own) could make a
+    single validation-error record an unbounded in-memory payload.**"""
+
+    serialized = json.dumps(raw_record, default=str)
+    if len(serialized) <= _MAX_RETAINED_RAW_RECORD_CHARS:
+        return raw_record
+    return {
+        "_truncated": True,
+        "_original_length_chars": len(serialized),
+        "preview": serialized[:_MAX_RETAINED_RAW_RECORD_CHARS],
+    }
+
+
 @dataclass(frozen=True)
 class JournalReadResult:
     valid_records: list[TradeDecision]
@@ -147,6 +179,18 @@ def _read_lines_from_file(
     single huge file could exhaust process memory before the limit was
     ever consulted. Returns the count of non-blank lines actually read so
     the caller can maintain a running total without re-reading anything.
+
+    **Fixed, 2026-07-22 Codex review finding (fourth round): a single
+    physical line with no newline was previously materialized in full
+    (arbitrarily large) via plain line iteration, before ANY length check
+    -- the 2000-char cap applied only to what got RETAINED in the error
+    record, not to what was read into memory to produce it.
+    ``TextIOWrapper.readline(size)`` reads at most 'size' characters (or
+    to the next newline, whichever comes first), so a line's materialized
+    length is now bounded by ``MAX_LINE_BYTES`` regardless of how long
+    the real line on disk is; an oversized line is reported as a single
+    ParseError (its remainder consumed and discarded, not re-parsed as
+    if it were multiple lines) rather than exhausting memory.**
     """
 
     parsed: list[tuple[int, dict]] = []
@@ -160,7 +204,23 @@ def _read_lines_from_file(
         # free; see the module docstring for the separate, NOT-yet-fixed
         # FILE_ANSI-vs-UTF-8 cross-language encoding caveat.
         with path.open("r", encoding="utf-8-sig") as fh:
-            for line_number, raw_line in enumerate(fh, start=1):
+            line_number = 0
+            while True:
+                raw_line = fh.readline(MAX_LINE_BYTES + 1)
+                if raw_line == "":
+                    break  # EOF
+                line_number += 1
+
+                oversized = len(raw_line) > MAX_LINE_BYTES and not raw_line.endswith("\n")
+                if oversized:
+                    # Consume and discard the rest of this physical line
+                    # (bounded per read) so the file position lands
+                    # correctly at the start of the NEXT real line.
+                    while True:
+                        chunk = fh.readline(MAX_LINE_BYTES + 1)
+                        if chunk == "" or chunk.endswith("\n"):
+                            break
+
                 stripped = raw_line.strip()
                 if not stripped:
                     continue
@@ -170,6 +230,16 @@ def _read_lines_from_file(
                         f"{source_label}: more than the remaining max_records budget of "
                         f"{remaining_budget} lines -- refusing to load the rest into memory"
                     )
+                if oversized:
+                    errors.append(
+                        ParseError(
+                            source_file=source_label,
+                            line_number=line_number,
+                            raw_line=stripped[:2000],
+                            error=f"line exceeds max line length of {MAX_LINE_BYTES} bytes",
+                        )
+                    )
+                    continue
                 try:
                     record = json.loads(
                         stripped,
@@ -218,6 +288,7 @@ def read_journal_directory(
     directory: Path,
     pattern: str = "decisions_*.jsonl",
     max_records: int = DEFAULT_MAX_RECORDS_PER_DIRECTORY,
+    files: Optional[Sequence[Path]] = None,
 ) -> JournalReadResult:
     """Reads every file matching 'pattern' in 'directory' (non-recursive,
     matching DJ_JournalFilePath's own flat one-file-per-day layout),
@@ -225,6 +296,19 @@ def read_journal_directory(
     filename order (which is also chronological order, since filenames are
     'decisions_YYYYMMDD.jsonl') so 'valid_records' is deterministically
     ordered given the same directory contents.
+
+    **'files', added 2026-07-22 (Codex review finding, fourth round):** if
+    given, reads EXACTLY this pre-enumerated file list instead of globbing
+    'directory' again internally. A caller that already globbed
+    'directory' once to compute a dataset hash (e.g. join_trade_journal.py,
+    join_news_events.py) MUST pass that same list here -- otherwise a
+    second, independent glob can observe a file added between the two
+    reads, silently analyzing content the hash never covered (a probe
+    added a second decisions_*.jsonl file after the caller's initial
+    glob/hash: both files got parsed here, but the caller's metadata and
+    post-parse re-hash both still only knew about the first). Each entry
+    is still verified to resolve to an immediate child of 'directory' (the
+    same sandboxing this function already applies to its own glob).
 
     Raises FileNotFoundError if 'directory' does not exist -- an empty
     result would otherwise be indistinguishable from "directory exists but
@@ -245,7 +329,9 @@ def read_journal_directory(
     all_validation_errors: list[ValidationError] = []
     total_records_seen = 0
 
-    for path in sorted(directory.glob(pattern)):
+    candidate_paths = sorted(files) if files is not None else sorted(directory.glob(pattern))
+
+    for path in candidate_paths:
         # Defensive: 'pattern' is normally a fixed literal
         # ("decisions_*.jsonl"), but a caller-supplied pattern containing
         # ".." components (e.g. "../*.jsonl") must not be allowed to
@@ -276,7 +362,7 @@ def read_journal_directory(
                     ValidationError(
                         source_file=source_label,
                         line_number=line_number,
-                        raw_record=raw_record,
+                        raw_record=_cap_raw_record(raw_record),
                         error=str(exc),
                     )
                 )

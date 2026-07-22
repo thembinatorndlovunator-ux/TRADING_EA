@@ -42,6 +42,73 @@ def test_compute_breakdown_hand_computed_single_dimension():
     assert row_b["expectancy_dollars"] == pytest.approx(20.0)
 
 
+def _session_mode_news_fixture_df() -> pd.DataFrame:
+    # Same 8-row synthetic fixture as notebook 04's session/mode/news
+    # outcome breakdown section (Codex review finding, 2026-07-22, fourth
+    # round) -- hand-computable: OPEN=[10,10,-5,10] (n=4, win_rate=0.75,
+    # expectancy=6.25), CLOSING_SOON=[-5,-5,-5,10] (n=4, win_rate=0.25,
+    # expectancy=-1.25); NFP_NEARBY==in_news_blackout True=[-5,-5,-5]
+    # (n=3, win_rate=0.0, expectancy=-5.0), NONE==in_news_blackout
+    # False=[10,10,-5,10,10] (n=5, win_rate=0.8, expectancy=7.0).
+    rows = [
+        (10.0, "OPEN", "SCALP", "NONE", False),
+        (10.0, "OPEN", "SCALP", "NONE", False),
+        (-5.0, "OPEN", "DAY_TRADE", "NONE", False),
+        (10.0, "OPEN", "DAY_TRADE", "NONE", False),
+        (-5.0, "CLOSING_SOON", "SCALP", "NFP_NEARBY", True),
+        (-5.0, "CLOSING_SOON", "SCALP", "NFP_NEARBY", True),
+        (-5.0, "CLOSING_SOON", "DAY_TRADE", "NFP_NEARBY", True),
+        (10.0, "CLOSING_SOON", "DAY_TRADE", "NONE", False),
+    ]
+    df = pd.DataFrame(
+        rows, columns=["profit", "session_state", "intraday_mode", "news_state", "in_news_blackout"]
+    )
+    df.insert(0, "trade_id", [f"su{i}" for i in range(len(df))])
+    return df
+
+
+def test_compute_breakdown_session_state_hand_computed():
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    notebook 04 previously never reported trade outcomes broken down by
+    session_state/intraday_mode/news_state/in_news_blackout at all,
+    despite this module already supporting all four dimensions."""
+
+    result = compute_breakdown(_session_mode_news_fixture_df(), ["session_state"])
+    open_row = result[result["session_state"] == "OPEN"].iloc[0]
+    assert open_row["n_trades"] == 4
+    assert open_row["win_rate"] == pytest.approx(0.75)
+    assert open_row["expectancy_dollars"] == pytest.approx(6.25)
+    closing_row = result[result["session_state"] == "CLOSING_SOON"].iloc[0]
+    assert closing_row["n_trades"] == 4
+    assert closing_row["win_rate"] == pytest.approx(0.25)
+    assert closing_row["expectancy_dollars"] == pytest.approx(-1.25)
+
+
+def test_compute_breakdown_intraday_mode_hand_computed():
+    result = compute_breakdown(_session_mode_news_fixture_df(), ["intraday_mode"])
+    scalp_row = result[result["intraday_mode"] == "SCALP"].iloc[0]
+    assert scalp_row["n_trades"] == 4
+    assert scalp_row["win_rate"] == pytest.approx(0.5)
+    assert scalp_row["expectancy_dollars"] == pytest.approx(2.5)
+
+
+def test_compute_breakdown_news_state_and_in_news_blackout_hand_computed():
+    by_news = compute_breakdown(_session_mode_news_fixture_df(), ["news_state"])
+    nfp_row = by_news[by_news["news_state"] == "NFP_NEARBY"].iloc[0]
+    assert nfp_row["n_trades"] == 3
+    assert nfp_row["win_rate"] == pytest.approx(0.0)
+    assert nfp_row["expectancy_dollars"] == pytest.approx(-5.0)
+
+    by_blackout = compute_breakdown(_session_mode_news_fixture_df(), ["in_news_blackout"])
+    blackout_row = by_blackout[by_blackout["in_news_blackout"] == True].iloc[0]  # noqa: E712
+    assert blackout_row["n_trades"] == 3
+    assert blackout_row["expectancy_dollars"] == pytest.approx(-5.0)
+    no_blackout_row = by_blackout[by_blackout["in_news_blackout"] == False].iloc[0]  # noqa: E712
+    assert no_blackout_row["n_trades"] == 5
+    assert no_blackout_row["win_rate"] == pytest.approx(0.8)
+    assert no_blackout_row["expectancy_dollars"] == pytest.approx(7.0)
+
+
 def test_compute_breakdown_multi_dimension_hand_computed():
     result = compute_breakdown(_fixture_df(), ["strategy", "regime"])
     assert len(result) == 4  # every (strategy, regime) combination present
@@ -114,6 +181,23 @@ def test_compute_breakdown_seed_actually_used():
     ) or not result_a["expectancy_ci_upper"].equals(result_c["expectancy_ci_upper"])
 
 
+def test_run_persists_n_resamples_and_confidence(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    n_resamples/confidence were hard-wired to expectancy()'s/win_rate()'s
+    own hidden defaults and never exposed at the run()/CLI boundary or
+    persisted in the report."""
+
+    import json
+
+    trades_csv = tmp_path / "trades.csv"
+    _fixture_df().to_csv(trades_csv, index=False)
+    summary_json = tmp_path / "out" / "summary.json"
+    run(trades_csv, ["strategy"], summary_json=summary_json, n_resamples=500, confidence=0.90)
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["n_resamples"] == 500
+    assert payload["summary"]["confidence"] == 0.90
+
+
 def test_derive_time_dimensions_hand_computed(tmp_path):
     trades_csv = tmp_path / "trades.csv"
     pd.DataFrame(
@@ -126,6 +210,32 @@ def test_derive_time_dimensions_hand_computed(tmp_path):
 
     result = run(trades_csv, ["hour_of_day"])
     assert set(result["hour_of_day"]) == {14, 9}
+
+
+def test_caller_supplied_hour_of_day_is_recomputed_not_trusted(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a caller-supplied hour_of_day/day_of_week was previously trusted
+    unconditionally -- the exact reproduced counterexample: a row at
+    2026-01-01T02:00:00Z (a Thursday, true UTC hour 2) carrying
+    hour_of_day=15/day_of_week="Sunday" was accepted and grouped under
+    those WRONG values instead of being recomputed from entry_time."""
+
+    trades_csv = tmp_path / "trades.csv"
+    pd.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "profit": [10.0],
+            "entry_time": ["2026-01-01T02:00:00Z"],
+            "hour_of_day": [15],
+            "day_of_week": ["Sunday"],
+        }
+    ).to_csv(trades_csv, index=False)
+
+    result = run(trades_csv, ["hour_of_day"])
+    assert result.iloc[0]["hour_of_day"] == 2
+
+    result_dow = run(trades_csv, ["day_of_week"])
+    assert result_dow.iloc[0]["day_of_week"] == "Thursday"
 
 
 def test_run_zero_rows_raises(tmp_path):

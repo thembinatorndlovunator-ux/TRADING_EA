@@ -275,6 +275,42 @@ def test_writes_output_csv_and_errors_json(tmp_path):
     assert payload["summary"]["n_row_errors"] == 0
 
 
+def test_spread_and_slippage_note_persisted_in_metadata(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    spread_note/slippage_note exist on ReportMetadata but no analysis
+    caller exposed or populated them."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    errors_json = tmp_path / "out" / "errors.json"
+    run(
+        trades_path,
+        bars_path,
+        errors_json=errors_json,
+        repo_path=REPO_ROOT,
+        spread_note="2-pip fixed spread assumed",
+        slippage_note="no slippage modelled",
+    )
+    payload = json.loads(errors_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["spread_note"] == "2-pip fixed spread assumed"
+    assert payload["metadata"]["slippage_note"] == "no slippage modelled"
+
+
 def test_cli_main_success(tmp_path, capsys):
     bars_path = tmp_path / "bars.csv"
     _write_bars(bars_path)
@@ -371,6 +407,43 @@ def test_duplicate_symbol_timestamp_bar_rejected(tmp_path):
             "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T00:00:00Z"],
             "high": [101.0, 102.0],
             "low": [99.0, 98.0],
+        }
+    ).to_csv(bars_path, index=False)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T00:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    with pytest.raises(TradesSchemaError):
+        run(trades_path, bars_path)
+
+
+def test_duplicate_bar_with_differently_spelled_same_instant_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the duplicate-(symbol, timestamp) check previously ran on the RAW
+    string timestamp column BEFORE UTC normalization -- "...Z" and
+    "...+00:00" are two different strings describing the SAME instant, so
+    they passed the (string-based) uniqueness check, then collapsed to
+    one conflicting instant once parsed. Both spellings here must be
+    rejected as duplicates."""
+
+    bars_path = tmp_path / "bars.csv"
+    pd.DataFrame(
+        {
+            "symbol": ["XAUUSD", "XAUUSD"],
+            "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T00:00:00+00:00"],
+            "high": [101.0, 999.0],
+            "low": [99.0, 1.0],
         }
     ).to_csv(bars_path, index=False)
     trades_path = tmp_path / "trades.csv"

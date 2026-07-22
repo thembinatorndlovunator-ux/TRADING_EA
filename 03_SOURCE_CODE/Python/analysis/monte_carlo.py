@@ -218,6 +218,11 @@ def run(
     ruin_threshold: Optional[float] = None,
     confidence: float = 0.95,
     symbol: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> MonteCarloResult:
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
@@ -242,7 +247,12 @@ def run(
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [trades_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [trades_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         # **Added, 2026-07-22 Codex review finding (third round):** the
         # module docstring and dataclass docstring already explained that
@@ -285,6 +295,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ruin-threshold", type=float, default=None)
     parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -300,6 +312,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             ruin_threshold=args.ruin_threshold,
             confidence=args.confidence,
             symbol=args.symbol,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

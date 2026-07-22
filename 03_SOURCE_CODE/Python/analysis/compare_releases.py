@@ -1,9 +1,17 @@
 """compare_releases.py -- statistically compares two trade datasets (e.g.
 a baseline release vs. a candidate release) using the SAME normalized
 trade-export schema as analyse_baseline.py, reusing that script's own
-schema (not re-derived) for each dataset, plus a two-sample bootstrap
-confidence interval on the DIFFERENCE in win rate and R-expectancy between
-them.
+schema (not re-derived) for each dataset.
+
+**Corrected, 2026-07-22 Codex review finding (fourth round): this
+docstring previously said BOTH win rate and R-expectancy use a two-sample
+bootstrap CI on their difference -- only R-expectancy actually does.**
+The win-rate difference uses the Newcombe-Wilson hybrid interval
+(``metrics.wilson_diff_confidence_interval``), not a bootstrap, since
+bootstrapping a binary 0/1 outcome collapses to a degenerate interval at
+boundary samples (see that function's own docstring). R-expectancy uses
+``two_sample_bootstrap_diff``, a genuine two-sample bootstrap CI on the
+difference in means.
 
 Per the reproducibility contract's "tiny samples cannot drive automatic
 live parameter changes" rule: this script never declares a release
@@ -47,9 +55,9 @@ from analysis.csv_io import (
     read_csv_with_required_columns,
 )
 from analysis.metrics import InsufficientSampleError, wilson_diff_confidence_interval
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import atomic_write_text, build_report_metadata, compute_dataset_hash
 from analysis.resampling import seeded_bootstrap_indices
-from analysis.time_utils import parse_utc_series
+from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
 NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
@@ -176,6 +184,18 @@ def two_sample_bootstrap_diff(
     alpha = 1.0 - confidence
     lower = float(np.quantile(diffs, alpha / 2))
     upper = float(np.quantile(diffs, 1.0 - alpha / 2))
+    # **Added, 2026-07-22 Codex review finding (fourth round):** every
+    # individual value is checked finite above, but the MEAN/DIFFERENCE of
+    # finite values can still overflow -- an independent probe with two
+    # ten-value samples at opposite 1e308 magnitudes produced an observed
+    # difference of -inf and a CI of [nan, nan]. A pipeline must fail
+    # visibly rather than persist non-finite statistical evidence.
+    if not (math.isfinite(observed_diff) and math.isfinite(lower) and math.isfinite(upper)):
+        raise ValueError(
+            f"two_sample_bootstrap_diff: computed statistic overflowed to a non-finite value "
+            f"(observed_diff={observed_diff}, ci=[{lower}, {upper}]) -- the input values are "
+            "finite individually but their mean/difference is not"
+        )
     return DiffCiResult(
         observed_diff=observed_diff,
         ci_lower=lower,
@@ -197,9 +217,34 @@ def run(
     seed: int = 42,
     confidence: float = 0.95,
     symbol: Optional[str] = None,
-    broker: Optional[str] = None,
-    period_start: Optional[str] = None,
-    period_end: Optional[str] = None,
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): period_start/
+    # period_end are now REQUIRED, not optional -- the comparability
+    # contract ("use identical symbols, periods, data, costs, and broker
+    # settings", TEST_PLAN.md) means ONE claimed comparison period both
+    # datasets must be constrained to, not two independently-observed
+    # ranges checked only for any overlap (a baseline spanning Jan 1-31
+    # and a candidate spanning Jan 31-Feb 28 previously passed because the
+    # ranges touch at one instant). Every trade in BOTH datasets must now
+    # fall entirely within [period_start, period_end].**
+    period_start: str,
+    period_end: str,
+    # **Added, 2026-07-22 Codex review finding (fourth round): broker/
+    # timeframe/modelling_mode/set_file were previously a single shared,
+    # optional, caller-trusted assertion -- not "two compared manifests".
+    # Unlike ea_version/data_source (which are SUPPOSED to differ between
+    # baseline and candidate), these facts are supposed to be IDENTICAL
+    # between the two sides of a fair comparison; role-specific fields are
+    # now cross-checked for equality whenever both sides are supplied,
+    # catching a human mistake (e.g. mistyping the candidate's broker)
+    # instead of silently trusting one shared value.**
+    baseline_broker: Optional[str] = None,
+    candidate_broker: Optional[str] = None,
+    baseline_timeframe: Optional[str] = None,
+    candidate_timeframe: Optional[str] = None,
+    baseline_modelling_mode: Optional[str] = None,
+    candidate_modelling_mode: Optional[str] = None,
+    baseline_set_file: Optional[str] = None,
+    candidate_set_file: Optional[str] = None,
     # **Fixed, 2026-07-22 Codex review finding (third round): a single
     # shared ea_version/data_source value is insufficient to identify TWO
     # releases -- a caller could only ever record one version for both
@@ -208,23 +253,70 @@ def run(
     candidate_ea_version: Optional[str] = None,
     baseline_data_source: Optional[str] = None,
     candidate_data_source: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them -- this docstring already claimed the caller could
+    # assert cost identity, but no parameter existed to do so.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> dict:
-    """'broker'/'period_start'/'period_end' are recorded in the report's
-    provenance metadata and are the CALLER's responsibility to ensure are
-    actually identical between the two datasets -- this script can only
-    verify what is present IN the CSVs themselves (symbol and, now, the
-    data-driven trade period -- see below), not facts (broker, costs,
-    modelling mode, set file) that live outside them. Always state these
-    explicitly when calling this comparison."""
+    """Costs, spread, and slippage identity remain the CALLER's own
+    responsibility to assert consistently (no CSV column carries them) --
+    'spread_note'/'slippage_note' are recorded verbatim as provenance, not
+    verified against either dataset. 'period_start'/'period_end' and the
+    four role-specific manifest pairs above are now either enforced
+    against the actual data or cross-checked for equality (see their own
+    parameter comments) rather than accepted as unverified assertions.
+
+    Raises ValueError if a baseline/candidate manifest pair (broker,
+    timeframe, modelling_mode, set_file) is supplied on both sides but the
+    two values differ. Raises CsvSchemaError if any trade in either
+    dataset falls outside [period_start, period_end].
+    """
+
+    for label, base_val, cand_val in (
+        ("broker", baseline_broker, candidate_broker),
+        ("timeframe", baseline_timeframe, candidate_timeframe),
+        ("modelling_mode", baseline_modelling_mode, candidate_modelling_mode),
+        ("set_file", baseline_set_file, candidate_set_file),
+    ):
+        if base_val is not None and cand_val is not None and base_val != cand_val:
+            raise ValueError(
+                f"compare_releases: baseline_{label} ({base_val!r}) != "
+                f"candidate_{label} ({cand_val!r}) -- the comparability contract requires "
+                f"identical {label} between baseline and candidate"
+            )
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
     assert_path_not_same_file(output_json, baseline_csv, "output_json")
     assert_path_not_same_file(output_json, candidate_csv, "output_json")
 
+    parsed_period_start = pd.Timestamp(parse_iso8601_utc(period_start))
+    parsed_period_end = pd.Timestamp(parse_iso8601_utc(period_end))
+    if parsed_period_start > parsed_period_end:
+        raise ValueError(
+            f"compare_releases: period_start ({period_start}) must not be after "
+            f"period_end ({period_end})"
+        )
+
     baseline = _load_trades_with_r_multiple(baseline_csv, symbol)
     candidate = _load_trades_with_r_multiple(candidate_csv, symbol)
+
+    for label, df, csv_path in (
+        ("baseline", baseline, baseline_csv),
+        ("candidate", candidate, candidate_csv),
+    ):
+        outside = df[
+            (df["entry_time"] < parsed_period_start) | (df["exit_time"] > parsed_period_end)
+        ]
+        if not outside.empty:
+            raise CsvSchemaError(
+                f"{csv_path}: {len(outside)} {label} trade(s) fall outside the claimed "
+                f"comparison period [{period_start}, {period_end}] -- "
+                "identical periods are required for a fair comparison"
+            )
 
     # **Fixed, 2026-07-22 Codex review finding:** with no 'symbol' filter
     # supplied, the two datasets' own symbol sets were never checked
@@ -241,25 +333,15 @@ def run(
             "A release comparison requires both datasets to cover the same instrument(s)."
         )
 
-    # **Added, 2026-07-22 Codex review finding (third round): only symbol
-    # sets were checked -- a same-symbol January-2026 baseline vs.
-    # January-2025 candidate was still accepted. broker/period/costs/
-    # modelling-mode/set-file identity cannot be verified from the CSVs
-    # themselves (they are caller-asserted facts, documented above), but
-    # the DATA-DRIVEN trade period each dataset actually covers can be,
-    # and a wholly disjoint period is a defensible, data-driven rejection
-    # (not exhaustive comparability, but a real check, not zero checks).**
+    # Data-driven periods each dataset actually covers -- purely
+    # descriptive now that both are already ENFORCED to fall within the
+    # caller-claimed [period_start, period_end] window above (Codex review
+    # finding, fourth round: the old "do the observed ranges overlap"
+    # check let a Jan 1-31 baseline vs. a Jan 31-Feb 28 candidate pass
+    # because the ranges touch at one instant -- replaced by the stronger
+    # per-trade window enforcement above).
     baseline_period = (baseline["entry_time"].min(), baseline["exit_time"].max())
     candidate_period = (candidate["entry_time"].min(), candidate["exit_time"].max())
-    periods_overlap = (
-        baseline_period[0] <= candidate_period[1] and candidate_period[0] <= baseline_period[1]
-    )
-    if not periods_overlap:
-        raise CsvSchemaError(
-            f"compare_releases: baseline period {baseline_period} and candidate period "
-            f"{candidate_period} do not overlap at all -- these do not look like comparable "
-            "experiments over the same market period."
-        )
 
     # Win-rate difference: a proper two-proportion interval (Newcombe-
     # Wilson), not a bootstrap over raw 0/1 outcomes -- **fixed, 2026-07-22
@@ -305,21 +387,47 @@ def run(
         "confidence": confidence,
         "baseline_period": [str(baseline_period[0]), str(baseline_period[1])],
         "candidate_period": [str(candidate_period[0]), str(candidate_period[1])],
+        "claimed_comparison_period": [period_start, period_end],
         "baseline_ea_version": baseline_ea_version,
         "candidate_ea_version": candidate_ea_version,
         "baseline_data_source": baseline_data_source,
         "candidate_data_source": candidate_data_source,
+        # **Added, 2026-07-22 Codex review finding (fourth round):** each
+        # pair is EQUALITY-VERIFIED above whenever both sides are supplied
+        # (raising ValueError on mismatch), so recording both role-specific
+        # values here documents what was actually checked, not just what
+        # was asserted.
+        "baseline_broker": baseline_broker,
+        "candidate_broker": candidate_broker,
+        "baseline_timeframe": baseline_timeframe,
+        "candidate_timeframe": candidate_timeframe,
+        "baseline_modelling_mode": baseline_modelling_mode,
+        "candidate_modelling_mode": candidate_modelling_mode,
+        "baseline_set_file": baseline_set_file,
+        "candidate_set_file": candidate_set_file,
     }
 
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
+        # **Fixed, 2026-07-22 Codex review finding (fourth round): the one
+        # combined, order-independent dataset hash is not role-preserving
+        # -- two outside-repo inputs sharing a filename receive
+        # indistinguishable labels in compute_dataset_hash's own portable-
+        # label manifest, so swapping which physical file is baseline vs.
+        # candidate could retain the SAME combined hash while reversing
+        # the comparison. Separate per-role hashes close that gap.**
+        summary["baseline_dataset_hash"] = compute_dataset_hash([baseline_csv], repo_root=repo_path)
+        summary["candidate_dataset_hash"] = compute_dataset_hash(
+            [candidate_csv], repo_root=repo_path
+        )
         metadata = build_report_metadata(
             [baseline_csv, candidate_csv],
             symbol=symbol,
-            broker=broker,
             period_start=period_start,
             period_end=period_end,
             random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
             repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
@@ -337,13 +445,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
-    parser.add_argument("--broker", default=None)
-    parser.add_argument("--period-start", default=None)
-    parser.add_argument("--period-end", default=None)
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): period-start/
+    # period-end are now required, not optional -- see run()'s own comment.**
+    parser.add_argument("--period-start", required=True)
+    parser.add_argument("--period-end", required=True)
+    parser.add_argument("--baseline-broker", default=None)
+    parser.add_argument("--candidate-broker", default=None)
+    parser.add_argument("--baseline-timeframe", default=None)
+    parser.add_argument("--candidate-timeframe", default=None)
+    parser.add_argument("--baseline-modelling-mode", default=None)
+    parser.add_argument("--candidate-modelling-mode", default=None)
+    parser.add_argument("--baseline-set-file", default=None)
+    parser.add_argument("--candidate-set-file", default=None)
     parser.add_argument("--baseline-ea-version", default=None)
     parser.add_argument("--candidate-ea-version", default=None)
     parser.add_argument("--baseline-data-source", default=None)
     parser.add_argument("--candidate-data-source", default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -358,13 +477,22 @@ def main(argv: Optional[list[str]] = None) -> int:
             seed=args.seed,
             confidence=args.confidence,
             symbol=args.symbol,
-            broker=args.broker,
             period_start=args.period_start,
             period_end=args.period_end,
+            baseline_broker=args.baseline_broker,
+            candidate_broker=args.candidate_broker,
+            baseline_timeframe=args.baseline_timeframe,
+            candidate_timeframe=args.candidate_timeframe,
+            baseline_modelling_mode=args.baseline_modelling_mode,
+            candidate_modelling_mode=args.candidate_modelling_mode,
+            baseline_set_file=args.baseline_set_file,
+            candidate_set_file=args.candidate_set_file,
             baseline_ea_version=args.baseline_ea_version,
             candidate_ea_version=args.candidate_ea_version,
             baseline_data_source=args.baseline_data_source,
             candidate_data_source=args.candidate_data_source,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

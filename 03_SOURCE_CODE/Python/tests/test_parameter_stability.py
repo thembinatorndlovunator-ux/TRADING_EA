@@ -169,3 +169,103 @@ def test_run_output_path_colliding_with_input_rejected(tmp_path):
     _write_r_paths_csv(r_paths_csv, {"pB": PATH_B})
     with pytest.raises(CsvSchemaError):
         run(r_paths_csv, [40.0], output_csv=r_paths_csv)
+
+
+def test_run_blank_path_id_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a blank path_id previously vanished silently -- pandas' own groupby
+    drops a blank/NaN key entirely rather than surfacing it as a schema
+    error."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    pd.DataFrame({"path_id": ["", ""], "bar_index": [0, 1], "r_value": [0.0, 1.0]}).to_csv(
+        r_paths_csv, index=False
+    )
+    with pytest.raises(CsvSchemaError):
+        run(r_paths_csv, [40.0])
+
+
+def test_run_malformed_bar_index_probe_rejected(tmp_path):
+    """Regression for the exact malformed probe Codex reproduced
+    (2026-07-22, fourth round): a blank path_id, a fractional/negative
+    bar_index (-2.5), a duplicate bar_index (7 twice), and no bar_index 0
+    all completed successfully before this fix."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    pd.DataFrame(
+        {
+            "path_id": ["p1", "p1", "p1"],
+            "bar_index": [-2.5, 7, 7],
+            "r_value": [0.5, 1.0, 1.0],
+        }
+    ).to_csv(r_paths_csv, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(r_paths_csv, [40.0])
+
+
+def test_run_duplicate_bar_index_rejected(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    pd.DataFrame(
+        {"path_id": ["p1", "p1", "p1"], "bar_index": [0, 1, 1], "r_value": [0.0, 1.0, 2.0]}
+    ).to_csv(r_paths_csv, index=False)
+    with pytest.raises(CsvSchemaError):
+        run(r_paths_csv, [40.0])
+
+
+def test_run_missing_index_zero_rejected(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    pd.DataFrame({"path_id": ["p1", "p1"], "bar_index": [1, 2], "r_value": [0.5, 1.0]}).to_csv(
+        r_paths_csv, index=False
+    )
+    with pytest.raises(CsvSchemaError):
+        run(r_paths_csv, [40.0])
+
+
+def test_run_nonzero_entry_r_rejected(tmp_path):
+    """A trade starts at 0R by definition -- a nonzero entry (bar_index
+    0) r_value is not a legitimate R-path."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    pd.DataFrame({"path_id": ["p1", "p1"], "bar_index": [0, 1], "r_value": [0.5, 1.0]}).to_csv(
+        r_paths_csv, index=False
+    )
+    with pytest.raises(CsvSchemaError):
+        run(r_paths_csv, [40.0])
+
+
+def test_nan_arm_rr_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    neither arm_rr nor close_trigger_floor_r was validated -- NaN
+    previously produced a "successful" result."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B})
+    with pytest.raises(ValueError):
+        run(r_paths_csv, [40.0], arm_rr=float("nan"))
+
+
+def test_nan_close_trigger_floor_r_rejected(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B})
+    with pytest.raises(ValueError):
+        run(r_paths_csv, [40.0], close_trigger_floor_r=float("nan"))
+
+
+def test_summary_persists_arm_rr_and_bootstrap_config(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    arm_rr/close_trigger_floor_r and the bootstrap confidence/resample
+    count were omitted from the summary despite being effective
+    configuration for every row."""
+
+    import json
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+    summary_json = tmp_path / "summary.json"
+    run(r_paths_csv, [40.0], summary_json=summary_json, arm_rr=1.5, close_trigger_floor_r=0.1)
+
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["arm_rr"] == 1.5
+    assert payload["summary"]["close_trigger_floor_r"] == 0.1
+    assert payload["summary"]["bootstrap_confidence"] == 0.95
+    assert payload["summary"]["bootstrap_n_resamples"] == 2000

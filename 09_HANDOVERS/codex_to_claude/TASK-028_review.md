@@ -1,436 +1,478 @@
-# Codex Independent Code Review — TASK-028 Python/Jupyter Statistical Laboratory
+# TASK-028 independent code review — round 4
 
 **Disposition: CHANGES REQUESTED**
 
-TASK-028 is **not ready to merge or close** at `fd07473fe53d42044518c5af514973a63a5e1eca`.
-The remediation contains many real fixes, and all committed automated gates are
-green, but required paired analyses, evidence identity, statistical
-reproducibility, and future-data controls still have release-blocking defects.
-Several new tests also encode the defective behavior rather than detecting it.
+**Review target:** branch `claude/task-028-python-statistical-lab`, commit
+`b88b63abf1d8ca03a9cec29493c7bba471264ed6` (`b88b63a`), independently
+reviewed against parent `fd07473` and against the current repository contracts.
 
-## Review target and independent evidence
-
-- Branch: `claude/task-028-python-statistical-lab`
-- Reviewed HEAD: `fd07473fe53d42044518c5af514973a63a5e1eca`
-- Previous reviewed HEAD: `c775a6e`
-- Remediation diff: 50 files, 3,999 insertions, 1,032 deletions.
-- Full test suite: **340 passed** in 17.02 seconds.
-- Ruff 0.15.22: **All checks passed**.
-- mypy 2.3.0: **Success; no issues in 23 source files**.
-- All 11 committed notebooks independently executed with fresh kernels and
-  exited 0.
-- The committed `requirements-lock.txt` exactly matches the active venv's
-  ordinary `pip freeze` package set.
-- Direct adversarial probes reproduced the MFE exit-bar look-ahead, invalid
-  statistical inputs becoming results, a hash/parse snapshot mismatch,
-  hard-link input overwrite, duplicate-journal acceptance, multiline duplicate
-  CSV-header bypass, nested numeric overflow, and CSV formula injection.
-- No file under `01_BASELINE/` was modified. The V6.37/V8.11 EA files and both
-  `IDENTITY.md` files have the same Git blob IDs at HEAD as at their respective
-  `baseline-v637`/`baseline-v811` tags.
+The remediation is substantial and many round-3 defects are genuinely fixed,
+but TASK-028 is not ready to merge. I found **18 findings: 3 P0, 11 P1, and
+4 P2**. The most important blockers are not test-count issues: required
+statistical deliverables remain absent, the new durable identity join cannot
+consume the intended real journal/export contracts safely, and the required
+session/mode/news outcome analysis still has no completed end-to-end path.
 
 ## Findings
 
-### 1. [P0] `parameter_stability.py` is not an explicit-input reproducible pipeline
+### 1. [P0] Required baseline-comparison and equity-giveback deliverables remain absent and unowned
 
-**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:63-79,161-188`;
-`analysis/parameter_stability.py:50-168`;
-`notebooks/06_parameter_stability.ipynb:7-23`.
+**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:5-17,121-131,168-195`;
+`00_MASTER_PROMPT_FOR_CLAUDE.md:158-180,1193-1222`;
+`TEST_PLAN.md:9-23`; `analysis/analyse_baseline.py:1-24,180-225`;
+`analysis/analyse_giveback.py:1-35,79-98,219-243`;
+`analysis/compare_releases.py:264-312`; `TASK-037_MT5_EXPORT_BRIDGE.md:46-90`.
 
-`run()` accepts only caller-created in-memory R paths. The CLI accepts no input
-path, always prints that no input source exists, and exits 1. Its hand-built
-metadata consequently has no dataset identity/hash, timezone, or pipeline
-version. Notebook 06 passes only because it creates the paths inside its kernel.
-This does not satisfy the contract that pipelines accept explicit input/output
-paths and identify the analyzed dataset.
+TASK-028 explicitly includes a hand-verifiable **equity-peak-giveback** fixture,
+and the master prompt assigns equity-peak giveback to the Python laboratory.
+No Python code computes account or daily equity-peak giveback. The current
+giveback pipeline simulates per-trade R-path exit guards, which is a different
+quantity. `analyse_baseline` explicitly operates on closed-trade balance only
+and persists `max_equity_drawdown: None`.
 
-The computational boundary is also unsafe: only non-empty collections are
-validated. A NaN path and NaN `giveback_percent` produce a successful,
-plausible-looking row, and values outside 10–90 are reported under the supplied
-label even though `exit_simulation.py:23-30` silently clamps them. Distinct
-reported settings can therefore execute the same setting. Constant multi-path
-samples also suppress an otherwise valid degenerate bootstrap interval instead
-of reporting it.
+The baseline-comparison minimum surface is also incomplete. The current
+normalized trade schema already permits recovery factor, longest losing
+sequence, average winner/loser, duration, and trades/day to be computed, but no
+pipeline reports them. Maximum equity drawdown, equity-peak giveback, and
+spread/slippage sensitivity need additional input data, yet no numbered task
+owns the necessary equity-series/cost-scenario export and analysis. Merely
+adding `spread_note`/`slippage_note` metadata is not sensitivity analysis.
 
-Provide a documented file schema and functioning CLI, hash that input, validate
-all paths and parameters as finite and in range (or report both requested and
-effective values), and persist the complete resampling configuration.
+This is not excused by the lack of real evidence: TASK-028's own contract says
+to implement hand-verifiable synthetic fixtures while marking the real-data run
+pending. Either implement these deliverables and fixtures now or create
+specific, executable follow-ups whose inputs and closure tests are defined.
 
-### 2. [P0] The required session/mode/news performance analysis is still incomplete
+### 2. [P0] The new durable signal-to-outcome join is unusable with the intended real contracts and can corrupt statistical identity
 
-**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:164-173`;
-`TEST_PLAN.md:9-23`; `analysis/performance_breakdown.py:1-45,69-142`;
-`notebooks/04_session_and_news_analysis.ipynb:15-19,77-97`.
+**Files:** `analysis/join_signal_to_outcome.py:1-44,68-160`;
+`analysis/schema.py:1-5,63-101`; `analysis/csv_io.py:28-68`;
+`tests/test_join_signal_to_outcome.py:80-117`;
+`TRADE_DECISION_SCHEMA.json:1-26`;
+`TASK-036_JOURNAL_PRODUCER_COMPLETION.md:16-25,76-103,127-130,141-162`;
+`TASK-037_MT5_EXPORT_BRIDGE.md:46-52,100-126`;
+`analysis/performance_breakdown.py:29-47,150-183`.
 
-The new pipeline claims the full strategy/setup/regime/session/symbol/direction/
-hour/day/news-window breakdown, but its allowed dimensions omit both
-`intraday_mode`/mode and `news_state`/`in_news_blackout`. Its documented
-`r_multiple` input is unused, so it reports only dollar expectancy. Despite the
-docstring saying dimensions must be a subset of `OPTIONAL_DIMENSIONS`, the code
-checks only that a column exists, allowing arbitrary groupings such as
-`trade_id` or `profit`.
+The module says rejected/unfilled journal decisions are normal and should be
+omitted from the matched output, while `TradeDecision.order_id` is explicitly
+nullable. The implementation instead aborts the **entire journal** if any row
+has a null `order_id`. A direct probe containing one filled decision and one
+ordinary pre-submission rejection raised `CsvSchemaError`; the committed test
+at lines 113-117 canonizes this contradiction.
 
-Notebook 04 says it groups by trading session and reports session win rate, but
-it actually groups only by derived `hour_of_day`. Its closing text then refers
-to the removed implementation as “simplified fixed UTC-hour buckets.” Neither
-the notebook nor its tests exercises `session_state`, and the named export
-follow-up does not define the broker session-table export the notebook says is
-needed. A generic ability to group a hypothetical supplied column is not the
-required session/news analysis.
+Additional integrity defects remain:
 
-### 3. [P0] The required durable journal-decision-to-trade-outcome join is unimplemented and unowned
+- The implementation uses only `order_id`; `deal_id` is never read, despite
+  the commit message and TASK-036 describing the Python half as order/deal-ID
+  complete.
+- Generic pandas CSV inference is used for durable IDs. An in-memory probe of
+  `9007199254740992`, `9007199254740993`, and a blank ID loaded the column as
+  `float64` and collapsed the first two IDs to the same value. Real MT5 ticket
+  IDs are durable identifiers and must be read as strings, never floating
+  point. Leading zeroes are also discarded (`"001"` becomes `1`).
+- `trade_id` is not checked for nulls or duplicates, `profit` is not checked
+  for finiteness, and the claimed full input schemas are reduced in code to
+  one required journal column and three trade columns.
+- Shared fields are merged with trade-row precedence. Conflicting journal and
+  trade `symbol`, `direction`, or `strategy` values are silently masked rather
+  than reconciled or rejected.
+- The stated partial-fill rule emits one downstream “trade” per fill. The
+  performance pipeline then treats those correlated rows as independent
+  observations, inflating `n_trades` and confidence unless fills are first
+  aggregated to one position/outcome or explicitly clustered.
+- `TRADE_DECISION_SCHEMA.json` and `DecisionJournal.mqh` still have neither ID,
+  contradicting `schema.py`'s current field-for-field-match claim.
+- TASK-037's trade export still omits both `order_id` and `deal_id`, so the only
+  task that is meant to produce real trades cannot produce this join's input.
 
-**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:164-170`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:114-124`;
-`analysis/join_trade_journal.py:1-16`;
-`analysis/performance_breakdown.py:29-45`;
-`TASK-036_JOURNAL_PRODUCER_COMPLETION.md:63-66,84-110`;
-`TASK-037_MT5_EXPORT_BRIDGE.md:43-47,71-76`.
+Filter and count unsubmitted decisions instead of rejecting them; establish a
+versioned, string-typed identity contract across MQL, JSON schema, journal CSV,
+trade export, and Python; define aggregation/cardinality for positions and
+partial fills; and add the real export-to-join-to-breakdown test to TASK-037.
 
-`join_trade_journal.py` cleans journal records; it does not join them to trade
-outcomes. `performance_breakdown.py` requires an already-unified CSV and does
-not build it. TASK-036 adds `order_id`/`deal_id` but explicitly excludes the
-consuming join, while its own test plan nevertheless promises an end-to-end
-join. TASK-037's trade schema omits those IDs and also declares consuming
-analysis out of scope. Adding identifiers to producers is necessary but is not
-an end-to-end join pipeline. Give the join an explicit implementation owner,
-schema, duplicate/cardinality rules, partial-fill semantics, tests, and
-reviewable outputs.
+### 3. [P0] Required performance by session, mode, and news window is still not delivered end to end
 
-### 4. [P1] Bootstrap uncertainty uses hidden or falsely recorded seeds
+**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:158-180,1125-1154,1215-1222`;
+`TEST_PLAN.md:20-23`; `notebooks/04_session_and_news_analysis.ipynb` markdown
+and code cells; `analysis/performance_breakdown.py:1-47,74-110,202-264`;
+`tests/test_performance_breakdown.py:1-144`;
+`TASK-036_JOURNAL_PRODUCER_COMPLETION.md:85-97`;
+`TASK-037_MT5_EXPORT_BRIDGE.md:46-90,118-147`;
+`TASK-002_PHASE2_SPECIFICATION.md:1268-1269`.
 
-**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:69-77`;
-`analysis/metrics.py:195-230`;
-`analysis/analyse_baseline.py:146-191`;
-`analysis/analyse_giveback.py:193-241`;
-`analysis/performance_breakdown.py:95-191`;
-`analysis/walk_forward.py:1-10,120-148,164-284`.
+Notebook 04 now honestly says it does **not** perform session analysis: it
+recomputes news-window membership and separately groups synthetic trades by UTC
+hour. It never reports trade outcomes by `session_state`, `intraday_mode`,
+`news_state`, or `in_news_blackout`. The performance module lists those generic
+columns, but neither this notebook nor its tests exercise the required outcome
+analyses.
 
-- `walk_forward.py` says it performs no randomization and needs no seed, yet
-  every non-singleton expectancy invokes a bootstrap with hidden defaults. Its
-  API and report expose no seed, resample count, or confidence.
-- `performance_breakdown.run(seed=...)` records the supplied seed in metadata,
-  but `compute_breakdown()` always uses `expectancy()`'s seed 42.
-- `analyse_giveback` uses `seed or 42`; an explicit seed of 0 is recorded as 0
-  while seed 42 generates the interval. It omits confidence and resample count.
-- `analyse_baseline` never forwards its seed and discards the expectancy CI,
-  confidence, resample count, and actual bootstrap seed from its summary.
+The deferral chain is incomplete. TASK-037 specifies no broker session-table
+export. TASK-036 says to derive `session_state` from the remaining-session API,
+but does not define how the numeric value maps to the specified
+`OPEN`/`CLOSING_SOON`/`CLOSED` buckets. The broken/missing export-to-outcome join
+in finding 2 also prevents the news decisions from acquiring trade outcomes.
 
-Every randomized calculation must receive the reported seed/configuration, and
-the result artifact—not merely an optional metadata object—must retain it.
+Implement and test synthetic session/mode/news outcome breakdowns now, then
+define the exact producer/export mapping needed to repeat them on real data.
 
-### 5. [P1] Non-finite values and required uncertainty still bypass the shared statistical layer
+### 4. [P1] Late-derived sidecar names can overwrite another requested output or the input evidence
 
-**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:74-77,190-196`;
-`analysis/metrics.py:1-9,38-60,73-94,195-260`;
-`analysis/compare_releases.py:104-167`;
-`analysis/analyse_baseline.py:149-182`.
+**Files:** `analysis/join_news_events.py:138-162,253-322`;
+`analysis/join_trade_journal.py:81-97,166-203`.
 
-Direct calls produced the following instead of visible failures:
+Both scripts validate only the explicitly supplied paths, then derive a
+provenance/error filename later without re-running collision checks.
 
-- `expectancy([NaN])` returned a one-observation result whose expectancy is
-  NaN because the n=1 branch runs before finite validation.
-- `profit_factor([NaN])` returned an undefined factor with zero wins and zero
-  losses.
-- `two_sample_bootstrap_diff()` accepted a non-finite sample and returned NaN
-  point/interval fields.
+Direct probes reproduced both failure modes:
 
-The module header still says every function returns sample size and uncertainty,
-which is false for `MaxDrawdownResult`, the raw Wilson tuple, and profit factor's
-total sample. The baseline artifact still exposes no expectancy CI and no
-uncertainty for profit factor or drawdown. Primary CSV wrappers catch some of
-these cases, but these are public shared functions and the new in-memory
-parameter pipeline bypasses those wrappers.
+- `join_news_events(output_csv=joined.csv,
+  summary_json=joined.errors.json, errors_json=None)` wrote the requested
+  summary and then replaced it with the derived error payload.
+- With the news input itself named `joined.errors.json` and output
+  `joined.csv`, the derived error report replaced the source news evidence.
+- `join_trade_journal(output_csv=foo.csv,
+  output_json=foo.provenance.json, errors_json=None)` similarly replaced the
+  requested valid-record JSON with the derived provenance/error report.
 
-### 6. [P1] The MFE/MAE “bar-open alignment” fix still uses post-exit prices, and giveback timing remains undefined
+Derive every implicit path before any read or write, then apply the complete
+hard-link-aware input/output/output collision validation to the final path set.
 
-**Files:** `analysis/trade_math.py:60-136`;
-`analysis/calculate_mfe_mae.py:12-19,90-161`;
-`analysis/analyse_giveback.py:18-22,108-169`;
-`tests/test_trade_math.py:149-162`.
+### 5. [P1] Hash/re-hash checks still do not bind reports to the bytes and source set actually analyzed
 
-`trade_math.py` declares every timestamp to be the bar's **open** time and
-requires the trade exit to equal such a timestamp, but then selects
-`timestamp <= exit_time`. The entire exit bar therefore occurs after the trade
-has exited. A direct two-bar probe with entry 00:00, exit 01:00, and an extreme
-01:00 bar returned `mfe_r=449.5` and `mae_r=-50.0`, entirely from post-exit
-movement. Under the declared convention the ordinary interval is
-`[entry_time, exit_time)`; the current test explicitly enshrines the inclusive
-bug.
+**Files:** `analysis/join_trade_journal.py:99-159`;
+`analysis/join_news_events.py:164-235`;
+`data_collection/journal_reader.py:217-288`;
+`analysis/analyse_baseline.py:124-239`;
+`analysis/join_signal_to_outcome.py:132-158`;
+`analysis/report_metadata.py:90-145,206-261`.
 
-Giveback analysis does not even declare whether its timestamps denote bar opens
-or closes, requires no boundary alignment, and includes both endpoints. A
-00:30–01:30 trade with only a 01:00 bar completed with zero row errors.
-Neither analysis rejects duplicate `(symbol,timestamp)` bars or checks expected
-interior coverage. This is precisely the future-data/measurement-contamination
-rejection condition, not a documentation-only caveat.
+`join_trade_journal` captures and hashes one glob result, but the reader globs
+the directory again. A probe added a second `decisions_*.jsonl` file after the
+initial glob/hash: both files were analyzed, metadata listed only the first,
+and the post-check passed because it re-hashed only the old list.
 
-### 7. [P1] Impossible trade chronology remains valid evidence
+`join_news_events` performs its purported post-parse hash **before** reading
+the news CSV. Mutating that CSV inside its reader produced a blackout result
+from the new bytes with the old hash. The post-check is skipped entirely when
+the journal directory initially has no journal file. Other pipelines still
+parse first and hash later, which permits the inverse race.
 
-**Files:** `analysis/analyse_baseline.py:105-153`;
-`analysis/compare_releases.py:57-89`;
-`analysis/walk_forward.py:185-216`.
+This needs one immutable snapshot/staged-byte design shared by every pipeline,
+plus re-enumeration of multi-file source sets before publication. Two hashes of
+independent file reads are detection heuristics, not evidence that the parsed
+bytes equal the reported hash.
 
-These pipelines strictly parse both timestamps but never require
-`entry_time <= exit_time`. A baseline trade whose entry was one day after its
-exit was accepted and reported as one valid trade. Add a shared chronology
-check before any metric, sort, or window operation. Per-row pipelines may
-report the row as an error; aggregate pipelines should fail the dataset.
+### 6. [P1] The new atomic CSV writer violates the UTF-8 contract on Windows
 
-### 8. [P1] `compare_releases` still accepts incomparable experiments
+**File:** `analysis/csv_io.py:330-352`.
+
+The temporary CSV file is opened without an explicit encoding. In the tested
+Windows environment it used `cp1252`: writing `Café` produced byte `0xE9`, and
+reopening the result as UTF-8 raised `UnicodeDecodeError`. Characters outside
+the active code page can fail the write outright.
+
+Every pipeline now uses this helper, so this is system-wide. Open the temporary
+file with `encoding="utf-8"` (and retain the current atomic replacement).
+
+### 7. [P1] MFE/MAE and giveback bar identity still admit contaminated evidence
+
+**Files:** `analysis/trade_math.py:73-133`;
+`tests/test_trade_math.py:85-116`;
+`analysis/calculate_mfe_mae.py:101-116`;
+`analysis/analyse_giveback.py:129-142`.
+
+The ordinary multi-bar MFE interval is now correctly half-open, but the new
+`entry_time == exit_time` exception includes the entire bar. Under the module's
+own exact bar-open convention, equal timestamps describe a zero-duration trade
+at the bar open, not a trade exposed to the following bar. A probe with one bar
+(`high=999`, `low=0`, entry `100`, stop `98`) returned `mfe_r=449.5` and
+`mae_r=-50.0`, all from prices after the recorded exit. The test suite enshrines
+this result as correct. Reject it as unmeasurable at bar resolution or require
+tick/sub-bar evidence.
+
+Both CSV pipelines also check duplicate `(symbol, timestamp)` keys **before**
+UTC normalization. Raw spellings `...Z` and `...+00:00` pass as distinct, then
+become the same instant. A direct MFE probe accepted two conflicting rows at
+that instant and reported both in the measurement. Parse first, then enforce
+canonical-time uniqueness.
+
+### 8. [P1] The parameter-stability CSV does not enforce its stated path semantics or complete experiment configuration
+
+**Files:** `analysis/parameter_stability.py:31-36,62-92,95-179,182-247`;
+`TASK-028_PYTHON_STATISTICAL_LAB.md:70-86`.
+
+The new CSV-backed CLI and dataset hash are real improvements. The loader,
+however, checks only `bar_index`/`r_value` finiteness. It does not reject blank
+`path_id`, duplicate `(path_id, bar_index)`, fractional/negative/gapped indices,
+missing index zero, or a nonzero entry R. Pandas silently drops a blank-ID group.
+A malformed probe containing a blank ID, `-2.5`, duplicate index `7`, and no
+index zero completed successfully.
+
+`arm_rr` and `close_trigger_floor_r` are neither validated nor CLI-exposed.
+NaN values produced a successful result. The summary omits both values plus
+bootstrap confidence and resample count. Enforce the documented sequence
+schema and persist/expose every effective parameter.
+
+### 9. [P1] Giveback and other numeric analysis controls remain silently clamped or semantically invalid
+
+**Files:** `analysis/analyse_giveback.py:101-120,219-227,248-338`;
+`analysis/exit_simulation.py:18-49`;
+`analysis/join_news_events.py:91-115,234-247`;
+`analysis/pattern_validation.py:118-139,269-300,353-434`.
+
+`analyse_giveback` validates none of its five model parameters and persists
+none of them. Passing NaN for all five produced valid comparisons/triggers with
+zero row errors because Python's `min`/`max` behavior silently selected effective
+clamps. Out-of-range finite settings likewise execute a different effective
+setting without the artifact disclosing requested or effective values. The
+summary also lacks a like-for-like full-cohort mean effect magnitude for the
+two models; it has only conditional mean magnitude and full-cohort helped rate.
+
+The same validation discipline is absent from news `before_minutes`/
+`after_minutes`/`min_importance` controls and pattern `trend_lookback`/
+`size_window`; negative values can silently invert/empty windows or turn “no
+comparison history” into an automatic percentile pass. Validate finite/range
+semantics at each public entry point and report the effective configuration.
+
+### 10. [P1] Release comparison still accepts experiments that violate the required comparability contract
 
 **Files:** `TEST_PLAN.md:3-8,25-29`;
-`analysis/compare_releases.py:170-212,231-262`.
+`analysis/compare_releases.py:15-22,191-262,285-326`;
+`analysis/report_metadata.py:103-145`.
 
-The test plan requires identical symbols, periods, data, costs, and broker
-settings. The implementation checks only symbol sets. Broker and date values
-are unverified caller assertions; modelling mode, timeframe, costs, spread,
-slippage, set file, and data identity comparability are not represented or
-checked. A same-symbol January-2026 baseline and January-2025 candidate were
-accepted. One singular `ea_version`/`data_source` value is also insufficient to
-identify two releases. Require two complete experiment manifests and reject
-any non-approved mismatch before calculating a release comparison.
+The fix rejects only wholly disjoint periods. A baseline spanning January
+1-31 and candidate spanning January 31-February 28 passed because the ranges
+touch at one instant. The contract requires identical periods, data, costs,
+and broker settings, not any overlap. Multi-symbol inputs are checked only via
+one global symbol set and min/max range; per-symbol periods and sample weights
+may differ completely.
 
-The replacement Newcombe-Wilson interval for the win-rate difference was
-independently recomputed and is correct; that correction is resolved.
+Broker, timeframe, modelling mode, spread, slippage, set file, and data identity
+are still optional caller assertions, not two compared manifests. The one
+combined, order-independent dataset hash is also not role-preserving: two
+outside-repo inputs with the same filename receive indistinguishable labels,
+so swapping baseline and candidate can retain the same combined hash while
+reversing the comparison.
 
-### 9. [P1] Required provenance is still unavailable or optional for normal outputs
+Require two complete role-specific experiment manifests, verify all mandated
+equality fields, and either implement the same-market paired/blocked comparison
+or explicitly model and disclose the within-period dependence.
 
-**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:54-58`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:63-75,176-187,595-599`;
-`analysis/report_metadata.py:168-251`; all analysis CLI parsers/output sites.
+### 11. [P1] Mandatory provenance remains optional or unexpressible for normal persisted outputs
 
-`ea_version`, `data_source`, and pipeline version are real improvements, but
-the acceptance criterion remains unmet:
+**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:70-86,183-195`;
+`00_MASTER_PROMPT_FOR_CLAUDE.md:54-58`;
+`analysis/report_metadata.py:23-32,168-261`; persisted-output sites across
+`analyse_baseline.py`, `analyse_giveback.py`, `calculate_mfe_mae.py`,
+`walk_forward.py`, `performance_breakdown.py`, `pattern_validation.py`,
+`parameter_stability.py`, and `join_signal_to_outcome.py`.
 
-- spread and slippage have no distinct fields; only optional `costs_note`
-  exists;
-- all caller-supplied provenance fields remain optional;
-- only `analyse_baseline` and `compare_releases` expose the two new fields;
-- most CLIs expose only symbol and/or seed, with no timeframe, period,
-  modelling mode, costs, set file, broker, or data-source inputs;
-- CSV outputs have no mandatory metadata sidecar;
-- `pattern_validation.py` emits an entirely unprovenanced CSV;
-- `parameter_stability.py` hand-builds incomplete metadata without a dataset
-  hash, timezone, or pipeline version;
-- `join_trade_journal` places provenance only in memory or its optional error
-  report, not alongside its normal CSV/JSON data outputs.
+Most CSV outputs can still be requested without any metadata sidecar. Most
+CLIs cannot express EA version, broker, timeframe, period, modelling mode,
+costs, set file, or data source. `spread_note` and `slippage_note` exist on the
+dataclass but no analysis caller exposes or populates them. The signal/outcome
+join writes provenance only when optional `errors_json` is supplied.
 
-The task itself discloses part of this gap while claiming all findings are
-resolved. Make required fields expressible and validated where applicable, and
-emit a mandatory manifest alongside every persisted result.
+`PIPELINE_VERSION` also remains `0.2.0` even though `b88b63a` changes output
+shapes, adds sidecars and metadata fields, renames persisted metrics, and adds
+a new pipeline—contrary to its own “bump on output-shape change” comment.
 
-### 10. [P1] Hashing and output guards still cannot guarantee evidence identity
+Every persisted result needs an inseparable manifest with required applicable
+fields and a truthful pipeline version; optional metadata is not the contract.
 
-**Files:** `analysis/csv_io.py:62-76`;
-`analysis/report_metadata.py:90-165`;
-`analysis/join_trade_journal.py:80-140,146-168`;
-`analysis/join_news_events.py:121-156,190-241`; all direct `to_csv()` sites.
+### 12. [P1] Several randomized reports still hide their resampling configuration
 
-Hash-before-parse is not a snapshot. A probe changed a journal after metadata
-hashing but before parsing; the result analyzed the new record while retaining
-the old hash. Other pipelines parse first and hash later, leaving the inverse
-race. Hash and parse the same captured bytes/staged immutable files and verify
-the source set did not change before publishing.
+**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:70-86`;
+`analysis/walk_forward.py:145-184,202-339`;
+`analysis/performance_breakdown.py:113-199,202-262`;
+`analysis/parameter_stability.py:95-179,182-234`;
+`analysis/analyse_giveback.py:267-337`.
 
-Path guards compare only `Path.resolve()`. An output path that is a hard link to
-an existing input has a different resolved name and passes. A direct
-`analyse_baseline` probe then overwrote the underlying input inode. Use
-`samefile`/file identity checks for existing paths in addition to normalized
-path checks.
+Seed threading is improved, but the contract also requires explicit and
+reported simulation/resample counts. Walk-forward, performance breakdown, and
+parameter stability hard-wire `expectancy`/bootstrap defaults and omit
+`confidence` and `n_resamples` from their artifacts. CSV-only output omits even
+the seed. Giveback reports the mean-difference bootstrap configuration but not
+the Wilson confidence used for its helped-rate intervals.
 
-JSON writes are now atomic, which is confirmed. Every CSV writer remains a
-direct `to_csv(path)` operation, however, so interruption can leave a partial
-artifact. Use the same temp-file-and-replace discipline for CSV output.
+Expose these settings at `run()`/CLI boundaries, thread them into the metric,
+and persist them beside every interval.
 
-### 11. [P1] Journal/news/CSV validation still admits duplicate or corrupt evidence
+### 13. [P1] Finite operands can still produce non-finite statistics
 
-**Files:** `analysis/csv_io.py:26-59`;
-`analysis/schema.py:63-91,147-168`;
-`data_collection/journal_reader.py:108-192,195-303`;
-`analysis/join_news_events.py:55-98,142-250,268-293`;
-`NewsManager.mqh:55-70`.
+**Files:** `analysis/metrics.py:211-365`;
+`analysis/compare_releases.py:113-188`.
 
-- `join_news_events` never runs the journal duplicate detectors. Two identical
-  valid decisions were counted twice and the CLI returned 0, allowing biased
-  blackout counts.
-- Duplicate CSV-header detection reads only the first physical line. A quoted
-  multiline duplicate header bypassed the check and pandas silently mangled
-  the second name.
-- `parse_constant` rejects literal `NaN`/`Infinity`, but JSON `1e400` parses as
-  `inf` without using that hook. Because nested `score_breakdown` is
-  unconstrained, the record validated, was written as `{'overflow': inf}` to
-  CSV, and the CLI returned 0.
-- News importance is hard-limited to `{0,1,2,3}` even though the provider-neutral
-  MQL contract says it is mapped to whatever ordinal scale a provider uses.
-  Python booleans are also admitted as 0/1. Either declare/normalize an MT5-only
-  schema or validate a genuine provider-neutral integer contract.
-- Row-level invalid-journal details are persisted only if the caller happens to
-  request optional `errors_json`. Otherwise an all-invalid run may write an
-  empty CSV, exit nonzero, and retain no reviewable error artifact.
+Input-level NaN/inf rejection is fixed, but sums, variance, means, resample
+statistics, and differences are never checked after computation. Independent
+probes produced:
 
-The streaming reader is improved, but an arbitrarily large physical line must
-still be materialized before truncation, validation errors retain the full raw
-record, and there is no file-count/byte/error-payload budget. Add bounded
-record/file sizes as defense in depth.
+- `expectancy([1e308, 1e308], n_resamples=100)` -> mean/std `inf`, CI
+  `[nan, nan]`;
+- `profit_factor([1e308, 1e308, -1])` -> gross profit and factor `inf`;
+- two ten-value samples at opposite `1e308` magnitudes -> observed difference
+  `-inf`, CI `[nan, nan]`.
 
-### 12. [P1] Spreadsheet-formula protection covers only two of the affected CSV exporters
+Add defensible domain-magnitude bounds or stable arithmetic plus post-compute
+finiteness checks. A pipeline must fail visibly before returning or persisting
+non-finite statistical evidence.
 
-**Files:** `analysis/csv_io.py:210-230`;
-`analysis/analyse_baseline.py:193-195`;
-`analysis/analyse_giveback.py:174-191`;
-`analysis/calculate_mfe_mae.py:146-161`;
-`analysis/performance_breakdown.py:114-142,176-178`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:592-594`.
+### 14. [P1] Two numbered follow-ups still cannot deliver the closure they claim to own
 
-`sanitize_for_csv` is used only by the two join scripts. The new performance
-pipeline writes caller/journal-derived dimension values directly; a strategy of
-`=1+1` was emitted unchanged. Baseline re-exports all original strings, while
-giveback and MFE/MAE export caller-controlled `trade_id` directly. Apply one
-safe, atomic CSV serializer to every text-bearing report, not only files whose
-immediate producer is named “journal.”
-
-### 13. [P1] The numbered follow-up ledger still has closure gaps and a leakage instruction
-
-**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:424-432,747-757`;
+**Files:** `00_MASTER_PROMPT_FOR_CLAUDE.md:424-432`;
+`TASK-002_PHASE2_SPECIFICATION.md:409-418`;
 `TASK-016_MARKET_REGIME_ENGINE.md:71-77`;
-`TASK-031_REGIME_VALIDATION_COMPLETION.md:5-17,57-81,115-125`;
-`TASK-032_SCORE_CORRELATION_ANALYSIS.md:37-54,66-78`;
-`TASK-033_PATTERN_VALIDATION_COMPLETION.md:72-101`;
-`TASK-036_JOURNAL_PRODUCER_COMPLETION.md:49-88`;
-`TASK-037_MT5_EXPORT_BRIDGE.md:41-57,99-113`;
-`TASK-038_WALK_FORWARD_OPTIMIZATION.md:38-57`.
+`TASK-031_REGIME_VALIDATION_COMPLETION.md:57-93,119-138`;
+`TASK-036_JOURNAL_PRODUCER_COMPLETION.md:85-97`;
+`TASK-037_MT5_EXPORT_BRIDGE.md:46-90,118-147`.
 
-- TASK-031 omits the required regime transition-history buffer.
-- TASK-037's acceptance criteria require a real independently labelled regime
-  dataset/confusion run, but its specification defines no required feature/
-  price export or labelling protocol. It also exports only candlestick detector
-  results although TASK-033 defers both candlestick and chart-pattern real
-  cross-checks to it.
-- TASK-032 may finish after documenting absent score components, but neither
-  TASK-036 nor TASK-037 owns populating/exporting those components. Real
-  correlation remains blocked with no closure owner.
-- TASK-038 gives “maximize **test-window** expectancy” as the parameter-selection
-  objective immediately before requiring train-only selection. That example
-  instructs the exact leakage its rejection criteria prohibit; it must say
-  train-window expectancy.
+TASK-037 accepts responsibility for the real regime confusion matrix but
+defines neither an OHLC/feature/predicted-regime export nor a concrete dataset
+schema capable of feeding `regime_validation.classify` and
+`build_confusion_matrix`. Its “e.g.” human-labelling prose is a requirement to
+design a protocol later, not the executable protocol/export needed to meet its
+acceptance criterion.
 
-Numbered files are not sufficient if their specifications cannot deliver their
-own acceptance criteria.
+TASK-031 conflates the state carried by hysteresis (`confirmed`, `pending`,
+`pending_count`) with the separately required transition-history buffer. The
+master/spec and TASK-016 explicitly require/defer transition history as its own
+deliverable. Persistent hysteresis state is necessary but is not a history of
+transitions. Define representation, capacity/retention, timestamps/bar keys,
+and tests. TASK-036's session-state bucket mapping also needs exact thresholds,
+as noted in finding 3.
 
-### 14. [P2] The corrected candlestick count did not propagate through the package
+### 15. [P2] Caller-supplied “derived” dimensions can contradict the source timestamp
 
-**Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Patterns/CandlestickPatternEngine.mqh:141-473`;
-`analysis/pattern_validation.py:1-13`;
-`notebooks/09_pattern_detector_validation.ipynb:122-124`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:371-375,437-441,502-514`;
-`TASK-033_PATTERN_VALIDATION_COMPLETION.md:9-26,54-64`.
+**File:** `analysis/performance_breakdown.py:96-110,202-240`.
 
-Direct source enumeration finds 19 `CP_Is*Array` predicates plus the
-`CP_DetectHaramiArray` helper. Four predicates are ported, so 15 predicates plus
-the helper remain. TASK-033's Objective and TASKS now state that correctly, but
-the files above still claim 18 total/14 remaining; `pattern_validation.py` even
-lists 15 names after saying 14. This directly contradicts `fd07473`'s commit
-message that the count was fixed.
+If `hour_of_day` or `day_of_week` already exists, the pipeline trusts it rather
+than recomputing or checking it. A row at `2026-01-01T02:00:00Z` carrying hour
+`15` and day `Sunday` was accepted and grouped under those values; the actual
+UTC values are hour 2 and Thursday. Recompute authoritative derived fields or
+reject a mismatch. Apply the same cross-field consistency principle to
+`news_state` versus `in_news_blackout`.
 
-### 15. [P2] Two persisted metric names still overstate or obscure their semantics
+### 16. [P2] Journal resource limits, controlled CLI failures, and some advertised path guards remain incomplete
 
-**Files:** `analysis/analyse_giveback.py:204-240`;
-`analysis/monte_carlo.py:77-104,227-233`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:563-565`.
+**Files:** `data_collection/journal_reader.py:129-214,217-288`;
+`analysis/join_trade_journal.py:251-293`;
+`analysis/join_news_events.py:334-374`;
+`analysis/pattern_validation.py:384-393`;
+`analysis/parameter_stability.py:200-205`.
 
-Giveback filters to triggered trades and then calls the conditional result
-`guard_helped_rate`; one helpful trigger among 100 total trades is reported as
-100%, not 1%. Name it `guard_helped_rate_when_triggered` and/or also report the
-full-cohort policy rate.
+The reader still materializes an arbitrarily large physical line before
+truncation, retains complete validation-error dictionaries, has no file-count,
+total-byte, per-line, error-count, or retained-error-payload budget, and does
+not charge blank/decode-failed byte payloads against the record limit.
 
-Monte Carlo's prose/notebook correctly says the bootstrap quantiles are
-fixed-cash i.i.d. **scenario bounds**, not future-performance confidence
-intervals. The JSON dataclass still persists them as `*_ci_lower/upper` and
-contains no bound type/model/caveat, so a reviewer of the required machine
-artifact sees the old semantics. Rename the fields or serialize the model and
-bound semantics with them. The ruin Wilson interval itself is correctly a
-finite-simulation-error interval.
+Hash-change and record-limit conditions raise `RuntimeError` subclasses that
+the two CLIs do not catch, so expected input-integrity failures become
+tracebacks. Pattern/parameter input guards and join output-output guards also
+still use path strings rather than the shared file-identity check. Atomic
+replacement mitigates some hard-link damage, but the documented policy is not
+implemented consistently.
 
-### 16. [P2] The documented install environment is still not the one the task tells a clean reviewer to install
+### 17. [P2] Several remaining statistical labels/documentation claims are inaccurate or underspecified
 
-**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:161-175`;
-`requirements.txt:1-51`;
-`03_SOURCE_CODE/Python/requirements-lock.txt`;
-`03_SOURCE_CODE/Python/pyproject.toml:1-38`.
+**Files:** `analysis/metrics.py:10-19,63-70,268-303`;
+`analysis/walk_forward.py:113-142,310-339`;
+`analysis/compare_releases.py:1-22`.
 
-The new lock matches the venv used here, and Ruff/mypy are now genuinely
-declared. However, the advertised direct install file still contains twelve
-expressly untested lower-bound dependencies absent from that lock, and no
-documented clean-install command uses the lock. The task also requires exact
-formatter/linter/type-check/test versions and results, but no formatter is
-declared or run. Make one authoritative install path reproduce the proved
-environment and either run/record a formatter or explicitly amend the test
-requirement.
+- `metrics.py` says `ProfitFactorResult` contains `n`; it contains only wins
+  and losses, so break-even observations disappear and total sample size cannot
+  be recovered from the result.
+- `mean_test_expectancy_r` is an unlabelled, unweighted mean of per-window
+  means. Final windows can be partial and test windows can overlap when
+  `step_days < test_days`, so trades may receive unequal weight or appear more
+  than once. Persist the overlap/partial-window status and define the estimand.
+- `compare_releases`'s module header still says win-rate difference uses a
+  bootstrap CI; it now correctly uses Newcombe-Wilson and bootstraps only
+  R-expectancy.
 
-### 17. [P2] Canonical history and task registration remain stale or contradictory
+### 18. [P2] Canonical task/history documents still contradict source and Git reality
 
-**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:320-338,402-424,473-485`;
-`09_HANDOVERS/claude_to_codex/TASK-028_handover.md:182-228`;
-`TASKS.md:38-44`;
-`TASK-024_STRATEGY_ROUTER.md:35-76`;
-`TASK-032_SCORE_CORRELATION_ANALYSIS.md:3-35`;
-`TASK-034_LIVE_SAFETY_WIRING.md:3-18,164-169`;
-`TASK-035_ML_SIGNAL_MODEL.md:3-14,178-183`.
+**Files:** `TASK-028_PYTHON_STATISTICAL_LAB.md:328-358,506-523`;
+`09_HANDOVERS/claude_to_codex/TASK-028_handover.md:192-238`;
+`TASKS.md:38-46`; `TASK-033_PATTERN_VALIDATION_COMPLETION.md:54-65`;
+`TASK-034_LIVE_SAFETY_WIRING.md:169-174`; commit message for `b88b63a`.
 
-- TASK-028, TASKS, and the handover pre-declare all 31 earlier findings
-  “resolved” before this independent pass. Use “remediation applied; pending
-  independent review” until approval.
-- The notebook map still lists notebook 03 only with `regime_validation.py` and
-  notebook 04 only with `join_news_events.py`, although both now also call
-  `performance_breakdown.py`.
-- Score-correlation is repeatedly attributed to TASK-024, but that task never
-  deferred correlation; it deferred three missing score components. The actual
-  correlation requirement is master-prompt lines 747-757.
-- `fd07473` newly tracks TASK-034 and TASK-035, but TASKS skips both. TASK-035
-  nevertheless says it is registered. TASK-034 says three tested standalone
-  pieces exist and then says two of them have no module; TASK-035 calls cooldown
-  already-built infrastructure while TASK-034 says no cooldown module exists.
+- Direct source enumeration confirms 19 `CP_Is*Array` predicates plus
+  `CP_DetectHaramiArray`. TASK-033's objective is corrected, but its Evidence
+  section still says `4/18` and 18 functions.
+- TASKS row 40 still calls score correlation “TASK-024's deferred item,” while
+  TASK-032 correctly explains it is a master-prompt requirement and TASK-024
+  deferred different missing components.
+- TASK-034 says it is not yet in TASKS although TASKS row 42 now registers it.
+- TASK-028 says “both” remediation series despite three, and TASK-028/TASKS
+  call round-3 remediation ongoing after `b88b63a` applied it. The durable
+  wording is “remediation applied; pending independent review.”
+- The handover ends at round 2 (`340` tests/`23` source files) and contains no
+  current `b88b63a` review target; current independent results are 395 tests and
+  24 mypy-checked source files.
+- The commit message claims an order/deal-ID join, complete count propagation,
+  and seed exposure in every persisted report; findings 2, 12, and this section
+  show those claims are false.
 
-The durable “19+ commits” wording is consistent with current Git history and
-does not need correction.
+Actual TASK-028 history contains 20 commits from registration `e37bbec` through
+`b88b63a`. Update the task, ledger, follow-ups, and handover to describe one
+consistent pending-review state and the actual source surface.
 
 ## Corrections independently confirmed
 
-The following prior findings are genuinely improved or resolved:
+The following round-3 remediation items are genuinely improved or resolved:
 
-- walk-forward now starts at the earliest entry and validates finite profit;
-- baseline/release comparison use strict UTC parsing and reject invalid stop
-  geometry;
-- same-timestamp baseline balance changes are aggregated deterministically;
-- starting balance, drawdown curves, optional exit price, and primary numeric
-  CSV columns receive stronger finite checks;
-- header-only trade inputs fail in giveback/MFE analysis;
-- generic bootstrap confidence/resample validation for n >= 2 is present;
-- the Newcombe-Wilson win-rate-difference interval is correct and nondegenerate
-  at all-win/all-loss boundaries;
-- Monte Carlo now has a minimum trade count, finite-input checks, and accurate
-  fixed-cash/i.i.d. caveats in prose and notebook presentation;
-- ordinary same-path/output-output collisions are rejected;
-- JSON writes are atomic;
-- single-line duplicate headers, blank IDs, duplicate JSON keys, standard
-  non-finite JSON constants, and full OHLC geometry receive visible checks;
-- journal reading is incremental by line, parse-error text is capped, and
-  source labels are portable;
-- current-EA journal incompatibility is accurately documented and assigned to
-  TASK-036;
-- strategy/regime grouping and full-path-set parameter sweep arithmetic are
-  real and match their synthetic hand calculations;
-- all declared test, lint, type-check, and notebook-execution commands are
-  reproducibly green in the existing environment;
-- both baseline evidence trees remain immutable relative to their tags.
+- `parameter_stability` now has a real explicit CSV input and functioning CLI,
+  hashes that input, validates finite R values and the effective giveback-
+  percent range, and reports valid zero-variance bootstrap intervals.
+- Seeds are now threaded correctly through baseline, giveback, performance,
+  and walk-forward calculations; the prior `seed=0` substitution defect is
+  fixed.
+- The normal multi-bar MFE/MAE window excludes the exit-open bar.
+- Baseline, comparison, and walk-forward reject reverse chronology.
+- Duplicate raw bar keys are rejected (subject to canonical-time finding 7).
+- `expectancy`, `profit_factor`, and the two-sample bootstrap reject ordinary
+  NaN/inf operands.
+- Performance breakdown has a dimension allowlist, uses `r_multiple`, and
+  includes mode/news dimensions in its generic surface.
+- Journal JSON numeric overflow (`1e400`) is rejected.
+- News analysis rejects duplicate journal decisions and validates a
+  provider-neutral nonnegative integer importance field.
+- Formula sanitization now reaches the previously missed text-bearing CSV
+  exporters.
+- CSV writes use atomic replacement (subject to UTF-8 finding 6).
+- Monte Carlo JSON now carries scenario-bound model/caveat semantics.
+- Giveback helped-rate names now distinguish conditional and full-cohort rates.
+- The core pattern module/notebook/TASK-028 count is corrected to 20 total,
+  four ported, 16 remaining.
+- The clean-install documentation now points to the lock file, and Ruff format
+  is a declared gate.
+
+## Independent verification run
+
+- Full suite: **395 passed in 29.51s**.
+- Ruff lint: **All checks passed**.
+- Ruff format check: **59 files already formatted**.
+- mypy: **Success, no issues in 24 source files**.
+- All 11 notebooks executed from the registered `themba-python-lab` kernel,
+  each exit 0.
+- `git diff --check fd07473..b88b63a`: clean.
+- No secret-like credential material was added by the commit.
+- The commit changes no path under `01_BASELINE/`.
+- `01_BASELINE/EA_V637` is byte-identical to `baseline-v637`: EA blob
+  `26018c013b60e371c112cea4f57552884d1e6902`, `IDENTITY.md` blob
+  `5bc1a9b4a3198f5575d9efc35ad723242ac4b2d6`.
+- `01_BASELINE/EA_V811` is byte-identical to `baseline-v811`: EA blob
+  `f0644ad8a3ce8f7471d3e3ed8393c375977ac551`, `IDENTITY.md` blob
+  `e1ba7a7b741969d96b07db179edd9dfa82c0b44a`.
+
+Green automation does not invalidate the counterexamples above; several tests
+currently encode the defect (notably null journal order IDs and zero-duration
+MFE), while other required deliverables have no test at all.
 
 ## Required disposition
 
-**CHANGES REQUESTED.** Do not merge or mark TASK-028 complete at `fd07473`.
-Resolve every P0/P1 finding, add regression tests for the counterexamples above,
-make the follow-up scopes executable rather than circular, correct the canonical
-history/count claims, and request another independent review. P2 items should
-also be corrected before closure because several are explicit claims that this
-commit says are already resolved.
+**CHANGES REQUESTED.** Do not merge or mark TASK-028 complete at `b88b63a`.
+Resolve every P0/P1 item, add regression/integration tests for the concrete
+counterexamples, give missing real-data inputs executable numbered owners,
+correct the canonical history, and request another independent review.

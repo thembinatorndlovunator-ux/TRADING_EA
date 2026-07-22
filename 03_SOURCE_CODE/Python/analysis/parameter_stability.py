@@ -52,6 +52,8 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_finite_columns,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
+    assert_unique_composite_key,
     atomic_write_dataframe_csv,
     read_csv_with_required_columns,
 )
@@ -81,14 +83,57 @@ class StabilityRow:
 
 
 def _load_r_paths_from_csv(path: Path) -> list[list[float]]:
+    """**Hardened, 2026-07-22 Codex review finding (fourth round): this
+    previously enforced only bar_index/r_value finiteness -- a malformed
+    probe with a blank path_id, a fractional/negative bar_index (-2.5), a
+    duplicate bar_index (7 twice in one path), and no index 0 completed
+    successfully. pandas' own ``groupby`` silently DROPS a blank-ID group
+    entirely rather than surfacing it as a schema error.** Every one of
+    those is now rejected outright.
+    """
+
     df = read_csv_with_required_columns(path, REQUIRED_COLUMNS)
     if df.empty:
         raise CsvSchemaError(f"{path}: zero rows")
     assert_finite_columns(df, ["bar_index", "r_value"], path)
 
+    blank_mask = df["path_id"].isna() | (df["path_id"].astype(str).str.strip() == "")
+    if blank_mask.any():
+        raise CsvSchemaError(
+            f"{path}: {int(blank_mask.sum())} row(s) have a null/blank path_id: "
+            f"rows {df.index[blank_mask].tolist()}"
+        )
+
+    assert_unique_composite_key(df, ["path_id", "bar_index"], path)
+
+    non_integer_mask = df["bar_index"] != df["bar_index"].round()
+    if non_integer_mask.any():
+        raise CsvSchemaError(
+            f"{path}: bar_index must be an integer, got fractional values at rows "
+            f"{df.index[non_integer_mask].tolist()}"
+        )
+    if (df["bar_index"] < 0).any():
+        raise CsvSchemaError(f"{path}: bar_index must be non-negative")
+
     paths: list[list[float]] = []
-    for _, group in df.sort_values(["path_id", "bar_index"]).groupby("path_id", sort=False):
-        paths.append(group["r_value"].tolist())
+    for path_id, group in df.sort_values(["path_id", "bar_index"]).groupby("path_id", sort=False):
+        bar_indices = group["bar_index"].tolist()
+        expected = list(range(len(bar_indices)))
+        if [int(b) for b in bar_indices] != expected:
+            raise CsvSchemaError(
+                f"{path}: path_id={path_id!r} bar_index sequence must be contiguous starting at "
+                f"0 (0, 1, 2, ...), got {bar_indices}"
+            )
+        r_values = group["r_value"].tolist()
+        # A trade starts at 0R by definition (simulate_giveback_path's own
+        # peak_r=0.0 assumption) -- a nonzero entry R is not a legitimate
+        # R-path, not silently accepted as one.
+        if r_values[0] != 0.0:
+            raise CsvSchemaError(
+                f"{path}: path_id={path_id!r} entry (bar_index 0) r_value must be 0.0, "
+                f"got {r_values[0]}"
+            )
+        paths.append(r_values)
     return paths
 
 
@@ -123,6 +168,17 @@ def sweep_giveback_percent(
         raise ValueError("sweep_giveback_percent: every path in r_paths must be non-empty")
     if any(not math.isfinite(v) for p in r_paths for v in p):
         raise ValueError("sweep_giveback_percent: every r_path value must be finite")
+    # **Added, 2026-07-22 Codex review finding (fourth round):** neither
+    # arm_rr nor close_trigger_floor_r was validated or CLI-exposed --
+    # a NaN value for either previously produced a "successful" result
+    # (should_giveback_close_v637's own max()/min() clamps silently
+    # substitute an effective value for a NaN input).
+    if not math.isfinite(arm_rr):
+        raise ValueError(f"sweep_giveback_percent: arm_rr must be finite, got {arm_rr}")
+    if not math.isfinite(close_trigger_floor_r):
+        raise ValueError(
+            f"sweep_giveback_percent: close_trigger_floor_r must be finite, got {close_trigger_floor_r}"
+        )
     for pct in giveback_percents:
         if not math.isfinite(pct):
             raise ValueError(f"sweep_giveback_percent: giveback_percent must be finite, got {pct}")
@@ -189,6 +245,11 @@ def run(
     close_trigger_floor_r: float = 0.05,
     seed: int = 42,
     symbol: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Reads R-paths from 'r_paths_csv' (see module docstring for the
@@ -197,11 +258,13 @@ def run(
     invalid parameter values (see sweep_giveback_percent's docstring).
     """
 
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): this guard
+    # used a bare Path.resolve() == comparison, which a hard link to
+    # r_paths_csv (different resolved name, identical underlying file)
+    # would bypass -- every other pipeline in this layer already uses the
+    # OS-level file-identity check.**
     for out_path in (output_csv, summary_json):
-        if out_path is not None and out_path.resolve() == r_paths_csv.resolve():
-            raise CsvSchemaError(
-                f"output path {out_path} must not be the same as the input r_paths_csv"
-            )
+        assert_path_not_same_file(out_path, r_paths_csv, "output path")
     assert_output_paths_distinct([output_csv, summary_json])
 
     r_paths = _load_r_paths_from_csv(r_paths_csv)
@@ -221,7 +284,12 @@ def run(
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [r_paths_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [r_paths_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -229,6 +297,15 @@ def run(
                 "n_paths": len(r_paths),
                 "giveback_percents_swept": list(giveback_percents),
                 "seed": seed,
+                # **Added, 2026-07-22 Codex review finding (fourth round):**
+                # arm_rr/close_trigger_floor_r were effective configuration
+                # for every row of this sweep but were never persisted, and
+                # the bootstrap confidence/resample count used for every
+                # row's CI was likewise omitted.
+                "arm_rr": arm_rr,
+                "close_trigger_floor_r": close_trigger_floor_r,
+                "bootstrap_confidence": 0.95,
+                "bootstrap_n_resamples": 2000,
             },
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -242,8 +319,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--giveback-percents", type=float, nargs="+", default=[40.0, 60.0, 80.0])
+    # **Added, 2026-07-22 Codex review finding (fourth round): neither was
+    # previously CLI-exposed, despite being effective configuration for
+    # every row of the sweep.**
+    parser.add_argument("--arm-rr", type=float, default=1.25)
+    parser.add_argument("--close-trigger-floor-r", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--symbol", default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -255,8 +339,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             giveback_percents=args.giveback_percents,
             output_csv=args.output_csv,
             summary_json=args.summary_json,
+            arm_rr=args.arm_rr,
+            close_trigger_floor_r=args.close_trigger_floor_r,
             seed=args.seed,
             symbol=args.symbol,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

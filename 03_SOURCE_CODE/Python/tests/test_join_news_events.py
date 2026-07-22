@@ -514,6 +514,35 @@ def test_naive_news_timestamp_rejected(tmp_path):
         run(tmp_path, news_path)
 
 
+def test_negative_before_minutes_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    a negative before_minutes flips window_start FORWARD in time
+    (scheduled_utc - timedelta(minutes=negative) adds time), silently
+    inverting or emptying the blackout window instead of raising."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, before_minutes=-5)
+
+
+def test_negative_after_minutes_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, after_minutes=-5)
+
+
+def test_negative_min_importance_filter_rejected(tmp_path):
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    with pytest.raises(ValueError):
+        run(tmp_path, news_path, min_importance=-1)
+
+
 def test_output_path_colliding_with_input_rejected(tmp_path):
     _write_journal(tmp_path, [make_valid_record()])
     news_path = tmp_path / "news.csv"
@@ -531,6 +560,126 @@ def test_output_path_colliding_with_input_rejected(tmp_path):
     )
     with pytest.raises(CsvSchemaError):
         run(tmp_path, news_path, output_csv=news_path)
+
+
+def _write_valid_news(news_path: Path) -> None:
+    _write_news(
+        news_path,
+        [
+            {
+                "event_id": "e1",
+                "event_name": "NFP",
+                "currency": "USD",
+                "importance": 2,
+                "scheduled_utc": "2026-07-21T14:10:00Z",
+            }
+        ],
+    )
+
+
+def test_derived_errors_path_does_not_overwrite_requested_summary_json(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the derived errors_json path was computed AFTER the collision check
+    already ran -- output_csv=joined.csv, summary_json=joined.errors.json,
+    errors_json=None derived a sidecar path that collided with (and
+    silently overwrote) the explicitly requested summary_json. Must now
+    be rejected as a path collision."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+    out_dir = tmp_path / "out"
+    with pytest.raises(CsvSchemaError):
+        run(
+            tmp_path,
+            news_path,
+            output_csv=out_dir / "joined.csv",
+            summary_json=out_dir / "joined.errors.json",
+        )
+
+
+def test_news_input_named_like_derived_errors_path_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the exact reproduced counterexample -- with the news input itself
+    named 'joined.errors.json' and output_csv='joined.csv', the derived
+    error report previously replaced the source news evidence. Must now
+    be rejected as an input/output collision instead."""
+
+    _write_journal(tmp_path, [make_valid_record()])
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    news_path = out_dir / "joined.errors.json"
+    _write_valid_news(news_path)
+    with pytest.raises(CsvSchemaError):
+        run(tmp_path, news_path, output_csv=out_dir / "joined.csv")
+
+
+def test_news_csv_mutated_between_hash_and_read_is_detected(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    the "post-parse" re-hash previously ran BEFORE news_events_csv was
+    actually read -- mutating the news CSV inside its reader produced a
+    blackout result computed from the NEW bytes while the check still
+    compared against the OLD hash, since the check ran before the read
+    it was meant to guard. Simulated here by mutating the news CSV inside
+    a monkeypatched read_csv_with_required_columns, i.e. exactly the
+    window between this module's hash call and its actual news-CSV read."""
+
+    import analysis.join_news_events as jne_module
+    from analysis.csv_io import read_csv_with_required_columns as real_read_csv
+
+    _write_journal(tmp_path, [make_valid_record()])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+
+    def mutating_read(path, *args, **kwargs):
+        if path == news_path:
+            _write_news(
+                news_path,
+                [
+                    {
+                        "event_id": "e1",
+                        "event_name": "NFP -- MUTATED",
+                        "currency": "USD",
+                        "importance": 2,
+                        "scheduled_utc": "2026-07-21T14:10:00Z",
+                    }
+                ],
+            )
+        return real_read_csv(path, *args, **kwargs)
+
+    monkeypatch.setattr(jne_module, "read_csv_with_required_columns", mutating_read)
+
+    with pytest.raises(RuntimeError):
+        jne_module.run(tmp_path, news_path)
+
+
+def test_new_journal_file_added_after_hash_is_not_silently_analyzed(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, fourth round):
+    read_journal_directory used to re-glob journal_dir independently of
+    the file list this module already hashed -- a probe added a SECOND
+    decisions_*.jsonl file after the initial glob/hash; both files would
+    have been analyzed under the stale hash. Simulated here by writing
+    the second file at the exact moment read_journal_directory is
+    invoked; since this module now passes its pre-hashed 'journal_files'
+    list explicitly, the new file must NOT be picked up."""
+
+    import analysis.join_news_events as jne_module
+    from data_collection.journal_reader import read_journal_directory as real_read
+
+    _write_journal(tmp_path, [make_valid_record(signal_id="a")])
+    news_path = tmp_path / "news.csv"
+    _write_valid_news(news_path)
+
+    def read_that_races_a_new_file_in(directory, *args, **kwargs):
+        second = directory / "decisions_20260722.jsonl"
+        with second.open("w", encoding="utf-8") as fh:
+            fh.write(json.dumps(make_valid_record(signal_id="b")) + "\n")
+        return real_read(directory, *args, **kwargs)
+
+    monkeypatch.setattr(jne_module, "read_journal_directory", read_that_races_a_new_file_in)
+
+    result = jne_module.run(tmp_path, news_path)
+    assert result.n_decisions == 1
 
 
 def test_dataset_hash_includes_journal_files_not_just_news(tmp_path):

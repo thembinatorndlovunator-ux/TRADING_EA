@@ -50,6 +50,7 @@ from analysis.csv_io import (
     assert_finite_columns,
     assert_high_low_geometry,
     assert_output_paths_distinct,
+    assert_path_not_same_file,
     assert_unique_ids,
     atomic_write_dataframe_csv,
     read_csv_with_required_columns,
@@ -275,7 +276,25 @@ def detect_all_patterns(
     size_window: int = 20,
 ) -> pd.DataFrame:
     """Runs every ported pattern at every valid logical index k, returning
-    a DataFrame with one row per k and one boolean column per pattern."""
+    a DataFrame with one row per k and one boolean column per pattern.
+
+    Raises ValueError if trend_lookback/size_window is not a positive
+    integer -- **added, 2026-07-22 Codex review finding (fourth round):**
+    neither was previously validated. A negative size_window makes
+    size_percentile's own "total <= 0" branch return 1.0 ("no comparison
+    history -- cannot be disproven as large"), silently turning ANY bar
+    into an automatic 100th-percentile pass regardless of its real size.
+    A negative trend_lookback bypasses the `k + trend_lookback >= n`
+    upper-bound guard while still being used as a list index, so
+    `closes[k + trend_lookback]` can silently wrap around to the END of
+    the array (Python negative-index semantics) and compare against an
+    unrelated bar instead of raising.
+    """
+
+    if trend_lookback < 1:
+        raise ValueError(f"trend_lookback must be a positive integer, got {trend_lookback}")
+    if size_window < 1:
+        raise ValueError(f"size_window must be a positive integer, got {size_window}")
 
     n = len(closes)
     rows = []
@@ -360,6 +379,11 @@ def run(
     ascending_input: bool = False,
     symbol: Optional[str] = None,
     seed: Optional[int] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Reads 'ohlc_csv' (columns open/high/low/close) and detects every
@@ -383,13 +407,13 @@ def run(
 
     # **Fixed, 2026-07-22 Codex review finding:** this script had no
     # input/output collision guard at all -- unlike every other pipeline
-    # in this layer.
-    if output_csv is not None and output_csv.resolve() == ohlc_csv.resolve():
-        raise CsvSchemaError(f"output_csv {output_csv} must not be the same as the input ohlc_csv")
-    if summary_json is not None and summary_json.resolve() == ohlc_csv.resolve():
-        raise CsvSchemaError(
-            f"summary_json {summary_json} must not be the same as the input ohlc_csv"
-        )
+    # in this layer. **Fixed, 2026-07-22 Codex review finding (fourth
+    # round): the guard used a bare Path.resolve() == comparison, which a
+    # hard link to ohlc_csv (different resolved name, identical
+    # underlying file) would bypass -- every other pipeline in this
+    # layer already uses the OS-level file-identity check.**
+    assert_path_not_same_file(output_csv, ohlc_csv, "output_csv")
+    assert_path_not_same_file(summary_json, ohlc_csv, "summary_json")
     assert_output_paths_distinct([output_csv, summary_json])
 
     ohlc = read_csv_with_required_columns(ohlc_csv, REQUIRED_OHLC_COLUMNS)
@@ -419,7 +443,12 @@ def run(
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
-            [ohlc_csv], symbol=symbol, random_seed=seed, repo_path=repo_path
+            [ohlc_csv],
+            symbol=symbol,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
         )
         payload = {
             "metadata": metadata.to_dict(),
@@ -451,6 +480,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -466,8 +497,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             ascending_input=args.ascending_input,
             symbol=args.symbol,
             seed=args.seed,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
-    except (FileNotFoundError, CsvSchemaError) as exc:
+    except (FileNotFoundError, CsvSchemaError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

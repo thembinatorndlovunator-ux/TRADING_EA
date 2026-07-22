@@ -111,6 +111,11 @@ def run(
     after_minutes: int = 15,
     min_importance: int = 2,
     seed: Optional[int] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> NewsJoinResult:
     """Raises FileNotFoundError if 'journal_dir' does not exist (propagated
@@ -134,6 +139,35 @@ def run(
     join_trade_journal.py's already-fixed pattern), and the CLI's exit
     code reflects their presence.
     """
+
+    # **Added, 2026-07-22 Codex review finding (fourth round):** none of
+    # before_minutes/after_minutes/min_importance were validated -- a
+    # negative before_minutes/after_minutes flips the corresponding side
+    # of the blackout window (event.scheduled_utc - timedelta(minutes=
+    # negative) moves FORWARD in time, not backward), which can silently
+    # invert or empty the window rather than raise. A negative
+    # min_importance is likewise inconsistent with MIN_IMPORTANCE_VALUE,
+    # the same non-negative-integer domain floor already enforced on the
+    # news CSV's own 'importance' column.
+    if before_minutes < 0 or after_minutes < 0:
+        raise ValueError(
+            f"before_minutes/after_minutes must be >= 0, got before_minutes={before_minutes}, "
+            f"after_minutes={after_minutes}"
+        )
+    if min_importance < MIN_IMPORTANCE_VALUE:
+        raise ValueError(f"min_importance must be >= {MIN_IMPORTANCE_VALUE}, got {min_importance}")
+
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** errors_json
+    # used to be derived from output_csv/summary_json AFTER the collision
+    # checks below already ran -- output_csv=joined.csv,
+    # summary_json=joined.errors.json, errors_json=None derived a sidecar
+    # path that collided with (and silently overwrote) the explicitly
+    # requested summary_json. Every implicit path is now derived FIRST,
+    # then the complete final path set is validated once.
+    if errors_json is None:
+        base = output_csv if output_csv is not None else summary_json
+        if base is not None:
+            errors_json = base.parent / f"{base.stem}.errors.json"
 
     resolved_journal_dir = journal_dir.resolve()
     for out_path in (output_csv, summary_json, errors_json):
@@ -172,26 +206,21 @@ def run(
     journal_files = sorted(journal_dir.glob("decisions_*.jsonl"))
     dataset_paths = [news_events_csv, *journal_files] if journal_files else [news_events_csv]
     metadata = build_report_metadata(
-        dataset_paths, currency=currency, random_seed=seed, repo_path=repo_path
+        dataset_paths,
+        currency=currency,
+        random_seed=seed,
+        spread_note=spread_note,
+        slippage_note=slippage_note,
+        repo_path=repo_path,
     )
 
-    read_result = read_journal_directory(journal_dir)
-
-    # **Fixed, 2026-07-22 Codex review finding (third round): hashing
-    # before parsing narrows, but does NOT eliminate, the race a
-    # concurrent writer creates -- re-hashing after parsing and comparing
-    # catches a change that occurred in between (a detection, not a full
-    # transactional guarantee).**
-    if journal_files:
-        hash_root = repo_path if repo_path is not None else default_repo_root()
-        post_parse_hash = compute_dataset_hash(dataset_paths, repo_root=hash_root)
-        if post_parse_hash != metadata.dataset_hash:
-            raise RuntimeError(
-                f"{journal_dir}: input files changed between hashing and parsing -- "
-                "the analyzed content and the reported dataset_hash would not match. "
-                "Re-run against a stable snapshot."
-            )
-
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** previously
+    # read_journal_directory re-globbed journal_dir independently of the
+    # 'journal_files' list already hashed above -- the same enumeration
+    # race fixed in join_trade_journal.py (a file added between the two
+    # globs was silently analyzed under the stale hash). Passing the SAME
+    # pre-enumerated list closes that race entirely.
+    read_result = read_journal_directory(journal_dir, files=journal_files)
     decisions_df = to_dataframe(read_result.valid_records)
 
     # **Fixed, 2026-07-22 Codex review finding (third round): this script
@@ -237,6 +266,25 @@ def run(
     if currency is not None:
         news = news[news["currency"] == currency]
 
+    # **Fixed, 2026-07-22 Codex review finding (fourth round): the
+    # "post-parse" re-hash previously ran BEFORE news_events_csv was
+    # actually read (immediately after the journal parse, several lines
+    # above this point) -- mutating the news CSV inside its reader
+    # produced a blackout result computed from the NEW bytes while the
+    # check still only compared the OLD hash, since the check ran before
+    # the read it was meant to guard. It is also no longer conditioned on
+    # 'journal_files' being non-empty: news_events_csv is unconditionally
+    # part of 'dataset_paths', so a journal-file-free run still needs this
+    # check to catch a mutated news CSV, not skip it entirely.**
+    hash_root = repo_path if repo_path is not None else default_repo_root()
+    post_parse_hash = compute_dataset_hash(dataset_paths, repo_root=hash_root)
+    if post_parse_hash != metadata.dataset_hash:
+        raise RuntimeError(
+            f"{journal_dir}: input files changed between hashing and parsing -- "
+            "the analyzed content and the reported dataset_hash would not match. "
+            "Re-run against a stable snapshot."
+        )
+
     in_blackout_flags = []
     triggering_ids = []
     for _, decision in decisions_df.iterrows():
@@ -281,14 +329,11 @@ def run(
     # invalid-journal details were previously persisted ONLY if the
     # caller happened to request errors_json explicitly -- otherwise an
     # all-invalid run could write an empty output_csv, exit nonzero, and
-    # retain no reviewable error artifact anywhere on disk. Auto-derive
-    # a path whenever any other output is requested, matching
-    # join_trade_journal.py's own fix for the identical gap.**
-    if errors_json is None:
-        base = output_csv if output_csv is not None else summary_json
-        if base is not None:
-            errors_json = base.parent / f"{base.stem}.errors.json"
-
+    # retain no reviewable error artifact anywhere on disk. errors_json is
+    # now auto-derived at the top of this function (before the collision
+    # check -- fourth-round finding), whenever any other output is
+    # requested, matching join_trade_journal.py's own fix for the
+    # identical gap.**
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
         error_payload = {
@@ -343,6 +388,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--after-minutes", type=int, default=15)
     parser.add_argument("--min-importance", type=int, default=2)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -360,8 +407,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             after_minutes=args.after_minutes,
             min_importance=args.min_importance,
             seed=args.seed,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
-    except (FileNotFoundError, CsvSchemaError, TimezoneValidationError) as exc:
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** the
+    # hash-race check (RuntimeError) and JournalReaderLimitError (a
+    # RuntimeError subclass) were previously uncaught here -- an expected
+    # input-integrity failure surfaced as an unhandled traceback instead
+    # of a controlled ERROR exit.
+    except (
+        FileNotFoundError,
+        CsvSchemaError,
+        TimezoneValidationError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

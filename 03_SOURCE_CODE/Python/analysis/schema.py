@@ -3,9 +3,18 @@
 Field-for-field match to the repo-root ``TRADE_DECISION_SCHEMA.json`` and to
 ``03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/DecisionJournal.mqh``'s
 ``STradeDecision``/``DJ_SerializeDecision`` (the MQL5 side that actually
-writes these lines). This module owns validation only -- it does not read
-files (see ``data_collection/journal_reader.py``) and does not compute any
-statistic.
+writes these lines) -- **with one stated, deliberate exception, corrected
+2026-07-22 (Codex review finding, fourth round): this docstring previously
+claimed an unqualified field-for-field match, but `order_id`/`deal_id`
+below exist ONLY here and in the JSON schema's Python-side consumers --
+neither `TRADE_DECISION_SCHEMA.json` nor `DecisionJournal.mqh`'s
+`STradeDecision` has been extended with either field yet. This is the
+Python-schema half of TASK-036's durable-join work, added ahead of the
+MQL5-side population it depends on (see that task's own scope note) so
+`analysis/join_signal_to_outcome.py` could be built and tested now rather
+than perpetually deferred -- not an oversight.** This module owns
+validation only -- it does not read files (see
+``data_collection/journal_reader.py``) and does not compute any statistic.
 
 Deliberately strict, per the reproducibility contract in
 ``TASK-028_PYTHON_STATISTICAL_LAB.md``: "Schema errors, missing timestamps,

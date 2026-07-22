@@ -61,6 +61,11 @@ def run(
     symbol: Optional[str] = None,
     broker: Optional[str] = None,
     seed: Optional[int] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> JoinTradeJournalResult:
     """Reads every ``decisions_*.jsonl`` file in 'input_dir', validates
@@ -77,6 +82,18 @@ def run(
     result for a typo'd path. Raises ValueError if any output path
     coincides with 'input_dir' or with another output path.
     """
+
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** the
+    # errors_json sidecar used to be derived from output_csv/output_json
+    # AFTER this collision check already ran -- a probe requesting
+    # output_csv=foo.csv, output_json=foo.provenance.json, errors_json=None
+    # had the derived sidecar path collide with (and silently overwrite)
+    # the explicitly requested output_json. Every implicit path is now
+    # derived FIRST, then the complete final path set is validated once.
+    if errors_json is None:
+        base = output_csv if output_csv is not None else output_json
+        if base is not None:
+            errors_json = base.parent / f"{base.stem}.provenance.json"
 
     output_paths = [p for p in (output_csv, output_json, errors_json) if p is not None]
     resolved_outputs = [p.resolve() for p in output_paths]
@@ -107,7 +124,13 @@ def run(
     root = repo_path if repo_path is not None else default_repo_root()
     if journal_files:
         metadata = build_report_metadata(
-            journal_files, symbol=symbol, broker=broker, random_seed=seed, repo_path=root
+            journal_files,
+            symbol=symbol,
+            broker=broker,
+            random_seed=seed,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=root,
         )
     else:
         # No journal files at all is a legitimate (if unusual) input state
@@ -136,9 +159,21 @@ def run(
             timezone="UTC",
             random_seed=seed,
             pipeline_version=PIPELINE_VERSION,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
         )
 
-    read_result = read_journal_directory(input_dir)
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** previously
+    # this passed only 'input_dir' to read_journal_directory, which
+    # re-globbed the directory independently of the 'journal_files' list
+    # already hashed above -- a probe added a second decisions_*.jsonl
+    # file after the initial glob/hash; both files got analyzed here, but
+    # 'metadata'/the post-parse re-hash below both still only knew about
+    # the first file, so the mismatch went undetected. Passing the SAME
+    # pre-enumerated 'journal_files' list closes the enumeration race
+    # entirely (no second glob can see a new file); the post-parse re-hash
+    # of that same fixed list still catches a concurrent CONTENT mutation.
+    read_result = read_journal_directory(input_dir, files=journal_files)
 
     # **Fixed, 2026-07-22 Codex review finding (third round): hashing
     # before parsing narrows, but does NOT eliminate, the race a
@@ -191,14 +226,10 @@ def run(
     # was previously written ONLY into the optional errors_json report --
     # a caller who requested output_csv/output_json but not errors_json
     # got a data file with zero provenance record anywhere. A provenance
-    # sidecar is now auto-derived and always written whenever ANY output
-    # is requested, even if the caller never asks for errors_json
-    # explicitly.**
-    if errors_json is None:
-        base = output_csv if output_csv is not None else output_json
-        if base is not None:
-            errors_json = base.parent / f"{base.stem}.provenance.json"
-
+    # sidecar is now auto-derived (see the top of this function, before
+    # the collision check -- fourth-round finding) and always written
+    # whenever ANY output is requested, even if the caller never asks for
+    # errors_json explicitly.**
     if errors_json is not None:
         errors_json.parent.mkdir(parents=True, exist_ok=True)
         error_report = {
@@ -257,6 +288,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--broker", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -272,8 +305,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             symbol=args.symbol,
             broker=args.broker,
             seed=args.seed,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    # **Fixed, 2026-07-22 Codex review finding (fourth round):** the
+    # hash-race check (RuntimeError) and JournalReaderLimitError (a
+    # RuntimeError subclass) were previously uncaught here -- an expected
+    # input-integrity failure surfaced as an unhandled traceback instead
+    # of a controlled ERROR exit, unlike every FileNotFoundError/
+    # ValueError this CLI already handles gracefully.
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

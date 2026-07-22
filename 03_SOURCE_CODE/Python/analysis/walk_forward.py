@@ -153,20 +153,31 @@ class WindowMetrics:
     expectancy_r_ci_upper: Optional[float]
 
 
-def _slice_metrics(slice_df: pd.DataFrame, seed: int) -> WindowMetrics:
+def _slice_metrics(
+    slice_df: pd.DataFrame, seed: int, n_resamples: int = 2000, confidence: float = 0.95
+) -> WindowMetrics:
     n = len(slice_df)
     if n == 0:
         return WindowMetrics(0, None, None, None, None, None, None)
 
     wr = None
     try:
-        wr = win_rate((slice_df["profit"] > 0).tolist())
+        wr = win_rate((slice_df["profit"] > 0).tolist(), confidence=confidence)
     except InsufficientSampleError:
         pass
 
     exp = None
     try:
-        exp = expectancy(slice_df["r_multiple"].tolist(), seed=seed)
+        # **Fixed, 2026-07-22 Codex review finding (fourth round):**
+        # n_resamples/confidence were previously hard-wired to
+        # expectancy()'s own hidden defaults and never exposed in the
+        # persisted report at all.
+        exp = expectancy(
+            slice_df["r_multiple"].tolist(),
+            n_resamples=n_resamples,
+            seed=seed,
+            confidence=confidence,
+        )
     except InsufficientSampleError:
         pass
 
@@ -208,7 +219,18 @@ def run(
     summary_json: Optional[Path] = None,
     *,
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (fourth round): these were
+    # previously hard-wired to expectancy()'s/win_rate()'s own hidden
+    # defaults and never exposed at the run()/CLI boundary or persisted
+    # in the report, despite every per-window metric depending on them.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
     symbol: Optional[str] = None,
+    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
+    # slippage_note exist on ReportMetadata but no analysis caller exposed
+    # or populated them.**
+    spread_note: Optional[str] = None,
+    slippage_note: Optional[str] = None,
     repo_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Returns a DataFrame with one row per window (train/test metrics
@@ -216,8 +238,9 @@ def run(
     generated). Raises CsvSchemaError/InsufficientSampleError the same
     way analyse_baseline.run does for structural input problems.
 
-    'seed' feeds every per-window expectancy bootstrap (see module
-    docstring's 2026-07-22 correction) -- always explicit, never hidden."""
+    'seed'/'n_resamples'/'confidence' feed every per-window expectancy
+    bootstrap and win_rate Wilson interval (see module docstring's
+    2026-07-22 correction) -- always explicit, never hidden."""
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.
@@ -260,8 +283,9 @@ def run(
     # at the earliest eligible ENTRY instead, so the earliest trade is at
     # least reachable by window 0 (still subject to the normal purging
     # rule if its exit falls outside that window).
+    last_time = trades["exit_time"].max()
     windows = generate_windows(
-        trades["entry_time"].min(), trades["exit_time"].max(), train_days, test_days, step_days
+        trades["entry_time"].min(), last_time, train_days, test_days, step_days
     )
 
     rows = []
@@ -269,8 +293,8 @@ def run(
         train_slice = _slice_window(trades, train_start, train_end)
         test_slice = _slice_window(trades, test_start, test_end)
 
-        train_m = _slice_metrics(train_slice, seed)
-        test_m = _slice_metrics(test_slice, seed)
+        train_m = _slice_metrics(train_slice, seed, n_resamples=n_resamples, confidence=confidence)
+        test_m = _slice_metrics(test_slice, seed, n_resamples=n_resamples, confidence=confidence)
 
         rows.append(
             {
@@ -309,7 +333,13 @@ def run(
 
     if summary_json is not None:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
-        metadata = build_report_metadata([trades_csv], symbol=symbol, repo_path=repo_path)
+        metadata = build_report_metadata(
+            [trades_csv],
+            symbol=symbol,
+            spread_note=spread_note,
+            slippage_note=slippage_note,
+            repo_path=repo_path,
+        )
         # pandas stores the "no test trades" case as NaN (float), not the
         # Python None _slice_metrics returned -- `r is not None` does NOT
         # filter NaN out (a Codex review finding, reproduced on this
@@ -319,6 +349,19 @@ def run(
         valid_test_expectancies = result_df["test_expectancy_r"][
             result_df["test_expectancy_r"].notna()
         ]
+        # **Added, 2026-07-22 Codex review finding (fourth round):**
+        # 'mean_test_expectancy_r' is an UNWEIGHTED mean of per-window
+        # means (each window contributes equally regardless of its own
+        # trade count) -- previously undocumented as such. Test windows
+        # OVERLAP in time whenever step_days < test_days (a trade can
+        # then appear in more than one window's test set, receiving
+        # unequal effective weight across the whole report), and the
+        # FINAL window's test period can be PARTIAL (shorter than
+        # test_days) when the data span ends before that window's test
+        # period would otherwise close -- both facts are now persisted
+        # explicitly rather than left for a reader to infer.
+        test_windows_overlap = step_days < test_days
+        final_window_test_period_is_partial = bool(windows) and windows[-1][3] > last_time
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -330,10 +373,24 @@ def run(
                 "mean_test_expectancy_r": (
                     float(valid_test_expectancies.mean()) if len(valid_test_expectancies) else None
                 ),
+                "mean_test_expectancy_r_estimand": (
+                    "unweighted mean of per-window test_expectancy_r means "
+                    "(NOT trade-count-weighted; a trade in an overlapping "
+                    "window can be double-counted across windows -- see "
+                    "test_windows_overlap)"
+                ),
+                "test_windows_overlap": test_windows_overlap,
+                "final_window_test_period_is_partial": final_window_test_period_is_partial,
                 # **Added, 2026-07-22 Codex review finding (third round):**
                 # every per-window expectancy CI is a seeded bootstrap;
                 # the seed must be reported, not left implicit.
                 "seed": seed,
+                # **Added, 2026-07-22 Codex review finding (fourth round):**
+                # n_resamples/confidence were previously omitted from the
+                # persisted report despite every per-window win_rate/
+                # expectancy interval depending on them.
+                "n_resamples": n_resamples,
+                "confidence": confidence,
             },
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -350,7 +407,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-resamples", type=int, default=2000)
+    parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
+    parser.add_argument("--spread-note", default=None)
+    parser.add_argument("--slippage-note", default=None)
     return parser
 
 
@@ -365,7 +426,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             output_csv=args.output_csv,
             summary_json=args.summary_json,
             seed=args.seed,
+            n_resamples=args.n_resamples,
+            confidence=args.confidence,
             symbol=args.symbol,
+            spread_note=args.spread_note,
+            slippage_note=args.slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

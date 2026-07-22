@@ -76,13 +76,39 @@ change. `01_BASELINE/` must not be modified.
    `pending_regime`/`pending_count`/`confirmed_regime` forward bar to
    bar) -- this task's Python port must maintain and thread the
    equivalent persistent state across a MULTI-BAR sequence of raw-regime
-   reads (a regime transition-history buffer), not just single-shot,
-   stateless fixtures. Test at minimum: a borderline input that flips
-   raw regime every bar (must never confirm a switch, `pending_count`
-   resets each time); a genuine sustained switch across >= `required_bars`
-   consecutive identical reads (must confirm); and the pre-first-
-   confirmation state (`has_confirmed=false`) correctly reporting
-   `TRANSITION_OR_UNCERTAIN` rather than a half-confirmed guess.**
+   reads, not just single-shot, stateless fixtures.** **Corrected,
+   2026-07-22 Codex review finding (fourth round): the previous wording
+   here called that multi-bar sequence "a regime transition-history
+   buffer" -- that conflates two DISTINCT things. `SRegimeHysteresisState`
+   is hysteresis's own small confirm/pending state, needed only for the
+   classifier's OWN operation; it is NOT the separately required
+   "transition history" deliverable (master prompt: "Create... A
+   transition history"; TASK-016's own "Required deliverables" list
+   names it alongside, not as part of, hysteresis -- see item 3a below,
+   which this task also owns.** Test the hysteresis port at minimum: a
+   borderline input that flips raw regime every bar (must never confirm
+   a switch, `pending_count` resets each time); a genuine sustained
+   switch across >= `required_bars` consecutive identical reads (must
+   confirm); and the pre-first-confirmation state (`has_confirmed=false`)
+   correctly reporting `TRANSITION_OR_UNCERTAIN` rather than a
+   half-confirmed guess.
+3a. **The transition-history buffer itself (added, 2026-07-22 Codex
+    review finding, fourth round -- previously entirely unaddressed by
+    this task despite being TASK-016's own explicitly-deferred item):**
+    a genuine LOG of past CONFIRMED regime transitions over time --
+    distinct from hysteresis's own tiny confirm/pending counter above.
+    Define and port: (a) representation -- a bounded ring buffer of
+    `(bar_timestamp, from_regime, to_regime)` tuples, one entry per
+    CONFIRMED transition (not per bar, and not per pending/unconfirmed
+    flap); (b) capacity/retention -- a fixed maximum entry count (this
+    task's own design decision; state and justify the chosen number, do
+    not leave it unbounded); (c) timestamps/bar keys -- each entry keyed
+    to the real bar timestamp the transition was confirmed on, not a
+    bar-index alone, so the buffer remains meaningful across gaps/
+    resumptions; (d) hand-traceable tests proving entries are appended
+    only on a genuine CONFIRMED transition (never on a pending/
+    unconfirmed flap that never resolves) and that the buffer evicts its
+    oldest entry once capacity is exceeded.
 4. Decide and document whether `MarketStructure.mqh`'s bias computation
    is ported to Python in this task or remains a caller-supplied input
    for another task — either is acceptable, but the choice must be
@@ -131,6 +157,10 @@ No file under `01_BASELINE/` may be modified.
 - [ ] All nine regime states, both gating overrides, AND data-failure
       behavior are covered by synthetic fixtures.
 - [ ] Hysteresis logic is ported and hand-verified.
+- [ ] The transition-history buffer (a distinct deliverable from
+      hysteresis state -- added, 2026-07-22 Codex review finding, fourth
+      round) is ported and hand-verified: representation, capacity/
+      retention, and timestamp-keying are all defined and tested.
 - [ ] The bias/structure-input decision (ported vs. caller-supplied) is
       explicit and documented.
 - [ ] No "closes TASK-016" claim is made anywhere -- this task closes

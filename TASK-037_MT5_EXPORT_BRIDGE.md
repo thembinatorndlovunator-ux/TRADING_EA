@@ -49,7 +49,15 @@ must not be modified.
    standalone tool) that reads MT5's own Deals/History and writes the
    normalized `trades.csv` schema `analyse_baseline.py` et al. already
    document (`trade_id, symbol, is_long, entry_time, exit_time,
-   entry_price, exit_price, stop_price, profit`).
+   entry_price, exit_price, stop_price, profit`) **PLUS `order_id`/
+   `deal_id` columns (added, 2026-07-22 Codex review finding, fourth
+   round -- this item previously omitted both, so the only task meant to
+   produce real trades could not produce
+   `analysis/join_signal_to_outcome.py`'s required input; `deal_id`
+   specifically must be the real MT5 deal ticket for that fill, unique
+   per row -- a partial fill produces multiple deals against the same
+   order, and `join_signal_to_outcome.py` requires exactly that
+   cardinality to aggregate them into one position)**.
 2. **News-calendar export**: a script producing the `news_events.csv`
    schema `join_news_events.py` documents (`event_id, event_name,
    currency, importance, scheduled_utc`), sourced from MT5's built-in
@@ -69,21 +77,36 @@ must not be modified.
    inverse) in the same per-bar boolean CSV shape -- a candlestick-only
    export would leave TASK-033's chart-pattern cross-check with no data
    source to run against.**
-4. **Regime-dataset labelling protocol (added, 2026-07-22 Codex review
-   finding, third round -- previously unspecified entirely, leaving
-   acceptance criterion "a real, independently-labelled regime dataset
-   is produced" with no actual protocol to satisfy it):** the
-   "independently-labelled" ground truth for `regime_validation.
-   build_confusion_matrix` cannot be the live EA's own
-   `MarketRegimeEngine.mqh` output (that would be comparing the
-   classifier against itself, not an independent label). Define and
-   document a real labelling protocol here -- e.g. a human analyst
-   hand-labelling a real historical chart segment bar-by-bar against the
-   spec's own nine-state definitions (section 2), BEFORE looking at what
-   the engine outputs for those same bars, with the labelling
-   methodology and labeller identity recorded in the resulting dataset's
-   provenance. Do not accept a self-referential or synthetic-fixture
-   substitute as satisfying this.
+4. **Regime-dataset labelling protocol AND export schema, made concrete
+   and executable (added, 2026-07-22 Codex review finding, third round;
+   made concrete, fourth round -- Codex's fourth-round pass found the
+   third-round text was still only a requirement to "design a protocol
+   later," not the actual protocol/schema needed to satisfy the
+   acceptance criterion below):**
+   - **Predicted-regime export:** a new function/script that runs the
+     LIVE `MarketRegimeEngine.mqh` (the exact code path the EA uses, per
+     the Risks section below -- never a reimplementation) against a real
+     historical OHLC segment and writes one CSV row per bar:
+     `symbol, timestamp, predicted_regime` (the classifier's own
+     `ENUM_MARKET_REGIME` output, `EnumToString`'d, matching
+     `regime_validation.py`'s `Regime` string values exactly).
+   - **Labelling protocol:** the "independently-labelled" ground truth
+     for `regime_validation.build_confusion_matrix` cannot be the live
+     EA's own `MarketRegimeEngine.mqh` output (that would be comparing
+     the classifier against itself, not an independent label). A human
+     analyst hand-labels the SAME real historical chart segment
+     bar-by-bar against the spec's own nine-state definitions (section
+     2), working from the raw chart alone, BEFORE ever looking at the
+     `predicted_regime` export above, producing a second CSV:
+     `symbol, timestamp, labelled_regime, labeller_id, labelling_date`.
+   - **Joined dataset:** the two CSVs above are joined on
+     `(symbol, timestamp)` into exactly the two parallel sequences
+     `regime_validation.build_confusion_matrix(predicted, actual)`
+     already accepts (`predicted_regime` -> `predicted`,
+     `labelled_regime` -> `actual`) -- no further transformation needed;
+     this task's own export/labelling CSVs ARE that function's required
+     input shape. Do not accept a self-referential (classifier compared
+     to itself) or synthetic-fixture substitute as satisfying this.
 5. Every export must itself follow this project's reproducibility
    contract (explicit paths, no hidden state, visible failures on
    malformed source data) -- these are pipelines like any other, not a
@@ -127,8 +150,9 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] Trade-history export produces a real `trades.csv` consumable by
-      `analyse_baseline.py` without modification.
+- [ ] Trade-history export produces a real `trades.csv` (including
+      `order_id`/`deal_id`) consumable by `analyse_baseline.py` AND
+      `analysis/join_signal_to_outcome.py` without modification.
 - [ ] News-calendar export produces a real `news_events.csv` consumable
       by `join_news_events.py` without modification.
 - [ ] Pattern-detector export produces a real per-bar CSV consumable by

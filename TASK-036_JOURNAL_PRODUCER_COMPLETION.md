@@ -89,7 +89,20 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    not invent new classification logic).
 3. Populate `news_state`/`session_state` from `NewsManager.mqh`'s actual
    blackout check and `SessionManager.mqh`'s actual session-remaining
-   computation respectively, at decision time.
+   computation respectively, at decision time. **Session-state bucket
+   mapping, defined explicitly (added, 2026-07-22 Codex review finding,
+   fourth round -- previously left completely unspecified, despite
+   `session_state` being a documented `str` field with no enum of its
+   own anywhere in this project):** `SessionManager.mqh`'s
+   `SN_GetSessionMinutesRemaining` returns a continuous `remaining_ratio`
+   in `[0, 1]`, not a discrete label. Map it to one of three buckets:
+   `remaining_ratio >= 0.5` -> `"OPEN"`; `0.1 <= remaining_ratio < 0.5`
+   -> `"CLOSING_SOON"`; `remaining_ratio < 0.1`, OR
+   `SN_GetSessionMinutesRemaining` returns `false` (no session today) ->
+   `"CLOSED"`. These three exact string values are what
+   `analysis/performance_breakdown.py`'s `session_state` dimension and
+   notebook 04's synthetic session breakdown already assume -- use them
+   verbatim, not a different or ad hoc set.
 4. Add `order_id`/`deal_id` (nullable -- a decision that was rejected
    before order submission has neither) to `STradeDecision` and populate
    them once `OrderManager.mqh` confirms a fill. (The Python-side field

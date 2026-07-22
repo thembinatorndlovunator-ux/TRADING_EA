@@ -12,11 +12,18 @@ docstring previously claimed every function ALSO returns uncertainty
 alongside sample size -- that overstates what is actually implemented.
 ``win_rate``/``expectancy``/``bootstrap_confidence_interval`` do (Wilson
 CI, bootstrap CI, percentile CI respectively). ``profit_factor`` and
-``compute_max_drawdown`` report ONLY a point estimate (n is available on
-``ProfitFactorResult`` but no inferential interval exists for either
-statistic here) -- a caller needing drawdown uncertainty should use
-``monte_carlo.py``'s resampled drawdown distribution instead, which does
-carry percentile scenario bounds.
+``compute_max_drawdown`` report ONLY a point estimate -- no inferential
+interval exists for either statistic here -- a caller needing drawdown
+uncertainty should use ``monte_carlo.py``'s resampled drawdown
+distribution instead, which does carry percentile scenario bounds.
+
+**Corrected, 2026-07-22 Codex review finding (fourth round):** this
+docstring (and ``ProfitFactorResult`` itself) previously implied ``n``
+was recoverable from ``n_wins``/``n_losses`` alone -- false, since
+break-even (exactly-zero P/L) observations are counted in neither and
+silently vanish from the total. ``ProfitFactorResult.n`` now reports the
+TRUE total sample size (wins + losses + break-even), independent of
+``n_wins + n_losses``.
 """
 
 from __future__ import annotations
@@ -67,6 +74,11 @@ class ProfitFactorResult:
     gross_loss: float
     n_wins: int
     n_losses: int
+    n: int  # **Added, 2026-07-22 Codex review finding (fourth round):**
+    # the TRUE total sample size (wins + losses + break-even) -- NOT
+    # recoverable from n_wins + n_losses alone, since an exactly-zero
+    # P/L observation is counted in neither and previously vanished from
+    # the result entirely.
 
 
 @dataclass(frozen=True)
@@ -253,6 +265,24 @@ def expectancy(
     boot = bootstrap_confidence_interval(
         pnl, statistic="mean", n_resamples=n_resamples, confidence=confidence, seed=seed
     )
+    # **Added, 2026-07-22 Codex review finding (fourth round):** every
+    # individual 'pnl' value is checked finite above, but SUMS/DIFFERENCES
+    # of finite values can still overflow to +/-inf, and inf arithmetic
+    # downstream produces NaN (e.g. inf - inf) -- independent probes found
+    # expectancy([1e308, 1e308], n_resamples=100) returns mean/std_dev=inf
+    # and ci_lower/ci_upper=[nan, nan]. A pipeline must fail visibly rather
+    # than persist non-finite statistical evidence.
+    if not (
+        math.isfinite(mean)
+        and math.isfinite(std_dev)
+        and math.isfinite(boot.ci_lower)
+        and math.isfinite(boot.ci_upper)
+    ):
+        raise ValueError(
+            f"expectancy: computed statistic overflowed to a non-finite value "
+            f"(mean={mean}, std_dev={std_dev}, ci=[{boot.ci_lower}, {boot.ci_upper}]) -- "
+            "the input pnl values are finite individually but their sum/variance is not"
+        )
     return ExpectancyResult(
         expectancy=mean,
         n=n,
@@ -289,10 +319,27 @@ def profit_factor(pnl: Sequence[float]) -> ProfitFactorResult:
     n_wins = sum(1 for x in pnl if x > 0)
     n_losses = sum(1 for x in pnl if x < 0)
 
+    # **Added, 2026-07-22 Codex review finding (fourth round):** each
+    # individual value is checked finite above, but SUMMING many finite
+    # values can still overflow -- an independent probe with
+    # profit_factor([1e308, 1e308, -1]) produced gross_profit=inf and an
+    # inf factor. A pipeline must fail visibly rather than persist a
+    # non-finite gross_profit/gross_loss/factor.
+    if not (math.isfinite(gross_profit) and math.isfinite(gross_loss)):
+        raise ValueError(
+            f"profit_factor: gross_profit/gross_loss overflowed to a non-finite value "
+            f"(gross_profit={gross_profit}, gross_loss={gross_loss}) -- "
+            "the input pnl values are finite individually but their sum is not"
+        )
+
     if gross_loss == 0.0:
         pf = None
     else:
         pf = gross_profit / abs(gross_loss)
+        if not math.isfinite(pf):
+            raise ValueError(
+                f"profit_factor: computed factor overflowed to a non-finite value ({pf})"
+            )
 
     return ProfitFactorResult(
         profit_factor=pf,
@@ -300,6 +347,7 @@ def profit_factor(pnl: Sequence[float]) -> ProfitFactorResult:
         gross_loss=gross_loss,
         n_wins=n_wins,
         n_losses=n_losses,
+        n=n,
     )
 
 
@@ -435,4 +483,108 @@ def compute_max_drawdown(balance_curve: Sequence[float]) -> MaxDrawdownResult:
         max_drawdown_pct=max_dd_pct,
         max_drawdown_pct_peak_index=max_dd_pct_peak_index,
         max_drawdown_pct_trough_index=max_dd_pct_trough_index,
+    )
+
+
+@dataclass(frozen=True)
+class EquityPeakGivebackResult:
+    """See ``compute_equity_peak_giveback``'s own docstring for the exact
+    arm/trigger formula (ported from ``TASK-002_PHASE2_SPECIFICATION.md``'s
+    "Daily equity-peak giveback" definition, applied here at ACCOUNT scope
+    -- see that function's docstring for why no daily-reset variant exists
+    yet). This is DESCRIPTIVE (offline analysis of a historical curve),
+    never a live control -- matches every other module in this project
+    that ports a live guard formula for retrospective simulation only.
+    """
+
+    arm_percent: float
+    floor_percent: float
+    armed: bool  # whether the running peak ever grew >= arm_percent above the curve's start
+    n_trigger_events: int
+    trigger_indices: list[int]
+    max_giveback_pct: float  # 0.0 if never armed
+    max_giveback_pct_index: int
+
+
+def compute_equity_peak_giveback(
+    balance_curve: Sequence[float], arm_percent: float = 1.0, floor_percent: float = 0.5
+) -> EquityPeakGivebackResult:
+    """Simulates ``TASK-002_PHASE2_SPECIFICATION.md``'s equity-peak-giveback
+    guard formula against a chronologically-ordered balance/equity curve --
+    the master-prompt-required "Equity-peak giveback" metric, DISTINCT from
+    ``compute_max_drawdown`` (a single global worst-case peak-to-trough
+    figure): this reports how many times a peak-relative giveback guard
+    would have TRIGGERED, not just the single worst decline.
+
+    Ported formula (spec's "Daily equity-peak giveback", applied here at
+    ACCOUNT scope -- a genuine daily-resetting variant needs real
+    intraday equity ticks this project does not have yet, same "Balance,
+    not equity" limitation ``analyse_baseline.py`` already discloses):
+    the running peak arms the guard once
+    ``(peak - start) / start >= arm_percent / 100``; once armed, a trigger
+    event fires the first time
+    ``(peak - current) / peak >= floor_percent / 100`` after the guard was
+    last below that floor (so a single sustained decline counts as ONE
+    trigger event, not one per bar -- re-triggering requires the giveback
+    to first recover below the floor).
+
+    Raises InsufficientSampleError if empty. Raises ValueError if any
+    value is non-finite, if the first value is not strictly positive
+    (percent-based, same requirement as ``compute_max_drawdown``), or if
+    'arm_percent'/'floor_percent' is not finite and > 0.
+    """
+
+    if not balance_curve:
+        raise InsufficientSampleError("compute_equity_peak_giveback: empty balance curve")
+    if not all(math.isfinite(v) for v in balance_curve):
+        raise ValueError(
+            "compute_equity_peak_giveback: balance_curve contains a non-finite (NaN/inf) value"
+        )
+    if balance_curve[0] <= 0:
+        raise ValueError(
+            f"compute_equity_peak_giveback: the first value ({balance_curve[0]!r}) must be > 0"
+        )
+    if not math.isfinite(arm_percent) or arm_percent <= 0:
+        raise ValueError(f"arm_percent must be finite and > 0, got {arm_percent}")
+    if not math.isfinite(floor_percent) or floor_percent <= 0:
+        raise ValueError(f"floor_percent must be finite and > 0, got {floor_percent}")
+
+    start = balance_curve[0]
+    peak = start
+    armed = False
+    currently_triggered = False
+    n_trigger_events = 0
+    trigger_indices: list[int] = []
+    max_giveback_pct = 0.0
+    max_giveback_pct_index = 0
+
+    for i, value in enumerate(balance_curve):
+        if value > peak:
+            peak = value
+
+        if not armed and (peak - start) / start >= arm_percent / 100.0:
+            armed = True
+
+        if armed:
+            giveback_pct = (peak - value) / peak
+            if giveback_pct > max_giveback_pct:
+                max_giveback_pct = giveback_pct
+                max_giveback_pct_index = i
+
+            if giveback_pct >= floor_percent / 100.0:
+                if not currently_triggered:
+                    n_trigger_events += 1
+                    trigger_indices.append(i)
+                    currently_triggered = True
+            else:
+                currently_triggered = False
+
+    return EquityPeakGivebackResult(
+        arm_percent=arm_percent,
+        floor_percent=floor_percent,
+        armed=armed,
+        n_trigger_events=n_trigger_events,
+        trigger_indices=trigger_indices,
+        max_giveback_pct=max_giveback_pct,
+        max_giveback_pct_index=max_giveback_pct_index,
     )
