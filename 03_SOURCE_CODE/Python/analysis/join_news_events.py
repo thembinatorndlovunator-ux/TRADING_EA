@@ -4,13 +4,15 @@ a NEWS_BLACKOUT window (per ``NewsManager.mqh``'s TASK-029 blackout-window
 definition, section 10 of ``TASK-002_PHASE2_SPECIFICATION.md``).
 
 **Why this is a genuinely useful independent check, not a duplicate of the
-MQL5 side:** every real journal record's ``news_state`` field is currently
-always empty (``ThembaAdaptiveIntradayEA.mq5`` never populates it -- see
-``analysis/schema.py``'s docstring for the broader market_family/
-intraday_mode gap this is part of). This script recomputes blackout status
-from raw news events independently of whatever (currently nothing) the live
-EA recorded, so it can quantify how many past decisions WOULD have fallen
-inside a blackout window once ``news_state`` is actually wired up.
+MQL5 side:** ``ThembaAdaptiveIntradayEA.mq5`` does populate ``news_state``
+today (TASK-034's live ``ResolveNewsBlackout`` wiring), but this script
+still recomputes blackout status independently, from the raw news events
+export -- an independent cross-check against whatever the live EA's own
+news provider (MT5 calendar or FairEconomy) actually recorded, not a
+value this script merely trusts. A mismatch between the two is itself
+useful evidence: it can mean a news-provider data gap, a timing edge
+case, or a genuine EA bug, none of which a duplicate-of-the-source
+computation could ever surface.
 
 **Simplification, stated explicitly:** this compares each decision's
 ``timestamp_utc`` directly against each news event's ``scheduled_utc`` --

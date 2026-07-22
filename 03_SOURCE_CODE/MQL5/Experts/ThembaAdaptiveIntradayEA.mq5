@@ -34,8 +34,24 @@
 //| purpose.                                                                        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.01"
+#property version   "1.02"
 #property description "Themba Adaptive Intraday Engine — decision pipeline; order submission is OFF by default (TASK-027, InpEnableOrderSubmission)."
+
+// **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding 18):
+// decision.ea_version was a hard-coded, stale "task-027" string never
+// updated across TASK-034/036/037/039/040/041, and decision.git_commit was
+// never populated at all. MQL5 has NO runtime access to git metadata (no
+// shell/process execution, and importing a WinAPI DLL to shell out to git
+// would be a real stability/security concern for a live-trading EA this
+// project has never accepted elsewhere) -- so THEMBA_EA_GIT_COMMIT is a
+// STATED, MANUALLY-MAINTAINED build tag, not a live-queried value: update it
+// by hand to the actual commit this file is compiled from immediately before
+// each real release build. THEMBA_EA_VERSION_STRING mirrors #property
+// version above (single source of truth referenced from both journal-writing
+// call sites below, instead of the previous two independently-hardcoded
+// literals that had already drifted out of sync with each other).**
+#define THEMBA_EA_VERSION_STRING "1.02-task028-round7"
+#define THEMBA_EA_GIT_COMMIT     "b362c07a1bab"
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
 #include "../Include/ThembaEA/Risk/BrokerValidator.mqh"
@@ -449,6 +465,28 @@ void OnTick()
    // today's close operation above has itself fully succeeded yet.
    if(is_new_completed_bar)
       EvaluateAndJournal(past_intraday_boundary);
+  }
+
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding    |
+//| 18):** signal_id was symbol + broker SECOND (TimeCurrent(), no sub-        |
+//| second resolution) + a process-local counter that resets to 0 on every       |
+//| restart -- two concurrent instances of this EA (e.g. different magic          |
+//| numbers on the same symbol) or a fast restart within the same wall-clock         |
+//| second could produce an IDENTICAL signal_id, silently colliding in the             |
+//| journal (and in any downstream join keyed on it). GetMicrosecondCount()               |
+//| returns microseconds since the TERMINAL's own start (shared across every               |
+//| EA instance in this terminal, monotonically increasing within a session),               |
+//| combined with 'magic' (distinguishes concurrent DIFFERENT-strategy                        |
+//| instances even on the same symbol/second) makes an actual collision                          |
+//| astronomically unlikely, replacing the previous single shared, duplicated                       |
+//| format string at both call sites with one function.                                                |
+//+------------------------------------------------------------------+
+string BuildSignalId(const string symbol, const long magic)
+  {
+   g_signal_counter++;
+   return StringFormat("%s_%I64d_%I64d_%I64u_%I64d", symbol, magic, (long)TimeCurrent(),
+                        GetMicrosecondCount(), g_signal_counter);
   }
 
 //--- Appends one string to a dynamic string[] array (local helper —
@@ -1091,9 +1129,7 @@ void JournalDataFailureDecision(const string failure_reason)
    MRE_ApplyHysteresis(g_hysteresis_state, REGIME_TRANSITION_OR_UNCERTAIN, true,
                         InpHysteresisRequiredBars);
 
-   g_signal_counter++;
-   string signal_id = StringFormat("%s_%I64d_%I64d", g_symbol, (long)TimeCurrent(),
-                                    g_signal_counter);
+   string signal_id = BuildSignalId(g_symbol, InpMagicNumber);
 
    STradeDecision decision = DJ_NewDecision();
    decision.signal_id = signal_id;
@@ -1108,7 +1144,8 @@ void JournalDataFailureDecision(const string failure_reason)
    decision.setup = "data_failure";
    decision.news_state = "CLEAR"; // unknown -- not evaluated this bar, never fabricate BLACKOUT
    decision.session_state = "SESSION_TIME_REMAINING_UNKNOWN";
-   decision.ea_version = "1.01-task027-order-submission-optional";
+   decision.ea_version = THEMBA_EA_VERSION_STRING;
+   decision.git_commit = THEMBA_EA_GIT_COMMIT;
 
    string reason_arr[];
    AppendReason(reason_arr, failure_reason);
@@ -1364,9 +1401,7 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    else
       session_state = "SESSION_TIME_REMAINING_LOW";
 
-   g_signal_counter++;
-   string signal_id = StringFormat("%s_%I64d_%I64d", g_symbol, (long)TimeCurrent(),
-                                    g_signal_counter);
+   string signal_id = BuildSignalId(g_symbol, InpMagicNumber);
 
    STradeDecision decision = DJ_NewDecision();
    decision.signal_id = signal_id;
@@ -1378,7 +1413,8 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    decision.regime_confidence = regime_read.confidence * 100.0;
    decision.news_state = news_state;
    decision.session_state = session_state;
-   decision.ea_version = "1.01-task027-order-submission-optional";
+   decision.ea_version = THEMBA_EA_VERSION_STRING;
+   decision.git_commit = THEMBA_EA_GIT_COMMIT;
 
    // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding
    // 6): TASK-002 section 1's stage-4 post-hoc mode-consistency check --

@@ -250,11 +250,37 @@ bool DJ_AppendDecision(const STradeDecision &d, string &error_reason)
    // encode/decode as real UTF-8 instead of the system codepage, fixing
    // the mismatch without switching to FILE_UNICODE (which would write
    // UTF-16LE with a BOM, a different on-disk contract entirely).
-   int handle = FileOpen(path, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ,
-                          0, CP_UTF8);
+   //
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding
+   // 18):** FILE_SHARE_READ grants other processes READ access to this
+   // file while it is open, but deliberately NOT write access -- exactly
+   // one process may hold this file open for append at a time, which is
+   // the real interprocess exclusion this journal needs (multiple EA
+   // instances on different charts sharing the same terminal's Files
+   // folder must never interleave a half-written line). The previous
+   // single-attempt FileOpen gave up immediately the instant a
+   // concurrent instance already held the handle, silently losing that
+   // decision's journal line -- a hole in the "journal every bar"
+   // evidence stream, never retried. A bounded retry with a short
+   // backoff now serializes a genuinely concurrent append (it waits its
+   // turn) instead of dropping it; the whole retry budget (at most
+   // max_attempts * retry_delay_ms) is negligible next to this EA's own
+   // once-per-completed-bar journal cadence.
+   const int max_attempts = 20;
+   const int retry_delay_ms = 15;
+   int handle = INVALID_HANDLE;
+   for(int attempt = 0; attempt < max_attempts; attempt++)
+     {
+      handle = FileOpen(path, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ,
+                         0, CP_UTF8);
+      if(handle != INVALID_HANDLE)
+         break;
+      Sleep(retry_delay_ms);
+     }
    if(handle == INVALID_HANDLE)
      {
-      error_reason = StringFormat("file_open_failed_error_%d", GetLastError());
+      error_reason = StringFormat("file_open_failed_after_%d_attempts_error_%d", max_attempts,
+                                   GetLastError());
       return false;
      }
 

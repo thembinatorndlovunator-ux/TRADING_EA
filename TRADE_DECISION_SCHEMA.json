@@ -2,7 +2,7 @@
   "signal_id": "string",
   "timestamp_utc": "ISO-8601",
   "symbol": "string",
-  "market_family": "METAL|SYNTHETIC",
+  "market_family": "METAL|FOREX|SYNTHETIC_INDEX|UNKNOWN",
   "intraday_mode": "SCALP|DAY_TRADE",
   "regime": "enum",
   "regime_confidence": "0-100",

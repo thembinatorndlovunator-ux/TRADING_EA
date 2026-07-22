@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from analysis.join_trade_journal import main, run
-from tests.conftest import make_current_ea_record, make_valid_record
+from tests.conftest import make_schema_invalid_record, make_valid_record
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -213,7 +213,7 @@ def test_run_writes_csv_json_and_errors(tmp_path):
     _write_journal_file(
         tmp_path,
         "decisions_20260721.jsonl",
-        [make_valid_record(signal_id="ok-1"), make_current_ea_record()],
+        [make_valid_record(signal_id="ok-1"), make_schema_invalid_record()],
     )
 
     out_csv = tmp_path / "out" / "journal.csv"

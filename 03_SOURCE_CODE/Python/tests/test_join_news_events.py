@@ -383,14 +383,11 @@ def test_boolean_importance_rejected(tmp_path):
 def test_invalid_journal_records_surfaced_not_silently_dropped(tmp_path):
     """Regression for a Codex review finding (2026-07-22): this script
     previously read ONLY valid_records, silently excluding every parse/
-    schema failure from the joined output -- reachable in practice since
-    a real current-EA journal record fails schema validation on
-    market_family/intraday_mode (both always empty). A wholly-invalid
-    real journal directory must not silently produce a successful empty
-    analysis."""
+    schema failure from the joined output. A wholly-invalid real journal
+    directory must not silently produce a successful empty analysis."""
 
     bad_record = make_valid_record()
-    bad_record["market_family"] = ""  # matches the live EA's actual current output
+    bad_record["market_family"] = ""  # any invalid field works -- this just needs to fail schema
     _write_journal(tmp_path, [bad_record])
     news_path = tmp_path / "news.csv"
     _write_news(

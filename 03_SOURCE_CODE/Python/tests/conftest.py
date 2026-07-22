@@ -12,9 +12,9 @@ import pytest
 
 def make_valid_record(**overrides) -> dict:
     """A schema-valid TradeDecision dict, matching TRADE_DECISION_SCHEMA.json
-    exactly -- NOT necessarily what the current live EA build actually
-    produces (see schema.py's docstring on the market_family/intraday_mode
-    gap); this is the target shape a fixed EA build should converge to."""
+    exactly -- and, as of TASK-040 (2026-07-22), the shape the live EA
+    build actually produces (market_family/intraday_mode are both
+    populated on every real journal line; see schema.py's docstring)."""
 
     record = {
         "signal_id": "sig-0001",
@@ -46,12 +46,18 @@ def make_valid_record(**overrides) -> dict:
     return record
 
 
-def make_current_ea_record(**overrides) -> dict:
-    """A record shaped exactly like what ThembaAdaptiveIntradayEA.mq5
-    ACTUALLY emits today: signal_id, market_family, and intraday_mode all
-    empty strings (the confirmed, documented cross-layer gap) -- used to
-    prove the schema genuinely catches this, rather than silently passing
-    it."""
+def make_schema_invalid_record(**overrides) -> dict:
+    """A generically schema-INVALID record (blank signal_id/market_family/
+    intraday_mode) -- used by several tests below purely as a known-bad
+    fixture to prove invalid-record handling (rejection, error surfacing,
+    row-error reporting), not as a claim about any particular EA build's
+    real output. **Renamed, 2026-07-22 (Codex review finding, seventh
+    round, P1 finding 18): this was previously named
+    make_current_ea_record and documented as "what the live EA actually
+    emits today" -- TASK-040 has since wired market_family/intraday_mode
+    into the live journal, so that claim is no longer true; this fixture
+    is now honestly framed as a synthetic invalid-record generator, not a
+    live-behavior snapshot.**"""
 
     record = make_valid_record(signal_id="", market_family="", intraday_mode="")
     record.update(overrides)
@@ -64,8 +70,8 @@ def valid_record() -> dict:
 
 
 @pytest.fixture
-def current_ea_record() -> dict:
-    return make_current_ea_record()
+def schema_invalid_record() -> dict:
+    return make_schema_invalid_record()
 
 
 @pytest.fixture

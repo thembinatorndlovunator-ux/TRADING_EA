@@ -10,7 +10,7 @@ from data_collection.journal_reader import (
     read_journal_directory,
     to_dataframe,
 )
-from tests.conftest import make_current_ea_record, make_valid_record
+from tests.conftest import make_schema_invalid_record, make_valid_record
 
 
 def test_read_journal_directory_missing_dir_raises(tmp_path):
@@ -64,7 +64,7 @@ def test_dataset_hash_is_aba_safe_reflects_actual_content_read(tmp_path):
 def test_read_journal_directory_mixed_valid_and_malformed(tmp_path):
     valid_a = make_valid_record(signal_id="a")
     valid_b = make_valid_record(signal_id="b", timestamp_utc="2026-07-21T15:00:00Z")
-    bad_record = make_current_ea_record()  # schema-invalid (see conftest)
+    bad_record = make_schema_invalid_record()  # schema-invalid (see conftest)
 
     path = tmp_path / "decisions_20260721.jsonl"
     with path.open("w", encoding="utf-8") as fh:
@@ -90,7 +90,7 @@ def test_oversized_validation_error_raw_record_is_capped(tmp_path):
     has no schema of its own) could make one validation-error record an
     unbounded in-memory payload."""
 
-    bad_record = make_current_ea_record()  # schema-invalid (see conftest)
+    bad_record = make_schema_invalid_record()  # schema-invalid (see conftest)
     # Large enough to exceed the 2000-char ValidationError.raw_record cap,
     # but well under MAX_LINE_BYTES so this exercises the raw_record cap
     # specifically, not the oversized-physical-line path.

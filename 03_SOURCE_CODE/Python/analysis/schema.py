@@ -23,18 +23,20 @@ coerced into plausible results." A record that fails validation is a
 reportable error for the caller to surface, not something this module
 silently repairs.
 
-**Known, confirmed cross-layer gap (not a bug in this module):**
-``market_family`` and ``intraday_mode`` are part of the documented schema
-(``METAL|SYNTHETIC`` and ``SCALP|DAY_TRADE`` respectively) but
-``ThembaAdaptiveIntradayEA.mq5`` (TASK-025/027) never actually sets either
-field -- both stay at ``DJ_NewDecision()``'s empty-string default in every
-real journal line the current EA build produces. This model still enforces
-the DOCUMENTED schema strictly (rejecting an empty string for either field),
-so real journal files from the current EA build will show up as schema
-validation failures on these two fields until a future MQL5-side task
-populates them -- that is the correct, visible behavior per reproducibility
-rule 5, not something this module should paper over by silently loosening
-the constraint. See TASK-028_PYTHON_STATISTICAL_LAB.md's Risks section.
+**Formerly a known, confirmed cross-layer gap -- now closed (2026-07-22,
+TASK-040 / Codex review finding, seventh round, P1 finding 18):**
+``market_family`` and ``intraday_mode`` were part of the documented schema
+but ``ThembaAdaptiveIntradayEA.mq5`` (TASK-025/027) did not yet set either
+field. TASK-040 wired ``IntradayModeRouter.mqh``'s live classifier into the
+EA's own decision journaling, so both fields are now populated on every
+real journal line. **The vocabulary itself needed a fix too:** this schema
+previously declared ``market_family: Literal["METAL", "SYNTHETIC"]``, but
+the live router (``IMR_MarketFamilyToString``) emits exactly one of
+``METAL``, ``FOREX``, ``SYNTHETIC_INDEX``, or ``UNKNOWN`` -- three of the
+four real values (including the intended synthetic-index value itself)
+previously failed schema validation on every real journal line. The
+``Literal`` below now matches the live producer's actual vocabulary
+exactly, not an earlier, never-implemented two-value guess.
 """
 
 from __future__ import annotations
@@ -77,7 +79,7 @@ class TradeDecision(BaseModel):
     signal_id: str
     timestamp_utc: datetime
     symbol: str = Field(min_length=1)
-    market_family: Literal["METAL", "SYNTHETIC"]
+    market_family: Literal["METAL", "FOREX", "SYNTHETIC_INDEX", "UNKNOWN"]
     intraday_mode: Literal["SCALP", "DAY_TRADE"]
     regime: str
     regime_confidence: StrictFloat = Field(ge=0.0, le=100.0)

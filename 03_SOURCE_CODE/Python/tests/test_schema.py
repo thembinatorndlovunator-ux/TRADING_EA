@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from analysis.schema import SchemaValidationError, validate_record
-from tests.conftest import make_current_ea_record, make_valid_record
+from tests.conftest import make_schema_invalid_record, make_valid_record
 
 
 def test_valid_record_parses_successfully():
@@ -14,13 +14,15 @@ def test_valid_record_parses_successfully():
     assert record.targets == [2361.45]
 
 
-def test_current_ea_record_fails_validation_on_market_family_and_mode():
-    """The documented, confirmed cross-layer gap: the live EA build never
-    sets market_family/intraday_mode, so a real journal row today MUST be
-    rejected by this schema, not silently accepted."""
+def test_schema_invalid_record_fails_validation_on_market_family_and_mode():
+    """A record with blank market_family/intraday_mode (the schema-invalid
+    fixture's own shape) must be rejected, not silently accepted -- this
+    is no longer what the live EA actually emits (TASK-040 populates both
+    fields for real), but the schema must still reject a blank value on
+    either field regardless."""
 
     with pytest.raises(SchemaValidationError) as exc_info:
-        validate_record(make_current_ea_record())
+        validate_record(make_schema_invalid_record())
     message = str(exc_info.value)
     assert "market_family" in message or "intraday_mode" in message
 
