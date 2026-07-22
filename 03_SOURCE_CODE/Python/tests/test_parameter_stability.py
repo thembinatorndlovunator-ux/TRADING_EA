@@ -9,8 +9,10 @@ from analysis.csv_io import CsvSchemaError
 from analysis.parameter_stability import (
     main,
     run,
+    run_v637_2d_sweep,
     run_v811_sweep,
     sweep_giveback_percent,
+    sweep_v637_arm_rr_and_giveback_percent,
     sweep_v811_arm_and_floor,
 )
 
@@ -179,6 +181,133 @@ def test_sweep_rejects_n_resamples_above_upper_bound():
 
     with pytest.raises(ValueError):
         sweep_giveback_percent([PATH_B, PATH_C], [40.0], n_resamples=10_000_000)
+
+
+# --- sweep_v637_arm_rr_and_giveback_percent (Codex review finding, 2026-07-22, sixth round) -
+
+
+def test_sweep_v637_2d_hand_computed():
+    """Hand-traced against EM_ShouldGivebackCloseV637's formula
+    (effective_arm=max(0.25,arm_rr), trigger_r=peak_r*(1-pct/100),
+    current<=trigger_r once armed).
+
+    Path B = [0.0, 2.0, 1.0, 0.5], peak reaches 2.0 at index1,
+    actual_final_r=0.5.
+
+    arm_rr=1.25 (effective_arm=1.25, peak 2.0 >= 1.25 -> arms):
+      pct=40: trigger_r=2.0*0.6=1.2 -> triggers at index2 (1.0<=1.2), r=1.0,
+              r_diff=1.0-0.5=0.5
+      pct=60: trigger_r=2.0*0.4=0.8 -> triggers at index3 (0.5<=0.8), r=0.5,
+              r_diff=0.5-0.5=0.0
+
+    arm_rr=2.5 (effective_arm=2.5, peak only reaches 2.0 < 2.5 -> NEVER
+    arms, for either percent): r_diff=0.0 (no-trigger convention).
+    """
+
+    rows = sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25, 2.5], [40.0, 60.0])
+    assert len(rows) == 4  # 2 arm_rr values x 2 giveback_percent values
+    by_key = {(r.arm_rr, r.giveback_percent): r for r in rows}
+
+    assert by_key[(1.25, 40.0)].n_triggered == 1
+    assert by_key[(1.25, 40.0)].mean_r_diff_over_all_paths == pytest.approx(0.5)
+    assert by_key[(1.25, 60.0)].n_triggered == 1
+    assert by_key[(1.25, 60.0)].mean_r_diff_over_all_paths == pytest.approx(0.0)
+    assert by_key[(2.5, 40.0)].n_triggered == 0
+    assert by_key[(2.5, 40.0)].mean_r_diff_over_all_paths == pytest.approx(0.0)
+    assert by_key[(2.5, 60.0)].n_triggered == 0
+    assert by_key[(2.5, 60.0)].mean_r_diff_over_all_paths == pytest.approx(0.0)
+
+
+def test_sweep_v637_2d_produces_full_grid():
+    rows = sweep_v637_arm_rr_and_giveback_percent([PATH_B, PATH_C], [1.0, 1.25], [40.0, 60.0])
+    assert len(rows) == 4
+    pairs = {(r.arm_rr, r.giveback_percent) for r in rows}
+    assert pairs == {(1.0, 40.0), (1.0, 60.0), (1.25, 40.0), (1.25, 60.0)}
+
+
+def test_sweep_v637_2d_rejects_empty_inputs():
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([], [1.25], [40.0])
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [], [40.0])
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25], [])
+
+
+def test_sweep_v637_2d_rejects_out_of_domain_arm_rr():
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [0.1], [40.0])  # below 0.25
+
+
+def test_sweep_v637_2d_rejects_out_of_range_giveback_percent():
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25], [5.0])  # below 10
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25], [95.0])  # above 90
+
+
+def test_sweep_v637_2d_rejects_negative_close_trigger_floor_r():
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25], [40.0], close_trigger_floor_r=-0.1)
+
+
+def test_sweep_v637_2d_rejects_non_finite_values():
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [float("nan")], [40.0])
+    with pytest.raises(ValueError):
+        sweep_v637_arm_rr_and_giveback_percent([PATH_B], [1.25], [float("inf")])
+
+
+def test_run_v637_2d_sweep_reads_real_csv_and_reproduces_hand_traced_numbers(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B})
+
+    result = run_v637_2d_sweep(r_paths_csv, [1.25, 2.5], [40.0])
+    by_key = {(r["arm_rr"], r["giveback_percent"]): r for _, r in result.iterrows()}
+    assert by_key[(1.25, 40.0)]["mean_r_diff_over_all_paths"] == pytest.approx(0.5)
+    assert by_key[(2.5, 40.0)]["mean_r_diff_over_all_paths"] == pytest.approx(0.0)
+
+
+def test_run_v637_2d_sweep_writes_output_csv_and_summary_json(tmp_path):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+
+    output_csv = tmp_path / "out" / "v637_2d_stability.csv"
+    summary_json = tmp_path / "out" / "v637_2d_summary.json"
+    run_v637_2d_sweep(
+        r_paths_csv,
+        [1.0, 1.25],
+        [40.0, 60.0],
+        output_csv=output_csv,
+        summary_json=summary_json,
+    )
+    assert output_csv.exists()
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["arm_rr_values_swept"] == [1.0, 1.25]
+    assert payload["summary"]["giveback_percents_swept"] == [40.0, 60.0]
+
+
+def test_cli_main_dispatches_to_v637_2d_sweep(tmp_path, capsys):
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})
+
+    exit_code = main(
+        [
+            "--r-paths-csv",
+            str(r_paths_csv),
+            "--model",
+            "v637_2d",
+            "--arm-rr-values",
+            "1.0",
+            "1.25",
+            "--giveback-percents",
+            "40.0",
+            "60.0",
+        ]
+    )
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "v637_2d" in captured.out
 
 
 # --- sweep_v811_arm_and_floor (Codex review finding, 2026-07-22, fifth round) -

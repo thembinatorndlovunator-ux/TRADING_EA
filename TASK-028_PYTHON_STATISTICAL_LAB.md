@@ -711,39 +711,49 @@ so this canonical file does not read as if history stopped at round 2.
   mode/news outcome breakdown added to notebook 04 (since found
   source-invalid by round 5).
 - **Round 5** (18 findings: 3 P0/11 P1/4 P2, reviewed against `750443d`):
-  **fully resolved**, each with a regression test reproducing the
-  review's own counterexample, committed across `aa39ac4`, `9f4784e`,
-  `8b0930f`, `4ce4a43`, `b51bc41`, `8fc05de`, `457970f`, `4e03b2b`,
-  `17077a9`, `3a1bafc`, `ce0ee25`, `52e8dec`. This round caught
-  SELF-INTRODUCED regressions in round 4's own remediation (the
-  `join_signal_to_outcome.py` redesign in particular), not only
-  pre-existing gaps — confirming this project's "every fix needs its own
-  adversarial counterexample test" discipline is warranted. Resolved, in
-  finding order: 1/2/3 (all P0 — balance-vs-equity giveback mislabeling +
-  `compare_releases.py` side-by-side surface; the durable signal/outcome
-  identity model; the source-invalid session-state mapping + notebook
-  04's move to the real composed pipeline), 4/5 (partial-fill $/R
-  corruption, sidecar overwrite), 6 (provenance not bound to an immutable
-  byte snapshot — the ABA-mutation race across `join_trade_journal.py`/
-  `join_news_events.py`/`analyse_baseline.py`), 7 (`compare_releases.py`'s
-  comparability manifest made required and role-specific), 8 (remaining
-  overflow/non-finite gaps across the statistics layer), 9
-  (`parameter_stability.py`'s wrong-surface sweep — added the missing
-  V8.11 2-D `arm_r`/`floor_r` grid), 10 (hard-coded/unbounded resampling
-  controls), 11 (row-order-dependent streak + wrong `trades_per_day`
-  denominator), 12 (MFE/MAE and giveback accepting incomplete bar paths —
-  `trade_math.assert_complete_bar_coverage`), 13 (the net-P/L
-  assumption-vs-requirement contradiction), 14 (task closure-safety gaps
-  across TASK-018/031/033/034/036/037), 15/16 (P2 — `news_state`/
-  `in_news_blackout` consistency, journal/news resource and identifier
-  hardening), 17 (P2 — notebooks 01/10 now hand-check the newer summary/
-  comparison fields against hand-traced fixture values, not just execute
-  cleanly), 18 (P2 — this section's own history, kept current). 532
-  tests passing, ruff/ruff format/mypy clean, every notebook that
-  imports an affected function re-executed with zero errors as of this
-  update. Round 5's own "Required disposition" section asks that every
-  P0/P1 item be resolved (plus corrected canonical history) before a
-  sixth independent review is requested — that condition is now met, and
-  all four P2 items are resolved too; requesting that review is a
-  user-triggered, billed action (`/code-review ultra`) and is not
-  initiated automatically by this update.
+  each finding had a regression test reproducing the review's own
+  counterexample, committed across `aa39ac4`, `9f4784e`, `8b0930f`,
+  `4ce4a43`, `b51bc41`, `8fc05de`, `457970f`, `4e03b2b`, `17077a9`,
+  `3a1bafc`, `ce0ee25`, `52e8dec`. This round caught SELF-INTRODUCED
+  regressions in round 4's own remediation (the `join_signal_to_outcome.py`
+  redesign in particular), not only pre-existing gaps — confirming this
+  project's "every fix needs its own adversarial counterexample test"
+  discipline is warranted. Resolved, in finding order: 1/2/3 (all P0 —
+  balance-vs-equity giveback mislabeling + `compare_releases.py`
+  side-by-side surface; the durable signal/outcome identity model; the
+  source-invalid session-state mapping + notebook 04's move to the real
+  composed pipeline), 4/5 (partial-fill $/R corruption, sidecar
+  overwrite), 6 (provenance not bound to an immutable byte snapshot — the
+  ABA-mutation race across `join_trade_journal.py`/`join_news_events.py`/
+  `analyse_baseline.py` — **later found by round 6 to be non-exhaustive:
+  see below**), 7 (`compare_releases.py`'s comparability manifest made
+  required and role-specific — **later found by round 6 to still be
+  incomplete: see below**), 8 (remaining overflow/non-finite gaps across
+  the statistics layer — **later found by round 6 to be non-exhaustive:
+  see below**), 9 (`parameter_stability.py`'s wrong-surface sweep — added
+  the missing V8.11 2-D `arm_r`/`floor_r` grid; **this round's own module
+  docstring simultaneously disclosed that the ANALOGOUS V6.37 2-D
+  `arm_rr`/`giveback_percent` grid was still missing — finding 9 was
+  therefore only PARTIALLY resolved here, not "fully resolved" as this
+  section previously and wrongly summarized round 5 as a whole; round 6
+  finding 11 caught this discrepancy and round 6's own remediation closed
+  the remaining V6.37 2-D grid — see below**), 10 (hard-coded/unbounded
+  resampling controls), 11 (row-order-dependent streak + wrong
+  `trades_per_day` denominator), 12 (MFE/MAE and giveback accepting
+  incomplete bar paths — `trade_math.assert_complete_bar_coverage`), 13
+  (the net-P/L assumption-vs-requirement contradiction), 14 (task
+  closure-safety gaps across TASK-018/031/033/034/036/037), 15/16 (P2 —
+  `news_state`/`in_news_blackout` consistency, journal/news resource and
+  identifier hardening), 17 (P2 — notebooks 01/10 now hand-check the
+  newer summary/comparison fields against hand-traced fixture values, not
+  just execute cleanly), 18 (P2 — this section's own history, kept
+  current). 532 tests passing, ruff/ruff format/mypy clean, every
+  notebook that imports an affected function re-executed with zero errors
+  as of that update.
+
+  **Corrected, 2026-07-22 (this section previously claimed round 5 was
+  "fully resolved" and requested a sixth review on that basis — a sixth
+  review then ran and found 17 remaining findings, several reproducing
+  the exact class of counterexample this section claimed was closed;
+  round 5 alone was not, in fact, sufficient for merge-readiness).** See
+  the Round 6 entry below for the corrected, Git-verified state.
