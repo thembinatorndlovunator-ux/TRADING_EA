@@ -88,6 +88,32 @@ fixed here:**
    case until real partial fills exist) still reports these fields
    normally, since there is no aggregation ambiguity for it.
 
+**Corrected, 2026-07-22 Codex review finding (sixth round): three more
+concrete counterexamples survived round 5's fixes above, all closed
+here:**
+
+1. **``deal_id`` was excluded from EVERY conflict check, not only the
+   equality-with-every-fill check that's genuinely wrong for fill-scoped
+   data.** A probe with journal ``deal_id="WRONG"`` against a trade group
+   whose only real fill had ``deal_id="d1"`` previously joined
+   successfully. A journal ``deal_id`` (when a caller has supplied one --
+   e.g. an async follow-up record) must now be a MEMBERSHIP match against
+   the position's own fill ``deal_id`` values, not excluded outright.
+2. **Unrecognized ``direction``/``is_long`` values were silently
+   accepted or silently coerced** -- an unrecognized ``direction``
+   (anything but BUY/SELL) previously skipped the cross-check entirely,
+   and an unparseable ``is_long`` string (e.g. ``"banana"``) was silently
+   coerced to ``False``; a probe with ``direction=SELL,
+   is_long="banana"`` joined successfully because ``"banana" -> False``
+   happened to agree with SELL. Both cases are now treated as a genuine
+   conflict.
+3. **Two individually finite fill profits could still overflow to a
+   non-finite SUM with no row error** -- the per-fill finiteness check
+   validates each input value, not the aggregated output; two fills of
+   ``1e308`` each previously produced ``profit=inf`` silently. The
+   aggregated sum is now itself checked for finiteness before being
+   accepted.
+
 **Cardinality/duplicate rules, stated explicitly:**
 
 - A submitted (non-null ``order_id``) journal decision's ``order_id``
@@ -191,30 +217,43 @@ def _values_equal(a: object, b: object) -> bool:
     return a == b
 
 
+_TRUE_IS_LONG_STRINGS = frozenset({"true", "1", "yes", "long"})
+_FALSE_IS_LONG_STRINGS = frozenset({"false", "0", "no", "short"})
+
+
 def _direction_matches_is_long(direction: object, is_long: object) -> bool:
     """Cross-schema invariant: journal 'direction' (BUY/SELL) and trade
     'is_long' (bool) describe the SAME underlying fact under different
     names -- added, 2026-07-22 Codex review finding (fifth round): a
     probe with direction=BUY and is_long=False previously joined
     successfully since the generic same-name shared-column check never
-    compares differently-named fields."""
+    compares differently-named fields.
+
+    **Fixed, 2026-07-22 Codex review finding (sixth round): an
+    unrecognized 'direction' value (anything other than BUY/SELL)
+    previously returned True unconditionally ("not this check's job to
+    validate"), and an unrecognized 'is_long' string (anything not in
+    the truthy list) was silently coerced to False -- a reproduced probe
+    with direction=SELL, is_long="banana" joined successfully because
+    "banana" -> False happened to agree with SELL. Both cases are now
+    treated as a genuine conflict (return False) rather than silently
+    accepted or silently coerced.**"""
 
     if _is_blank(direction) or _is_blank(is_long):
         return True  # nothing to cross-check if either side is absent
     direction_str = str(direction).strip().upper()
     if direction_str not in ("BUY", "SELL"):
-        return True  # not a recognized direction value -- not this check's job to validate
-    is_long_bool = (
-        bool(is_long)
-        if not isinstance(is_long, str)
-        else is_long.strip().lower()
-        in (
-            "true",
-            "1",
-            "yes",
-            "long",
-        )
-    )
+        return False  # unrecognized direction value is a conflict, not a skipped check
+    if isinstance(is_long, str):
+        is_long_str = is_long.strip().lower()
+        if is_long_str in _TRUE_IS_LONG_STRINGS:
+            is_long_bool = True
+        elif is_long_str in _FALSE_IS_LONG_STRINGS:
+            is_long_bool = False
+        else:
+            return False  # unparseable is_long string is a conflict, not a silent False
+    else:
+        is_long_bool = bool(is_long)
     return (direction_str == "BUY") == is_long_bool
 
 
@@ -285,6 +324,18 @@ def join_signal_to_outcome(
     # rather than a silent trade-row-wins overwrite.
     shared_cols = (set(journal_df.columns) & set(trades_df.columns)) - {"order_id", "deal_id"}
     check_direction = "direction" in journal_df.columns and "is_long" in trades_df.columns
+    # **Added, 2026-07-22 Codex review finding (sixth round): 'deal_id'
+    # was excluded from ALL conflict checks above, not just the
+    # equality-with-every-fill check that's genuinely wrong for
+    # fill-scoped data -- a probe with journal deal_id="WRONG" against a
+    # trade group whose only fill has deal_id="d1" previously joined
+    # successfully, since nothing checked that the journal's own
+    # deal_id (when a caller HAS supplied one, e.g. an async follow-up
+    # record) actually corresponds to a real fill of THIS position. This
+    # is a MEMBERSHIP check (journal deal_id must be among the group's
+    # own fill deal_ids), not an equality-with-every-fill check --
+    # different fills legitimately have different deal_ids.
+    check_journal_deal_id = "deal_id" in journal_df.columns
 
     submitted_by_order = submitted.set_index("order_id")
     journal_order_ids = set(submitted_by_order.index)
@@ -307,6 +358,12 @@ def join_signal_to_outcome(
     for order_id, group in matched.groupby("order_id", sort=False):
         journal_row = submitted_by_order.loc[order_id]
 
+        journal_deal_id_conflict = (
+            check_journal_deal_id
+            and not _is_blank(journal_row["deal_id"])
+            and str(journal_row["deal_id"]) not in {str(v) for v in group["deal_id"]}
+        )
+
         # **Fixed, 2026-07-22 Codex review finding (fifth round): a
         # position must be rejected AS A WHOLE if any constituent fill
         # fails integrity -- the round-4 version checked each fill
@@ -325,6 +382,8 @@ def join_signal_to_outcome(
                 journal_row["direction"], trade_row["is_long"]
             ):
                 conflicts.append("direction/is_long")
+            if journal_deal_id_conflict:
+                conflicts.append("deal_id (journal deal_id not found among this position's fills)")
             if conflicts:
                 conflicts_by_trade_id[str(trade_row.get("trade_id", ""))] = conflicts
 
@@ -348,9 +407,31 @@ def join_signal_to_outcome(
                 )
             continue
 
+        # **Added, 2026-07-22 Codex review finding (sixth round): two
+        # individually finite fill profits (e.g. two fills of 1e308 each)
+        # can still overflow to a non-finite SUM -- the per-row
+        # finiteness check above validates each INPUT fill, not the
+        # aggregated OUTPUT. A reproduced probe with fills [1e308, 1e308]
+        # previously produced profit=inf with no row error at all.**
+        aggregated_profit = float(group["profit"].sum())
+        if not math.isfinite(aggregated_profit):
+            for _, trade_row in group.iterrows():
+                row_errors.append(
+                    {
+                        "trade_id": str(trade_row.get("trade_id", "")),
+                        "order_id": str(order_id),
+                        "error": (
+                            f"aggregated profit overflowed to a non-finite value "
+                            f"({aggregated_profit!r}) summing this position's "
+                            f"{len(group)} fill(s)"
+                        ),
+                    }
+                )
+            continue
+
         agg: dict = {**journal_row.to_dict()}
         agg["order_id"] = order_id
-        agg["profit"] = float(group["profit"].sum())
+        agg["profit"] = aggregated_profit
         agg["n_fills"] = len(group)
         agg["fill_trade_ids"] = ",".join(str(v) for v in group["trade_id"])
         agg["fill_deal_ids"] = ",".join(str(v) for v in group["deal_id"])

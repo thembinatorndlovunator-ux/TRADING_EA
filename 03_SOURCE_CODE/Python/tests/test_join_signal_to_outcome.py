@@ -612,3 +612,92 @@ def test_sidecar_errors_json_path_does_not_overwrite_journal_input(tmp_path):
     with pytest.raises(CsvSchemaError):
         run(journal_csv, trades_csv, output_csv=output_csv, repo_path=REPO_ROOT)
     assert journal_csv.read_bytes() == original_journal_bytes
+
+
+def test_journal_deal_id_not_among_position_fills_is_a_conflict():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    'deal_id' was previously excluded from EVERY conflict check, not
+    only the equality-with-every-fill check that's genuinely wrong for
+    fill-scoped data -- a probe with journal deal_id="WRONG" against a
+    trade group whose only real fill has deal_id="d1" previously joined
+    successfully. A non-blank journal deal_id must be a MEMBERSHIP match
+    against the position's own fill deal_ids."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "deal_id": "WRONG"}])
+    trades = pd.DataFrame([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "deal_id": "d1"}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 1
+    assert row_errors[0]["trade_id"] == "t1"
+    assert "deal_id" in row_errors[0]["error"]
+
+
+def test_journal_deal_id_matching_one_of_the_fills_is_not_a_conflict():
+    """A non-blank journal deal_id that DOES match one of the position's
+    real fills (e.g. copied from the first fill of an async follow-up
+    record) must still be accepted -- the membership check added for the
+    sixth-round finding above must not regress the fifth-round fix
+    allowing a genuine matching deal_id through."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "deal_id": "d1"}])
+    trades = pd.DataFrame(
+        [
+            {"trade_id": "t1", "order_id": "o1", "profit": 30.0, "deal_id": "d1"},
+            {"trade_id": "t2", "order_id": "o1", "profit": 20.0, "deal_id": "d2"},
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert row_errors == []
+    assert len(joined) == 1
+    assert joined.iloc[0]["profit"] == pytest.approx(50.0)
+
+
+def test_unrecognized_direction_value_is_a_conflict_not_silently_skipped():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    an unrecognized 'direction' value (anything but BUY/SELL) previously
+    returned True unconditionally ("not this check's job to validate"),
+    silently skipping the cross-schema check entirely rather than
+    flagging genuinely invalid data."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "SIDEWAYS"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": True}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 1
+    assert "direction/is_long" in row_errors[0]["error"]
+
+
+def test_unparseable_is_long_string_is_a_conflict_not_silently_coerced_to_false():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    direction=SELL, is_long="banana" previously joined successfully
+    because an unrecognized is_long string was silently coerced to
+    False, which happened to agree with SELL. "banana" must now be
+    treated as a conflict, not a silent False."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "SELL"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": "banana"}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 1
+    assert "direction/is_long" in row_errors[0]["error"]
+
+
+def test_aggregated_profit_overflow_to_infinite_is_a_row_error():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    two individually finite fill profits (1e308 each) can still overflow
+    to a non-finite SUM -- the per-fill finiteness check validates each
+    input value, not the aggregated output. This previously produced
+    profit=inf silently, with no row error at all."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE"}])
+    trades = pd.DataFrame(
+        [
+            {"trade_id": "t1", "order_id": "o1", "profit": 1e308, "deal_id": "d1"},
+            {"trade_id": "t2", "order_id": "o1", "profit": 1e308, "deal_id": "d2"},
+        ]
+    )
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 2
+    assert {e["trade_id"] for e in row_errors} == {"t1", "t2"}
+    assert all("overflow" in e["error"] for e in row_errors)
