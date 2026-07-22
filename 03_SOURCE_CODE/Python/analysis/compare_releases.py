@@ -40,6 +40,28 @@ comparison for the key scalars. MFE/MAE, dimensional (session/regime/
 news) breakdowns, and cost sensitivity are explicitly NOT included --
 see the returned ``surface_not_covered`` field for exactly why and which
 task/pipeline owns closing each gap; they are not silently absent.
+
+**Comparability manifest now REQUIRED and fully cross-checked, 2026-07-22
+Codex review finding (fifth round): broker/timeframe/modelling_mode/
+set_file/market_data_id/spread_note/slippage_note were previously either
+optional (compared "only when both sides happen to be supplied" -- a
+baseline broker with a missing candidate broker previously passed
+outright) or a single value shared between both sides (costs).** All
+seven are now REQUIRED, role-specific (baseline_*/candidate_*), and
+unconditionally cross-checked for equality -- ``run()`` raises
+``ValueError`` the moment any one differs. ``market_data_id`` is new: a
+caller-asserted identifier for the raw market-data segment both runs
+were replayed against (this cannot be derived from the trade CSVs
+themselves -- role-specific trade-file hashes prove only that the two
+TRADE files differ, never that their SOURCE market data matched).
+'period_start'/'period_end' still bound containment, not coverage or
+raw-data identity -- a baseline trading only near the start of the
+claimed period and a candidate only near its end still both pass; this
+script does not (and, from trade timestamps alone, cannot) prove actual
+temporal coverage. Different OBSERVED trade envelopes between baseline
+and candidate can be entirely legitimate (e.g. a stricter candidate
+simply took fewer setups) -- equality of first/last trade timestamps is
+deliberately not required or checked.
 """
 
 from __future__ import annotations
@@ -262,23 +284,34 @@ def run(
     # fall entirely within [period_start, period_end].**
     period_start: str,
     period_end: str,
-    # **Added, 2026-07-22 Codex review finding (fourth round): broker/
-    # timeframe/modelling_mode/set_file were previously a single shared,
-    # optional, caller-trusted assertion -- not "two compared manifests".
-    # Unlike ea_version/data_source (which are SUPPOSED to differ between
-    # baseline and candidate), these facts are supposed to be IDENTICAL
-    # between the two sides of a fair comparison; role-specific fields are
-    # now cross-checked for equality whenever both sides are supplied,
-    # catching a human mistake (e.g. mistyping the candidate's broker)
-    # instead of silently trusting one shared value.**
-    baseline_broker: Optional[str] = None,
-    candidate_broker: Optional[str] = None,
-    baseline_timeframe: Optional[str] = None,
-    candidate_timeframe: Optional[str] = None,
-    baseline_modelling_mode: Optional[str] = None,
-    candidate_modelling_mode: Optional[str] = None,
-    baseline_set_file: Optional[str] = None,
-    candidate_set_file: Optional[str] = None,
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): broker/
+    # timeframe/modelling_mode/set_file were previously OPTIONAL and
+    # compared "only when both sides are supplied" -- a baseline
+    # broker="Deriv" with a missing candidate broker previously PASSED
+    # (nothing to compare against). TEST_PLAN.md's comparability contract
+    # ("use identical symbols, periods, data, costs, and broker settings")
+    # requires a COMPLETE manifest on both sides, not an optional
+    # best-effort assertion. All four pairs are now REQUIRED and always
+    # cross-checked for equality.**
+    baseline_broker: str,
+    candidate_broker: str,
+    baseline_timeframe: str,
+    candidate_timeframe: str,
+    baseline_modelling_mode: str,
+    candidate_modelling_mode: str,
+    baseline_set_file: str,
+    candidate_set_file: str,
+    # **Added, 2026-07-22 Codex review finding (fifth round): nothing
+    # previously asserted the two runs used the SAME underlying raw
+    # market-data segment -- role-specific output hashes only prove the
+    # two TRADE files differ, not that their SOURCE data matched. A
+    # caller must supply a stable identifier for the raw market-data
+    # segment each run was replayed against (e.g. a vendor/export hash,
+    # a tick-data file's own dataset hash, or a fixed named dataset
+    # version) -- required and cross-checked for equality, same
+    # discipline as broker/timeframe/modelling_mode/set_file above.**
+    baseline_market_data_id: str,
+    candidate_market_data_id: str,
     # **Fixed, 2026-07-22 Codex review finding (third round): a single
     # shared ea_version/data_source value is insufficient to identify TWO
     # releases -- a caller could only ever record one version for both
@@ -287,26 +320,30 @@ def run(
     candidate_ea_version: Optional[str] = None,
     baseline_data_source: Optional[str] = None,
     candidate_data_source: Optional[str] = None,
-    # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
-    # slippage_note exist on ReportMetadata but no analysis caller exposed
-    # or populated them -- this docstring already claimed the caller could
-    # assert cost identity, but no parameter existed to do so.**
-    spread_note: Optional[str] = None,
-    slippage_note: Optional[str] = None,
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): costs were
+    # previously a SINGLE shared spread_note/slippage_note pair -- "a
+    # shared trusted note", not two compared manifests. TEST_PLAN.md's
+    # comparability contract requires identical costs between baseline
+    # and candidate; these are now role-specific and cross-checked for
+    # equality like broker/timeframe/modelling_mode/set_file above.**
+    baseline_spread_note: str,
+    candidate_spread_note: str,
+    baseline_slippage_note: str,
+    candidate_slippage_note: str,
     repo_path: Optional[Path] = None,
 ) -> dict:
-    """Costs, spread, and slippage identity remain the CALLER's own
-    responsibility to assert consistently (no CSV column carries them) --
-    'spread_note'/'slippage_note' are recorded verbatim as provenance, not
-    verified against either dataset. 'period_start'/'period_end' and the
-    four role-specific manifest pairs above are now either enforced
+    """'period_start'/'period_end' and the six role-specific manifest
+    pairs above (broker, timeframe, modelling_mode, set_file,
+    market_data_id, and cost notes) are all REQUIRED and either enforced
     against the actual data or cross-checked for equality (see their own
-    parameter comments) rather than accepted as unverified assertions.
+    parameter comments) -- a complete comparability manifest, not an
+    optional best-effort assertion a caller could silently omit.
 
-    Raises ValueError if a baseline/candidate manifest pair (broker,
-    timeframe, modelling_mode, set_file) is supplied on both sides but the
-    two values differ. Raises CsvSchemaError if any trade in either
-    dataset falls outside [period_start, period_end].
+    Raises ValueError if any required baseline/candidate manifest pair
+    (broker, timeframe, modelling_mode, set_file, market_data_id, spread
+    note, slippage note) differs between the two sides. Raises
+    CsvSchemaError if any trade in either dataset falls outside
+    [period_start, period_end].
     """
 
     for label, base_val, cand_val in (
@@ -314,8 +351,11 @@ def run(
         ("timeframe", baseline_timeframe, candidate_timeframe),
         ("modelling_mode", baseline_modelling_mode, candidate_modelling_mode),
         ("set_file", baseline_set_file, candidate_set_file),
+        ("market_data_id", baseline_market_data_id, candidate_market_data_id),
+        ("spread_note", baseline_spread_note, candidate_spread_note),
+        ("slippage_note", baseline_slippage_note, candidate_slippage_note),
     ):
-        if base_val is not None and cand_val is not None and base_val != cand_val:
+        if base_val != cand_val:
             raise ValueError(
                 f"compare_releases: baseline_{label} ({base_val!r}) != "
                 f"candidate_{label} ({cand_val!r}) -- the comparability contract requires "
@@ -539,11 +579,12 @@ def run(
         "candidate_ea_version": candidate_ea_version,
         "baseline_data_source": baseline_data_source,
         "candidate_data_source": candidate_data_source,
-        # **Added, 2026-07-22 Codex review finding (fourth round):** each
-        # pair is EQUALITY-VERIFIED above whenever both sides are supplied
-        # (raising ValueError on mismatch), so recording both role-specific
-        # values here documents what was actually checked, not just what
-        # was asserted.
+        # **Fixed, 2026-07-22 Codex review finding (fifth round):** every
+        # pair below is now REQUIRED and EQUALITY-VERIFIED above (raising
+        # ValueError on mismatch, not just "when both sides happen to be
+        # supplied") -- recording both role-specific values here documents
+        # a complete, actually-checked comparability manifest, not a
+        # best-effort optional assertion.
         "baseline_broker": baseline_broker,
         "candidate_broker": candidate_broker,
         "baseline_timeframe": baseline_timeframe,
@@ -552,6 +593,20 @@ def run(
         "candidate_modelling_mode": candidate_modelling_mode,
         "baseline_set_file": baseline_set_file,
         "candidate_set_file": candidate_set_file,
+        # **Added, 2026-07-22 Codex review finding (fifth round):** proves
+        # (as an asserted, cross-checked identifier -- not derived from
+        # the trade files themselves, which cannot establish this) that
+        # both runs were replayed against the SAME underlying raw
+        # market-data segment. Role-specific output trade-file hashes
+        # above prove only that the two TRADE files differ; they say
+        # nothing about whether the source market data matched.
+        "baseline_market_data_id": baseline_market_data_id,
+        "candidate_market_data_id": candidate_market_data_id,
+        # **Added, 2026-07-22 Codex review finding (fifth round):** costs
+        # were previously a single shared spread_note/slippage_note pair
+        # -- "a shared trusted note", not a verified comparability check.
+        "spread_note": baseline_spread_note,
+        "slippage_note": baseline_slippage_note,
     }
 
     if output_json is not None:
@@ -570,11 +625,17 @@ def run(
         metadata = build_report_metadata(
             [baseline_csv, candidate_csv],
             symbol=symbol,
+            broker=baseline_broker,
             period_start=period_start,
             period_end=period_end,
+            timeframe=baseline_timeframe,
+            modelling_mode=baseline_modelling_mode,
+            set_file=baseline_set_file,
             random_seed=seed,
-            spread_note=spread_note,
-            slippage_note=slippage_note,
+            # Cross-checked equal to candidate's own above -- either side
+            # is an equally valid value to persist here.
+            spread_note=baseline_spread_note,
+            slippage_note=baseline_slippage_note,
             repo_path=repo_path,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
@@ -599,20 +660,34 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # period-end are now required, not optional -- see run()'s own comment.**
     parser.add_argument("--period-start", required=True)
     parser.add_argument("--period-end", required=True)
-    parser.add_argument("--baseline-broker", default=None)
-    parser.add_argument("--candidate-broker", default=None)
-    parser.add_argument("--baseline-timeframe", default=None)
-    parser.add_argument("--candidate-timeframe", default=None)
-    parser.add_argument("--baseline-modelling-mode", default=None)
-    parser.add_argument("--candidate-modelling-mode", default=None)
-    parser.add_argument("--baseline-set-file", default=None)
-    parser.add_argument("--candidate-set-file", default=None)
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): these were
+    # previously optional and compared only when both sides were
+    # supplied -- now required, matching run()'s own signature.**
+    parser.add_argument("--baseline-broker", required=True)
+    parser.add_argument("--candidate-broker", required=True)
+    parser.add_argument("--baseline-timeframe", required=True)
+    parser.add_argument("--candidate-timeframe", required=True)
+    parser.add_argument("--baseline-modelling-mode", required=True)
+    parser.add_argument("--candidate-modelling-mode", required=True)
+    parser.add_argument("--baseline-set-file", required=True)
+    parser.add_argument("--candidate-set-file", required=True)
+    # **Added, 2026-07-22 Codex review finding (fifth round): asserts both
+    # runs were replayed against the SAME underlying raw market-data
+    # segment -- see run()'s own comment for why this cannot be derived
+    # from the trade files themselves.**
+    parser.add_argument("--baseline-market-data-id", required=True)
+    parser.add_argument("--candidate-market-data-id", required=True)
     parser.add_argument("--baseline-ea-version", default=None)
     parser.add_argument("--candidate-ea-version", default=None)
     parser.add_argument("--baseline-data-source", default=None)
     parser.add_argument("--candidate-data-source", default=None)
-    parser.add_argument("--spread-note", default=None)
-    parser.add_argument("--slippage-note", default=None)
+    # **Fixed, 2026-07-22 Codex review finding (fifth round): costs were
+    # previously a single shared --spread-note/--slippage-note pair --
+    # now role-specific and required, matching run()'s own signature.**
+    parser.add_argument("--baseline-spread-note", required=True)
+    parser.add_argument("--candidate-spread-note", required=True)
+    parser.add_argument("--baseline-slippage-note", required=True)
+    parser.add_argument("--candidate-slippage-note", required=True)
     return parser
 
 
@@ -640,12 +715,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             candidate_modelling_mode=args.candidate_modelling_mode,
             baseline_set_file=args.baseline_set_file,
             candidate_set_file=args.candidate_set_file,
+            baseline_market_data_id=args.baseline_market_data_id,
+            candidate_market_data_id=args.candidate_market_data_id,
             baseline_ea_version=args.baseline_ea_version,
             candidate_ea_version=args.candidate_ea_version,
             baseline_data_source=args.baseline_data_source,
             candidate_data_source=args.candidate_data_source,
-            spread_note=args.spread_note,
-            slippage_note=args.slippage_note,
+            baseline_spread_note=args.baseline_spread_note,
+            candidate_spread_note=args.candidate_spread_note,
+            baseline_slippage_note=args.baseline_slippage_note,
+            candidate_slippage_note=args.candidate_slippage_note,
         )
     except (FileNotFoundError, CsvSchemaError, InsufficientSampleError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

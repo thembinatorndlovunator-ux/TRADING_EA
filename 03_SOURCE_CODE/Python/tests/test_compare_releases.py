@@ -11,9 +11,9 @@ from analysis.compare_releases import (
     MIN_N_PER_GROUP,
     MIN_N_RESAMPLES,
     main,
-    run,
     two_sample_bootstrap_diff,
 )
+from analysis.compare_releases import run as _real_run
 from analysis.csv_io import CsvSchemaError
 from analysis.metrics import InsufficientSampleError
 
@@ -24,6 +24,34 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # covering every fixture's default 2026-07-21 entry/exit timestamps below.**
 DEFAULT_PERIOD_START = "2026-01-01T00:00:00Z"
 DEFAULT_PERIOD_END = "2026-12-31T23:59:59Z"
+
+# **Added, 2026-07-22 Codex review finding (fifth round): broker/
+# timeframe/modelling_mode/set_file/market_data_id/spread_note/
+# slippage_note are now REQUIRED, role-specific run() parameters (see
+# that module's own docstring). Every test below goes through this
+# wrapper so it doesn't need its own boilerplate default for all seven
+# pairs -- a test that cares about a SPECIFIC field (e.g. testing a
+# mismatch) passes that field explicitly, which overrides the default.**
+_DEFAULT_MANIFEST_KWARGS = dict(
+    baseline_broker="Deriv",
+    candidate_broker="Deriv",
+    baseline_timeframe="M5",
+    candidate_timeframe="M5",
+    baseline_modelling_mode="every_tick",
+    candidate_modelling_mode="every_tick",
+    baseline_set_file="default.set",
+    candidate_set_file="default.set",
+    baseline_market_data_id="synthetic-fixture-v1",
+    candidate_market_data_id="synthetic-fixture-v1",
+    baseline_spread_note="2-pip fixed spread assumed",
+    candidate_spread_note="2-pip fixed spread assumed",
+    baseline_slippage_note="no slippage modelled",
+    candidate_slippage_note="no slippage modelled",
+)
+
+
+def run(*args, **kwargs):
+    return _real_run(*args, **{**_DEFAULT_MANIFEST_KWARGS, **kwargs})
 
 
 def _write_trades(
@@ -683,14 +711,97 @@ def test_spread_and_slippage_note_persisted(tmp_path):
         seed=1,
         period_start=DEFAULT_PERIOD_START,
         period_end=DEFAULT_PERIOD_END,
-        spread_note="2-pip fixed spread assumed",
-        slippage_note="no slippage modelled",
+        baseline_spread_note="2-pip fixed spread assumed",
+        candidate_spread_note="2-pip fixed spread assumed",
+        baseline_slippage_note="no slippage modelled",
+        candidate_slippage_note="no slippage modelled",
         repo_path=REPO_ROOT,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert payload["metadata"]["spread_note"] == "2-pip fixed spread assumed"
     assert payload["metadata"]["slippage_note"] == "no slippage modelled"
+
+
+def test_role_specific_cost_notes_mismatch_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    costs were previously a single shared spread_note/slippage_note pair
+    -- "a shared trusted note", not a verified comparability check.
+    Mismatched baseline/candidate cost notes must now be rejected the
+    same way a mismatched broker/timeframe/modelling_mode/set_file is."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    with pytest.raises(ValueError):
+        run(
+            baseline_path,
+            candidate_path,
+            period_start=DEFAULT_PERIOD_START,
+            period_end=DEFAULT_PERIOD_END,
+            baseline_spread_note="2-pip fixed spread assumed",
+            candidate_spread_note="0-pip fixed spread assumed",
+        )
+
+
+def test_market_data_id_mismatch_rejected(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    nothing previously asserted the two runs used the SAME underlying raw
+    market-data segment -- role-specific output hashes only prove the two
+    TRADE files differ, not that their SOURCE data matched. A caller-
+    asserted market_data_id mismatch must now be rejected."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [105.0] * 12, [10.0] * 12)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 12, [10.0] * 12)
+
+    with pytest.raises(ValueError):
+        run(
+            baseline_path,
+            candidate_path,
+            period_start=DEFAULT_PERIOD_START,
+            period_end=DEFAULT_PERIOD_END,
+            baseline_market_data_id="vendor-export-2026-07-a",
+            candidate_market_data_id="vendor-export-2026-07-b",
+        )
+
+
+# **Added, 2026-07-22 Codex review finding (fifth round): the CLI's own
+# seven required manifest pairs (see _build_arg_parser), as a shared
+# argv fragment every CLI test below appends to its own args.**
+_DEFAULT_MANIFEST_ARGV = [
+    "--baseline-broker",
+    "Deriv",
+    "--candidate-broker",
+    "Deriv",
+    "--baseline-timeframe",
+    "M5",
+    "--candidate-timeframe",
+    "M5",
+    "--baseline-modelling-mode",
+    "every_tick",
+    "--candidate-modelling-mode",
+    "every_tick",
+    "--baseline-set-file",
+    "default.set",
+    "--candidate-set-file",
+    "default.set",
+    "--baseline-market-data-id",
+    "synthetic-fixture-v1",
+    "--candidate-market-data-id",
+    "synthetic-fixture-v1",
+    "--baseline-spread-note",
+    "2-pip fixed spread assumed",
+    "--candidate-spread-note",
+    "2-pip fixed spread assumed",
+    "--baseline-slippage-note",
+    "no slippage modelled",
+    "--candidate-slippage-note",
+    "no slippage modelled",
+]
 
 
 def test_cli_main_success(tmp_path, capsys):
@@ -712,6 +823,7 @@ def test_cli_main_success(tmp_path, capsys):
             "--period-end",
             DEFAULT_PERIOD_END,
         ]
+        + _DEFAULT_MANIFEST_ARGV
     )
     assert exit_code == 0
     assert "baseline_n=12" in capsys.readouterr().out
@@ -729,6 +841,7 @@ def test_cli_main_missing_file(tmp_path, capsys):
             "--period-end",
             DEFAULT_PERIOD_END,
         ]
+        + _DEFAULT_MANIFEST_ARGV
     )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
