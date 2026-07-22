@@ -99,6 +99,25 @@ not be modified.
      the trading loop.
    - Explicit fallback behavior if the feed is unreachable (fail closed
      — treat as blackout/untradeable — not fail open).
+   - **Metal/synthetic provider-selection rule, added 2026-07-22 (Codex
+     review finding, sixth round -- this item previously built the
+     provider but never stated WHEN to actually route to it):**
+     `PROJECT_RULES.md` rules 7-8 require "macroeconomic news filters
+     apply to metals, not Deriv synthetic indices" and separate
+     per-instrument-class profiles. This wiring must therefore select
+     `FairEconomyNewsProvider` (or `MT5CalendarProvider`) for a metal
+     symbol and `NullNewsProvider` for a synthetic-index symbol -- never
+     apply the macro blackout to a synthetic index. **This selection
+     needs a live `market_family` classification, which no numbered task
+     currently builds** (see `00_MASTER_PROMPT_FOR_CLAUDE.md`'s
+     `IntradayModeRouter` requirement and
+     `TASK-036_JOURNAL_PRODUCER_COMPLETION.md`'s own disclosure that
+     `market_family`/`intraday_mode` depend on a "still-unregistered
+     future task") -- this task must NOT invent an ad hoc symbol-name
+     heuristic to route around that missing dependency; if the real
+     classifier is not ready when this task starts, this specific
+     sub-item is blocked on it and must be named as blocked, not
+     silently worked around.
 5. Journal every gate decision (which gate fired, if any) so Python-side
    analysis (`join_news_events.py` et al.) has real data to validate
    against once this ships.
@@ -157,7 +176,16 @@ No file under `01_BASELINE/` may be modified.
    caching/refresh strategy does not re-fetch mid-trading-loop; and an
    unreachable/malformed feed fails CLOSED (treated as blackout), not
    open.**
-6. Runtime verification (attach to a real/demo chart) — still batched
+6. **Synthetic-bypass acceptance test (added, 2026-07-22 Codex review
+   finding, sixth round): a decision on a Deriv synthetic-index symbol
+   must NOT have the macro news blackout applied, even during a real,
+   currently-active FairEconomy blackout window that WOULD block a metal
+   symbol at the same instant -- confirms `PROJECT_RULES.md` rule 8 is
+   actually enforced, not just a provider that exists. This test is
+   itself blocked on a live `market_family` classification (see
+   Specification item 4's own note) -- if that dependency is not ready,
+   this test must be reported as blocked, not skipped silently.**
+7. Runtime verification (attach to a real/demo chart) — still batched
    project-wide, but flag explicitly if this task is the one that
    finally unblocks it.
 
@@ -173,6 +201,11 @@ No file under `01_BASELINE/` may be modified.
       provider (added, 2026-07-22 Codex review finding, fifth round --
       previously omitted from acceptance despite being fully specified
       in Specification item 4, so the task could pass without it).
+- [ ] Metal/synthetic provider-selection rule enforced and proven by the
+      synthetic-bypass test (Test plan item 6) -- OR explicitly reported
+      blocked on the still-unregistered `market_family` classifier, never
+      silently skipped (added, 2026-07-22 Codex review finding, sixth
+      round).
 - [ ] Every gate decision is journaled.
 - [ ] Independent review completed and findings resolved.
 

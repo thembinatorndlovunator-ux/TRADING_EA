@@ -136,8 +136,38 @@ def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
 # future real vocabulary introduces) is not cross-checked here, since no
 # full vocabulary is defined yet (Codex review finding, 2026-07-22, fifth
 # round: "news_state has no defined vocabulary").
+#
+# **Disclosed explicitly, not silently tolerated, 2026-07-22 Codex review
+# finding (sixth round): no numbered task's live EA code has ever
+# populated 'news_state' at all -- join_news_events.py only ever emits
+# the DERIVED boolean 'in_news_blackout' (see that module's own
+# docstring) -- so there is no real producer for this text dimension to
+# define a genuine enum against yet. Until TASK-036 populates a real
+# news_state value on the live EA, tolerating any value outside these two
+# canonical strings (a legacy value, a future vocabulary's value, or
+# arbitrary caller-supplied text) is a DELIBERATE choice, not an
+# oversight -- rejecting them here would be inventing a vocabulary this
+# project has no authority to define. What IS a genuine, fixable bug
+# (closed below): a near-miss of one of the two REAL canonical values
+# (whitespace or case variation, e.g. "CLEAR " or "clear") previously
+# fell through this same "not cross-checked" tolerance and silently
+# escaped the consistency check entirely, rather than being recognized
+# as the value it obviously represents.**
 _NEWS_STATE_CLEAR = "CLEAR"
 _NEWS_STATE_BLACKOUT = "BLACKOUT"
+
+
+def _normalize_news_state(value: object) -> object:
+    """Whitespace/case-normalizes a 'news_state' value for comparison
+    against the two canonical strings ONLY -- never mutates what is
+    actually grouped/returned to the caller, only what this consistency
+    check compares against. Non-string values (NaN, None) pass through
+    unchanged (blank/absent is this project's established "no claim"
+    convention, not a value to normalize)."""
+
+    if not isinstance(value, str):
+        return value
+    return value.strip().upper()
 
 
 def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>") -> None:
@@ -153,6 +183,17 @@ def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>
     in_news_blackout=True was silently accepted and grouped, as was a
     string-valued blackout flag ("true"/"false" strings, which Python
     treats as truthy regardless of their text).**
+
+    **Fixed, 2026-07-22 Codex review finding (sixth round): a near-miss
+    of a REAL canonical value -- "CLEAR " (trailing whitespace) or
+    "clear" (wrong case) -- previously matched neither exact string, so
+    it silently fell into the "not cross-checked, no vocabulary defined"
+    tolerance alongside genuinely unrelated/legacy values, even though it
+    obviously represents one of the two values this check already knows
+    about. Compared after whitespace/case normalization now, so only a
+    GENUINELY different token (a legacy value, a future vocabulary's
+    value) still falls through untouched -- see this module's own
+    disclosure above for why that remaining tolerance is deliberate.**
     """
 
     if "in_news_blackout" in df.columns:
@@ -170,10 +211,11 @@ def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>
             )
 
     if "news_state" in df.columns and "in_news_blackout" in df.columns:
-        contradicts_clear = (df["news_state"] == _NEWS_STATE_CLEAR) & (
+        normalized_news_state = df["news_state"].apply(_normalize_news_state)
+        contradicts_clear = (normalized_news_state == _NEWS_STATE_CLEAR) & (
             df["in_news_blackout"].astype(bool)
         )
-        contradicts_blackout = (df["news_state"] == _NEWS_STATE_BLACKOUT) & (
+        contradicts_blackout = (normalized_news_state == _NEWS_STATE_BLACKOUT) & (
             ~df["in_news_blackout"].astype(bool)
         )
         bad = df[contradicts_clear | contradicts_blackout]
@@ -181,8 +223,8 @@ def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>
             raise CsvSchemaError(
                 f"{path}: {len(bad)} row(s) have a news_state/in_news_blackout contradiction "
                 f"(news_state={_NEWS_STATE_CLEAR!r} with in_news_blackout=True, or "
-                f"news_state={_NEWS_STATE_BLACKOUT!r} with in_news_blackout=False): "
-                f"rows {bad.index.tolist()}"
+                f"news_state={_NEWS_STATE_BLACKOUT!r} with in_news_blackout=False, after "
+                f"whitespace/case normalization): rows {bad.index.tolist()}"
             )
 
 

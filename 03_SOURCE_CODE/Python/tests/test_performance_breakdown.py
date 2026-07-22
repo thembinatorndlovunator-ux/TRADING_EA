@@ -157,6 +157,37 @@ def test_compute_breakdown_rejects_string_valued_in_news_blackout():
         compute_breakdown(df, ["in_news_blackout"])
 
 
+def test_compute_breakdown_rejects_whitespace_or_case_near_miss_of_canonical_news_state():
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    near-miss of a REAL canonical value ("CLEAR " with trailing
+    whitespace, or "clear" wrong-case) previously matched neither exact
+    string and silently fell into the "no vocabulary defined" tolerance,
+    even though it obviously represents CLEAR/BLACKOUT and should still
+    be cross-checked against in_news_blackout."""
+
+    df_trailing_space = pd.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "profit": [10.0],
+            "news_state": ["CLEAR "],
+            "in_news_blackout": [True],  # contradicts CLEAR once normalized
+        }
+    )
+    with pytest.raises(CsvSchemaError):
+        compute_breakdown(df_trailing_space, ["news_state"])
+
+    df_wrong_case = pd.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "profit": [10.0],
+            "news_state": ["blackout"],
+            "in_news_blackout": [False],  # contradicts BLACKOUT once normalized
+        }
+    )
+    with pytest.raises(CsvSchemaError):
+        compute_breakdown(df_wrong_case, ["news_state"])
+
+
 def test_compute_breakdown_unrelated_news_state_values_not_cross_checked():
     """news_state values outside the CLEAR/BLACKOUT vocabulary this
     project's own pipeline actually produces are not cross-checked --
