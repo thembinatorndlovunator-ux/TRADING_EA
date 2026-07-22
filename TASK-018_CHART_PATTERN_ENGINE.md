@@ -210,4 +210,8 @@ Not available this phase.
 have real, tested implementations (swings, structure, SR/liquidity,
 candlesticks, ICT/SMC geometry, regime engine, chart patterns).
 Remaining: visuals. Triple top/bottom remains a stated, explicit
-follow-up within the chart-pattern family.
+follow-up within the chart-pattern family. **Still unregistered as of
+2026-07-22 (Codex review finding, fifth round): no numbered task yet
+owns building it in `ChartPatternEngine.mqh` or validating it in
+`pattern_validation.py` -- "a fast-follow task" is prose, not executable
+ownership, until one is actually created.**

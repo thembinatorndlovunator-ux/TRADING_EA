@@ -108,6 +108,12 @@ not be modified.
 - New `03_SOURCE_CODE/MQL5/.../CooldownManager.mqh` + test script.
 - `StateManager.mqh` or a new durable-intent module + test script.
 - `ThembaAdaptiveIntradayEA.mq5` (`EvaluateAndJournal` wiring).
+- **New `03_SOURCE_CODE/MQL5/Include/ThembaEA/News/FairEconomyNewsProvider.mqh`
+  + test script (added, 2026-07-22 Codex review finding, fifth round --
+  Specification item 4 fully specifies this provider, caching/refresh
+  strategy, and fail-closed fallback, but this file previously omitted
+  it entirely, so the task could be marked complete without it ever
+  being built).**
 - `TASKS.md` and this task file.
 
 No file under `01_BASELINE/` may be modified.
@@ -145,7 +151,13 @@ No file under `01_BASELINE/` may be modified.
 4. Hand-verified test script for gate composition: each of
    spread/liquidity, hysteresis, and news blackout independently blocks
    entry, and all three compose correctly (no short-circuit skipping).
-5. Runtime verification (attach to a real/demo chart) — still batched
+5. **Hand-verified test script for `FairEconomyNewsProvider` (added,
+   2026-07-22 Codex review finding, fifth round): parses a real captured
+   feed sample into the correct blackout-window structure; the
+   caching/refresh strategy does not re-fetch mid-trading-loop; and an
+   unreachable/malformed feed fails CLOSED (treated as blackout), not
+   open.**
+6. Runtime verification (attach to a real/demo chart) — still batched
    project-wide, but flag explicitly if this task is the one that
    finally unblocks it.
 
@@ -156,6 +168,11 @@ No file under `01_BASELINE/` may be modified.
       wired into the order-submission path.
 - [ ] Regime-gating (spread/liquidity + hysteresis + news blackout)
       composed and wired into `EvaluateAndJournal`.
+- [ ] `FairEconomyNewsProvider` built, tested (parsing, caching/refresh,
+      fail-closed fallback), and wired in as `NewsManager.mqh`'s live
+      provider (added, 2026-07-22 Codex review finding, fifth round --
+      previously omitted from acceptance despite being fully specified
+      in Specification item 4, so the task could pass without it).
 - [ ] Every gate decision is journaled.
 - [ ] Independent review completed and findings resolved.
 

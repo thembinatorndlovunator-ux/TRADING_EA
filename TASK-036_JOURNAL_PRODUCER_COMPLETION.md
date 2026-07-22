@@ -127,6 +127,29 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    them once `OrderManager.mqh` confirms a fill. (The Python-side field
    -- `analysis/schema.py`'s `TradeDecision.order_id`/`deal_id` -- already
    exists; this is the matching MQL5-side population.)
+
+   **Asynchronous fill correlation, added explicitly (Codex review
+   finding, 2026-07-22, fifth round -- previously entirely unaddressed):**
+   `OM_OpenPosition` (`OrderManager.mqh`) treats `TRADE_RETCODE_DONE` and
+   `TRADE_RETCODE_PLACED` identically, immediately scanning
+   `PositionsTotal()` for the resulting position right after the trade
+   call. For a genuinely synchronous `DONE` fill this works; for
+   `PLACED` (order accepted but not necessarily filled yet on every
+   broker/execution model), the position may not exist at that scan
+   point, so `result.position_ticket` can come back `0` with no later
+   mechanism to correlate a subsequent async fill back to the journal
+   decision that triggered it. This task must (a) journal the decision
+   once immediately after submission (as today), recording whichever
+   ticket IS available at that point plus the raw `retcode`; (b) add an
+   `OnTradeTransaction` handler that detects a LATER fill for a
+   previously-`PLACED`-but-unconfirmed order and updates that journal
+   decision's `order_id`/`deal_id` (or appends a correlated follow-up
+   record -- pick one design and document why, do not leave the choice
+   implicit); (c) define what happens if the async fill never arrives
+   (order cancelled/expired) -- the journal record must not be left
+   silently implying an open position that was never actually filled.
+   `OrderManager.mqh` is therefore also a file this task modifies, not
+   only `DecisionJournal.mqh`/the EA's synchronous journal call site.
 5. Fix the encoding mismatch: change `DecisionJournal.mqh`'s `FileOpen`
    flags to write UTF-8 (MQL5's `FILE_ANSI` flag must be removed/replaced
    with whatever combination produces real UTF-8 output -- verify against
@@ -144,7 +167,13 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
 ## Files affected
 
 - `03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/DecisionJournal.mqh`
-- `03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5`
+- `03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5` (including a
+  new `OnTradeTransaction` handler for async `PLACED`-then-later-fill
+  correlation -- added, 2026-07-22 Codex review finding, fifth round)
+- `03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/OrderManager.mqh`
+  (added, 2026-07-22 Codex review finding, fifth round -- previously
+  omitted despite Specification item 4's async-fill correlation work
+  requiring changes here)
 - `TRADE_DECISION_SCHEMA.json`
 - `03_SOURCE_CODE/Python/analysis/schema.py`
 - `03_SOURCE_CODE/Python/data_collection/journal_reader.py` (remove the
@@ -169,6 +198,13 @@ No file under `01_BASELINE/` may be modified.
 - Getting `order_id`/`deal_id` population wrong (e.g. recording the
   wrong deal on a partial fill) would corrupt every downstream join
   silently -- needs explicit test coverage for partial fills/rejections.
+- **A `PLACED`-but-not-yet-`DONE` order whose fill only arrives later via
+  `OnTradeTransaction` (added, 2026-07-22 Codex review finding, fifth
+  round): if the async correlation step is wrong, a journal decision can
+  silently keep a null/stale `order_id`/`deal_id` forever, or worse,
+  correlate to the WRONG later transaction -- needs explicit test
+  coverage for a delayed fill, a cancelled/expired `PLACED` order, and
+  two overlapping `PLACED` orders resolving out of submission order.**
 
 ## Test plan
 
@@ -184,6 +220,13 @@ No file under `01_BASELINE/` may be modified.
    confirming the join actually works end-to-end on real data -- the
    first "Real-data run" for this specific pipeline, not just another
    synthetic-fixture pass.
+5. **Hand-verified test script for asynchronous fill correlation (added,
+   2026-07-22 Codex review finding, fifth round): a `PLACED` order whose
+   fill arrives on a LATER `OnTradeTransaction` call correctly updates
+   (or correlates to) the original journal decision's `order_id`/
+   `deal_id`; a `PLACED` order that is subsequently cancelled/expired
+   without ever filling does not leave the journal record silently
+   implying an open position.**
 
 ## Acceptance criteria
 
@@ -191,6 +234,12 @@ No file under `01_BASELINE/` may be modified.
       news_state, session_state) populated by the live EA.
 - [ ] order_id/deal_id populated by the live EA on fill (schema-side
       already done).
+- [ ] **Asynchronous `PLACED`-then-later-fill correlation implemented via
+      `OnTradeTransaction` and hand-verified (added, 2026-07-22 Codex
+      review finding, fifth round -- previously unaddressed; without
+      this, a delayed real fill leaves `order_id`/`deal_id` null forever
+      and the join in acceptance item below silently only ever exercises
+      the synchronous `DONE` path).**
 - [ ] score_breakdown_json populated with real per-component score
       values (added, 2026-07-22 Codex review finding, third round).
 - [ ] FILE_ANSI/UTF-8 mismatch fixed and verified with a non-ASCII case.

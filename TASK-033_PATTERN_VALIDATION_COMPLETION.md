@@ -86,6 +86,21 @@ change. `01_BASELINE/` must not be modified.
 2. Port the chart-pattern functions (double top/bottom,
    head-and-shoulders/inverse) from `ChartPatternEngine.mqh`, including
    the sloped-neckline interpolation TASK-018 hand-verified.
+
+   **Scope boundary, stated explicitly (Codex review finding, 2026-07-22,
+   fifth round -- previously this task's "all chart patterns" language
+   silently implied full coverage): this task's chart-pattern scope is
+   double top/bottom and head-and-shoulders/inverse ONLY, matching
+   `ChartPatternEngine.mqh`'s own current implementation. Triple
+   top/bottom is a stated, explicit scope boundary of
+   `TASK-018_CHART_PATTERN_ENGINE.md` ("deferred to a fast-follow task"),
+   and `00_MASTER_PROMPT_FOR_CLAUDE.md`/`TASK-018_CHART_PATTERN_ENGINE.md`
+   both name it as a required-but-deferred pattern. As of this writing,
+   NO numbered task owns building triple top/bottom in
+   `ChartPatternEngine.mqh` OR validating it in `pattern_validation.py` --
+   a future task must be registered for both before that master-prompt
+   requirement can be considered closed. This task's completion does not
+   close it, and must not be described as covering "all chart patterns."**
 3. Do NOT attempt the real MQL5-export cross-check here -- that is
    `TASK-037`'s deliverable once a real export exists. Keep the existing
    "Real-data run: PENDING" convention in whatever this task produces.
@@ -128,8 +143,10 @@ No file under `01_BASELINE/` may be modified.
 - [ ] All 16 remaining candlestick detector/predicate functions (15
       `CP_Is*Array` predicates + `CP_DetectHaramiArray`) ported and
       hand-verified.
-- [ ] All chart patterns (double top/bottom, head-and-shoulders/inverse)
-      ported and hand-verified.
+- [ ] Double top/bottom and head-and-shoulders/inverse (this task's
+      actual chart-pattern scope, NOT "all chart patterns" -- triple
+      top/bottom remains unowned, see Specification item 2) ported and
+      hand-verified.
 - [ ] No claim of a real MQL5-export cross-check is made here -- that
       remains explicitly owned by TASK-037.
 - [ ] Independent review completed and findings resolved.

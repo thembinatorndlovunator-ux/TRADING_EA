@@ -109,6 +109,23 @@ change. `01_BASELINE/` must not be modified.
     only on a genuine CONFIRMED transition (never on a pending/
     unconfirmed flap that never resolves) and that the buffer evicts its
     oldest entry once capacity is exceeded.
+
+    **Scope boundary, stated explicitly (Codex review finding,
+    2026-07-22, fifth round): this item is a PYTHON-SIDE offline
+    analysis port only.** `00_MASTER_PROMPT_FOR_CLAUDE.md`'s section 6
+    ("Create: `MarketRegimeEngine.mqh`... A transition history...")
+    requires the transition-history buffer as part of the LIVE MQL5
+    engine itself, alongside the regime enum/confidence score/reason
+    string -- a genuinely separate deliverable from this task's Python
+    port, which only replays/analyzes already-recorded regime sequences
+    offline. This task's completion (however thorough the Python port)
+    does NOT close that master-prompt line item. **The live
+    `MarketRegimeEngine.mqh` transition-history buffer remains
+    unregistered and unowned by any numbered task as of this writing --
+    a future task must be created for it before section 6's requirement
+    can be considered closed**; this task's own acceptance criteria
+    below are scoped to the Python port only and must not be read as
+    satisfying the live-engine requirement.
 4. Decide and document whether `MarketStructure.mqh`'s bias computation
    is ported to Python in this task or remains a caller-supplied input
    for another task — either is acceptable, but the choice must be
@@ -159,8 +176,13 @@ No file under `01_BASELINE/` may be modified.
 - [ ] Hysteresis logic is ported and hand-verified.
 - [ ] The transition-history buffer (a distinct deliverable from
       hysteresis state -- added, 2026-07-22 Codex review finding, fourth
-      round) is ported and hand-verified: representation, capacity/
-      retention, and timestamp-keying are all defined and tested.
+      round) is ported and hand-verified in Python: representation,
+      capacity/retention, and timestamp-keying are all defined and
+      tested. **This is the Python-side offline port only (Codex review
+      finding, fifth round) -- it does not close
+      `00_MASTER_PROMPT_FOR_CLAUDE.md` section 6's live MQL5
+      `MarketRegimeEngine.mqh` transition-history requirement, which
+      remains unregistered and unowned.**
 - [ ] The bias/structure-input decision (ported vs. caller-supplied) is
       explicit and documented.
 - [ ] No "closes TASK-016" claim is made anywhere -- this task closes
