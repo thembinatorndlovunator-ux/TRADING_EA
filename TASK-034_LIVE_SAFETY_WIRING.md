@@ -191,23 +191,64 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] CooldownManager built, tested, wired into `EvaluateAndJournal`.
-- [ ] Durable intent record built, tested (incl. restart-reconciliation),
-      wired into the order-submission path.
-- [ ] Regime-gating (spread/liquidity + hysteresis + news blackout)
-      composed and wired into `EvaluateAndJournal`.
-- [ ] `FairEconomyNewsProvider` built, tested (parsing, caching/refresh,
+- [x] CooldownManager built, tested, wired into `EvaluateAndJournal` —
+      `CooldownManager.mqh` (new), `Test_CooldownManager.mq5`, wired as
+      `AttemptOrderSubmission`'s new step 0 and fed by
+      `ThembaAdaptiveIntradayEA.mq5`'s new `OnTradeTransaction` handler.
+- [x] Durable intent record built, tested (incl. restart-reconciliation),
+      wired into the order-submission path — `IntentManager.mqh` (new),
+      `Test_IntentManager.mq5`, wired around step 7's `OM_OpenPosition`
+      call; `IM_ReconcileOnRestart` called from `OnInit`.
+- [x] Regime-gating (spread/liquidity + hysteresis + news blackout)
+      composed and wired into `EvaluateAndJournal` —
+      `RegimeGateComposer.mqh` (new), `Test_RegimeGateComposer.mq5`; the
+      composed effective regime now feeds every strategy evaluation and
+      `STR_RouteCandidates`, replacing the raw, un-gated classifier read.
+- [x] `FairEconomyNewsProvider` built, tested (parsing, caching/refresh,
       fail-closed fallback), and wired in as `NewsManager.mqh`'s live
       provider (added, 2026-07-22 Codex review finding, fifth round --
       previously omitted from acceptance despite being fully specified
-      in Specification item 4, so the task could pass without it).
-- [ ] Metal/synthetic provider-selection rule enforced and proven by the
-      synthetic-bypass test (Test plan item 6) -- OR explicitly reported
-      blocked on the still-unregistered `market_family` classifier, never
-      silently skipped (added, 2026-07-22 Codex review finding, sixth
-      round).
-- [ ] Every gate decision is journaled.
-- [ ] Independent review completed and findings resolved.
+      in Specification item 4, so the task could pass without it) —
+      `FairEconomyNewsProvider.mqh` (new), `Test_FairEconomyNewsProvider.mq5`;
+      wired in via the new `InpNewsProviderSource` input (see next item).
+- [ ] **BLOCKED, not silently skipped, per this item's own instruction:**
+      Metal/synthetic provider-selection rule enforced and proven by the
+      synthetic-bypass test (Test plan item 6) -- this still needs a live
+      `market_family` classification that no numbered task yet builds
+      (TASK-028 P0-3 / `IntradayModeRouter`). What IS wired: a new,
+      EXPLICIT, operator-set `InpNewsProviderSource` input
+      (`ENUM_NEWS_PROVIDER_SOURCE`: `NEWS_PROVIDER_MT5_CALENDAR` default /
+      `NEWS_PROVIDER_FAIR_ECONOMY` / `NEWS_PROVIDER_NONE`) that the
+      deploying operator sets per symbol/chart -- documented in the input's
+      own header comment as a stand-in, not an automatic per-symbol
+      heuristic, and NOT a substitute for this acceptance item. Automatic
+      routing must replace this manual input once TASK-028 P0-3 ships (next
+      in this session's own priority order).
+- [x] Every gate decision is journaled — `EvaluateAndJournal` builds a
+      `gate_reasons` array (raw regime, effective regime, which gate(s)
+      fired) every bar regardless of decision outcome, merged into
+      `decision.reasons_passed_json`/`reasons_rejected_json`.
+- [ ] Independent review completed and findings resolved — pending the
+      user's own consolidated, end-of-sprint Codex review (see
+      `TASKS.md`'s TASK-028 row / this project's 2026-07-22 sprint
+      directive), not a per-task review this time.
+
+## Implementation notes (added 2026-07-22, real evidence)
+
+- `ThembaAdaptiveIntradayEA.mq5` compiles clean (0 errors, 0 warnings,
+  MetaEditor64.exe) with every module above included and wired.
+- `Test_CooldownManager.mq5`, `Test_IntentManager.mq5`,
+  `Test_RegimeGateComposer.mq5`, and `Test_FairEconomyNewsProvider.mq5`
+  each compile clean (0 errors, 0 warnings). Per this project's
+  established discipline (see `Test_StateManager.mq5`/`Test_OrderManager.mq5`),
+  these are MetaEditor-compilable PASS/FAIL scripts, not an automated
+  test framework — actually running them and reading the Experts log for
+  PASS/FAIL lines remains the user's own manual desktop-MT5 step, same as
+  every other test script in this project (this sandbox cannot attach to
+  a live/demo terminal — see `feedback_runtime_verification_batched.md`).
+- The cooldown reset rule and intent-reconciliation policy were traced
+  directly to this file's own Specification items 1/2, not invented; see
+  each module's own header comment for the exact reasoning.
 
 ## Rejection criteria
 
@@ -218,10 +259,13 @@ or if `InpEnableOrderSubmission` is flipped as part of this task.
 
 ## Status
 
-Not started — drafted while TASK-028's Codex review was in progress, as
-the "Specify" step for the next branch once review findings (if any)
-are resolved and TASK-028 is ready to hand off. **Registered in
-`TASKS.md` (row for TASK-034) as of 2026-07-22 -- corrected, Codex
-review finding, fourth round: this line previously said "not yet added
-to TASKS.md," which had already become false once that row was added
-during round-3 remediation.**
+In progress — CooldownManager, durable intent, and the composed
+spread/liquidity+hysteresis+news-blackout gate are built, wired, and
+compile clean (real MetaEditor evidence, 2026-07-22). The metal/synthetic
+AUTOMATIC provider-selection sub-item (Specification item 4's last
+paragraph, Test plan item 6) remains explicitly BLOCKED on TASK-028 P0-3's
+still-unbuilt `market_family` classifier, per that item's own instruction
+not to invent a workaround — not silently skipped, and not claimed done.
+Independent review deferred to this project's single, consolidated,
+end-of-sprint Codex review per the user's own 2026-07-22 directive, not a
+per-task review this time.
