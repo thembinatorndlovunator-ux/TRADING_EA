@@ -858,3 +858,28 @@ so this canonical file does not read as if history stopped at round 2.
   written, not an autonomous judgment call. A seventh independent review
   should be requested once the 3 P0s have a resolution or an agreed
   disposition, not before.
+
+  **Update, 2026-07-22, same day:** the user reviewed all three P0s and
+  directed "do everything now... then we do a codex review after
+  everything is done" -- explicitly authorizing the code changes this
+  entry's own P0-1/P0-3 note above said needed a checkpoint first,
+  and deliberately replacing this project's usual per-task review cadence
+  with one consolidated review at the end of the sprint. Under that
+  directive: **P0-1 resolved** (`64779d6` — `SOrderOpenResult` gained a
+  `position_id` field alongside the existing `position_ticket`, populated
+  via `PositionGetInteger(POSITION_IDENTIFIER)`; `position_ticket` itself
+  is kept, unchanged, since `PositionSelectByTicket`/`CTrade::PositionClose`
+  still require the live session ticket for immediate operations --
+  neither field replaces the other). **P0-3 resolved** (`TASK-040`,
+  `IntradayModeRouter.mqh`: live `market_family` via broker-curated
+  `SYMBOL_PATH`, plus a first-pass `intraday_mode` classifier; `TASK-034`'s
+  `RegimeGateComposer.mqh`, built the same day, also closes this finding's
+  "the EA does not compose the two override states into a live nine-state
+  result" sub-point). TASK-031's own regime-transition-history buffer gap,
+  which this same P0-3 finding also named, remains that task's separate,
+  not-yet-started scope. **P0-2 remains genuinely blocked** -- no amount of
+  working faster substitutes for the real intratrade equity-tick export
+  this project does not have; it stays explicitly named as blocked, not
+  worked around. Both `ThembaAdaptiveIntradayEA.mq5` and every new test
+  script compile clean (0 errors/0 warnings, real MetaEditor evidence) as
+  of this update.

@@ -211,19 +211,20 @@ No file under `01_BASELINE/` may be modified.
       in Specification item 4, so the task could pass without it) —
       `FairEconomyNewsProvider.mqh` (new), `Test_FairEconomyNewsProvider.mq5`;
       wired in via the new `InpNewsProviderSource` input (see next item).
-- [ ] **BLOCKED, not silently skipped, per this item's own instruction:**
-      Metal/synthetic provider-selection rule enforced and proven by the
-      synthetic-bypass test (Test plan item 6) -- this still needs a live
-      `market_family` classification that no numbered task yet builds
-      (TASK-028 P0-3 / `IntradayModeRouter`). What IS wired: a new,
-      EXPLICIT, operator-set `InpNewsProviderSource` input
-      (`ENUM_NEWS_PROVIDER_SOURCE`: `NEWS_PROVIDER_MT5_CALENDAR` default /
-      `NEWS_PROVIDER_FAIR_ECONOMY` / `NEWS_PROVIDER_NONE`) that the
-      deploying operator sets per symbol/chart -- documented in the input's
-      own header comment as a stand-in, not an automatic per-symbol
-      heuristic, and NOT a substitute for this acceptance item. Automatic
-      routing must replace this manual input once TASK-028 P0-3 ships (next
-      in this session's own priority order).
+- [x] **UNBLOCKED, 2026-07-22:** Metal/synthetic provider-selection rule
+      enforced. TASK-040 (`IntradayModeRouter.mqh`) built the live
+      `market_family` classifier this item was blocked on --
+      `ResolveNewsBlackout()` in `ThembaAdaptiveIntradayEA.mq5` now
+      auto-overrides to `NullNewsProvider` semantics whenever
+      `market_family == MARKET_FAMILY_SYNTHETIC_INDEX`, REGARDLESS of the
+      operator's `InpNewsProviderSource` setting (that input now only
+      selects WHICH real-market provider to use on a metal/forex symbol,
+      not whether to filter at all). The synthetic-bypass test (Test plan
+      item 6) still needs a real synthetic-index chart to run against for
+      runtime verification (batched, per this project's established
+      MT5-terminal-execution constraint), but the enforcement logic itself
+      is built, wired, and compiles clean -- no longer blocked on a missing
+      classifier.
 - [x] Every gate decision is journaled — `EvaluateAndJournal` builds a
       `gate_reasons` array (raw regime, effective regime, which gate(s)
       fired) every bar regardless of decision outcome, merged into
@@ -262,10 +263,8 @@ or if `InpEnableOrderSubmission` is flipped as part of this task.
 In progress — CooldownManager, durable intent, and the composed
 spread/liquidity+hysteresis+news-blackout gate are built, wired, and
 compile clean (real MetaEditor evidence, 2026-07-22). The metal/synthetic
-AUTOMATIC provider-selection sub-item (Specification item 4's last
-paragraph, Test plan item 6) remains explicitly BLOCKED on TASK-028 P0-3's
-still-unbuilt `market_family` classifier, per that item's own instruction
-not to invent a workaround — not silently skipped, and not claimed done.
-Independent review deferred to this project's single, consolidated,
-end-of-sprint Codex review per the user's own 2026-07-22 directive, not a
-per-task review this time.
+AUTOMATIC provider-selection sub-item, previously blocked on a missing
+`market_family` classifier, is now UNBLOCKED and enforced (TASK-040,
+`IntradayModeRouter.mqh`, same day). Independent review deferred to this
+project's single, consolidated, end-of-sprint Codex review per the user's
+own 2026-07-22 directive, not a per-task review this time.

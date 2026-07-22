@@ -48,26 +48,24 @@
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
 #include "../Include/ThembaEA/Execution/IntentManager.mqh"
 #include "../Include/ThembaEA/Market/RegimeGateComposer.mqh"
+#include "../Include/ThembaEA/Market/IntradayModeRouter.mqh"
+#include "../Include/ThembaEA/Market/SessionManager.mqh"
 #include "../Include/ThembaEA/News/NewsManager.mqh"
 #include "../Include/ThembaEA/News/MT5CalendarProvider.mqh"
 #include "../Include/ThembaEA/News/NullNewsProvider.mqh"
 #include "../Include/ThembaEA/News/FairEconomyNewsProvider.mqh"
 
 //+------------------------------------------------------------------+
-//| TASK-034 — live news-provider selection. Per                        |
-//| TASK-034_LIVE_SAFETY_WIRING.md Specification item 4: the CORRECT       |
-//| per-symbol routing (FairEconomy/MT5 calendar for metals,                 |
-//| NullNewsProvider for Deriv synthetics, PROJECT_RULES.md rule 8) needs      |
-//| a live market_family classification that no numbered task currently          |
-//| builds (TASK-028 P0-3 / IntradayModeRouter — see TASKS.md). Per that           |
-//| item's own instruction not to invent an ad hoc symbol-name heuristic to        |
-//| route around the missing classifier, this input is an EXPLICIT,                 |
-//| operator-set stand-in — not automatic — applied uniformly to whatever             |
-//| single symbol this EA instance trades: set NEWS_PROVIDER_NONE when                 |
-//| running on a Deriv synthetic-index symbol, MT5_CALENDAR or                           |
-//| FAIR_ECONOMY on a metal symbol. Automatic per-symbol routing remains                    |
-//| explicitly BLOCKED pending TASK-028 P0-3 and must replace this manual                    |
-//| input once that classifier ships.                                                           |
+//| TASK-034/TASK-040 — live news-provider selection. This input picks     |
+//| WHICH real-market provider to use (MT5's native calendar or the           |
+//| FairEconomy feed) when this EA is running on a metal/forex symbol.          |
+//| It no longer decides WHETHER to apply macro news filtering at all --          |
+//| ResolveNewsBlackout() now overrides this to NullNewsProvider semantics          |
+//| automatically whenever IntradayModeRouter.mqh's market_family                    |
+//| classifier reports MARKET_FAMILY_SYNTHETIC_INDEX, per PROJECT_RULES.md              |
+//| rule 8 — this used to be an explicit, operator-set stand-in for a                    |
+//| missing classifier (TASK-034's original note); TASK-040 built that                     |
+//| classifier, so the override is now automatic, not manual.                                |
 //+------------------------------------------------------------------+
 enum ENUM_NEWS_PROVIDER_SOURCE
   {
@@ -114,6 +112,7 @@ CSymbolProfile          g_profile;
 string                  g_symbol;
 datetime                g_last_evaluated_bar_time = 0;
 SRegimeHysteresisState  g_hysteresis_state;
+ENUM_MARKET_FAMILY      g_market_family = MARKET_FAMILY_UNKNOWN;
 
 int OnInit()
   {
@@ -142,6 +141,15 @@ int OnInit()
 
    MRE_InitHysteresisState(g_hysteresis_state);
    FEP_InvalidateCache(); // TASK-034: force a fresh FairEconomy fetch this session, not a stale one
+
+   // TASK-040: classify market_family once at startup (this EA instance
+   // trades exactly one symbol for its whole lifetime) via the broker's
+   // own curated SYMBOL_PATH -- see IntradayModeRouter.mqh's own header
+   // for why this differs from a ticker-name heuristic.
+   g_market_family = IMR_ClassifyMarketFamily(g_symbol);
+   PrintFormat("ThembaEA: market_family classified as %s for '%s' (SYMBOL_PATH='%s').",
+               IMR_MarketFamilyToString(g_market_family), g_symbol,
+               SymbolInfoString(g_symbol, SYMBOL_PATH));
 
    // TASK-034: reconcile any durable-intent record orphaned by a crash/restart between
    // "about to submit" and "confirmed filled or rejected" — before resuming normal operation.
@@ -273,6 +281,26 @@ double ComputeAvgTicksPerBar(const int bars)
   }
 
 //+------------------------------------------------------------------+
+//| TASK-040 — current completed bar's range vs. its own trailing         |
+//| average over 'window' bars (>1.0 means "wider than usual right now",     |
+//| the IntradayModeRouter's own scalp-favoring signal). Returns 1.0           |
+//| (neutral) if the average range cannot be computed (e.g. a degenerate         |
+//| all-zero-range window) rather than dividing by zero.                            |
+//+------------------------------------------------------------------+
+double ComputeCurrentRangeRatio(const double &highs[], const double &lows[], const int window)
+  {
+   double current_range = highs[0] - lows[0];
+   int n = MathMin(window, ArraySize(highs));
+   double sum = 0.0;
+   for(int i = 0; i < n; i++)
+      sum += (highs[i] - lows[i]);
+   double avg_range = (n > 0) ? sum / (double)n : 0.0;
+   if(avg_range <= 0.0)
+      return 1.0;
+   return current_range / avg_range;
+  }
+
+//+------------------------------------------------------------------+
 //| TASK-034 — resolves whether NEWS_BLACKOUT is currently active, per    |
 //| InpNewsProviderSource (see that input's own header comment for why        |
 //| this is a manual, explicitly-named stand-in for the still-unbuilt            |
@@ -285,6 +313,23 @@ double ComputeAvgTicksPerBar(const int bars)
 bool ResolveNewsBlackout(const double current_atr, string &triggering_event_id_out)
   {
    triggering_event_id_out = "";
+
+   // TASK-040: automatic override, regardless of InpNewsProviderSource --
+   // PROJECT_RULES.md rule 8 ("macroeconomic news filters apply to
+   // metals, not Deriv synthetic indices") is not an operator preference,
+   // it is a correctness rule (synthetic indices are algorithm-generated
+   // and are not driven by real-world macro news at all, per
+   // 00_MASTER_PROMPT_FOR_CLAUDE.md), so a real market_family
+   // classification now enforces it even if the operator left
+   // InpNewsProviderSource pointed at a real-market provider by mistake.
+   // This closes TASK-034's previously-blocked synthetic-bypass
+   // acceptance item now that IntradayModeRouter.mqh exists.
+   if(g_market_family == MARKET_FAMILY_SYNTHETIC_INDEX)
+     {
+      SNewsEvent none_events[];
+      NNP_FetchEvents(none_events);
+      return false;
+     }
 
    if(InpNewsProviderSource == NEWS_PROVIDER_NONE)
      {
@@ -683,6 +728,26 @@ void EvaluateAndJournal()
 
    SConflictResult resolution;
    bool has_decision = CR_ResolveConflicts(routed, 5, 10.0, resolution);
+
+   //--- TASK-040: journal market_family (classified once at OnInit) and  --
+   //--- a first-pass intraday_mode classification every bar (journal-only, --
+   //--- not yet consumed by any strategy's own behavior — see               --
+   //--- IntradayModeRouter.mqh's own header for the stated scope boundary). --
+   double session_remaining_ratio;
+   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio))
+      session_remaining_ratio = 0.0; // no session today (weekend/holiday) — treat as "none left"
+   double range_ratio = ComputeCurrentRangeRatio(highs, lows, InpLiquidityAvgBars);
+   double spread_atr_ratio = (atr_values[0] > 0.0) ? current_spread / atr_values[0] : 0.0;
+
+   double day_trade_score;
+   ENUM_INTRADAY_MODE intraday_mode = IMR_ClassifyMode(
+      effective_regime, regime_read.E, regime_read.T_final, range_ratio, spread_atr_ratio,
+      session_remaining_ratio, news_blackout, has_decision, resolution.winner_score,
+      day_trade_score);
+
+   AppendReason(gate_reasons, "market_family_" + IMR_MarketFamilyToString(g_market_family));
+   AppendReason(gate_reasons, StringFormat("intraday_mode_%s_score_%.4f",
+                                            IMR_IntradayModeToString(intraday_mode), day_trade_score));
 
    STradeDecision decision = DJ_NewDecision();
    decision.timestamp = TimeCurrent();

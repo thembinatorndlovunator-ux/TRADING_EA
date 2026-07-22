@@ -92,10 +92,18 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
    `TASK-006_SESSION_MANAGER.md` explicitly deferred it, and
    `analysis/schema.py`'s own docstring already documents that
    `ThembaAdaptiveIntradayEA.mq5` never sets either field today.** This
-   item is therefore BLOCKED on a still-unregistered future task to
-   build that classifier first; this task's own scope is limited to
-   wiring an ALREADY-COMPUTED value into the journal record once that
-   classifier exists, not inventing one here.
+   item was BLOCKED on a still-unregistered future task to build that
+   classifier first. **UNBLOCKED, 2026-07-22: TASK-040
+   (`IntradayModeRouter.mqh`) built and wired both classifiers into
+   `ThembaAdaptiveIntradayEA.mq5` the same day** — `g_market_family` is
+   classified once at `OnInit`, and `intraday_mode` is computed every bar
+   in `EvaluateAndJournal`, currently journaled via the free-form
+   `reasons_passed_json`/`reasons_rejected_json` string arrays (no
+   `STradeDecision` schema fields exist for them yet). This task's own
+   remaining scope is exactly as originally stated: wire those
+   ALREADY-COMPUTED values into proper `market_family`/`intraday_mode`
+   schema fields on `STradeDecision`/the journal record, not invent the
+   classification logic (that part is now done, by TASK-040).
 3. Populate `news_state`/`session_state` from `NewsManager.mqh`'s actual
    blackout check and `SessionManager.mqh`'s actual session-remaining
    computation respectively, at decision time. **Session-state bucket
