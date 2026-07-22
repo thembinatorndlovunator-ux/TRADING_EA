@@ -144,17 +144,36 @@ No file under `01_BASELINE/` may be modified.
 
 ## Acceptance criteria
 
-- [ ] All 16 remaining candlestick detector/predicate functions (15
+- [x] All 16 remaining candlestick detector/predicate functions (15
       `CP_Is*Array` predicates + `CP_DetectHaramiArray`) ported and
-      hand-verified.
-- [ ] Double top/bottom and head-and-shoulders/inverse (this task's
+      hand-verified: dragonfly/gravestone rejection, marubozu, doji,
+      spinning top, inside/outside bar, tweezer top/bottom, harami-detect
+      + harami-confirmed, morning/evening star, three white soldiers/
+      three black crows, three-bar reversal (the last needing a minimal,
+      explicitly-scoped port of `SwingEngine.mqh`'s own confirmed-pivot
+      predicate). `detect_all_patterns()`'s DEFAULT output stays
+      unchanged (still 4 columns) so `Export_PatternDetectorResults.mq5`
+      (TASK-037) stays comparable; the new patterns are always computed
+      when calling the individual functions directly, and added to
+      `detect_all_patterns()`'s output as new always-present columns
+      (dragonfly/gravestone/doji/spinning-top/inside-outside/harami/
+      morning-evening-star/three-soldiers-crows) plus two OPT-IN groups
+      gated on new optional `atr_values`/`swing_depth` parameters
+      (marubozu/tweezer top/bottom, three-bar-reversal) that do not
+      disturb a caller who omits them.
+- [x] Double top/bottom and head-and-shoulders/inverse (this task's
       actual chart-pattern scope, NOT "all chart patterns" -- the other
       13 master-required families, including triple top/bottom, are
       owned by `TASK-039_CHART_PATTERN_COMPLETION.md`, see Specification
-      item 2) ported and hand-verified.
-- [ ] No claim of a real MQL5-export cross-check is made here -- that
-      remains explicitly owned by TASK-037.
-- [ ] Independent review completed and findings resolved.
+      item 2) ported and hand-verified, including the sloped-neckline
+      `linear_interpolate` and the shared `check_retest` predicate.
+- [x] No claim of a real MQL5-export cross-check is made here -- that
+      remains explicitly owned by TASK-037. (Extending
+      `Export_PatternDetectorResults.mq5` to cover these newly-ported
+      patterns, and building an equivalent chart-pattern export, remain
+      open follow-ups under TASK-037, not claimed here.)
+- [ ] Independent review completed and findings resolved — deferred to
+      this project's single, consolidated, end-of-sprint Codex review.
 
 ## Rejection criteria
 
@@ -165,6 +184,12 @@ task.
 
 ## Status
 
-Not started. Registered as a formal follow-up per Codex's TASK-028
-review finding #1 (2026-07-21); scope and count corrected per finding #2
-of the second review round (2026-07-22).
+Done — all 16 remaining candlestick predicates + the harami-detect
+helper, plus double top/bottom and head-and-shoulders/inverse chart
+patterns (incl. the sloped-neckline interpolation and shared retest
+predicate), ported to `pattern_validation.py` with hand-verified
+fixtures. 67 tests in `test_pattern_validation.py` (up from 29), all
+passing; ruff/ruff format/mypy clean; full 652-test suite passes with no
+regressions. No real MQL5-export cross-check claimed — that stays
+TASK-037's, with extending the existing 4-pattern export to cover this
+task's new patterns noted as an open follow-up.

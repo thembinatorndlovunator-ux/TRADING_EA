@@ -1,23 +1,35 @@
-"""pattern_validation.py -- Python ports of a SUBSET of
-``CandlestickPatternEngine.mqh``'s pattern predicates (bullish/bearish pin
-bar including TASK-017's wick-to-body ratio fix, bullish/bearish
-engulfing), validated against hand-constructed synthetic OHLC fixtures, for
-independent cross-checking against the MQL5 source.
+"""pattern_validation.py -- Python ports of
+``CandlestickPatternEngine.mqh``'s pattern predicates and
+``ChartPatternEngine.mqh``'s double top/bottom + head-and-shoulders/
+inverse chart patterns, validated against hand-constructed synthetic OHLC
+fixtures, for independent cross-checking against the MQL5 source.
 
-**Explicitly NOT a full port.** ``CandlestickPatternEngine.mqh`` defines
-**19** ``CP_Is*Array`` boolean pattern predicates PLUS one non-boolean
-helper, ``CP_DetectHaramiArray`` -- **20 detector/predicate functions
-total** (corrected count, 2026-07-22 Codex review finding, third round:
-this docstring previously said "18 total/14 remaining", which does not
-match the actual MQL5 source -- see ``TASK-033_PATTERN_VALIDATION_COMPLETION.md``
-for the full, verified enumeration). This module ports the 4 named above
-(kept algebraically identical to the MQL5 source, not re-derived) as a
-first slice -- the remaining 15 ``CP_Is*Array`` predicates (dragonfly/
-gravestone rejection, marubozu, doji, spinning top, inside/outside bar,
-tweezer top/bottom, harami-confirmed, morning/evening star, three white
-soldiers/three black crows, three-bar reversal) PLUS the
-``CP_DetectHaramiArray`` helper (16 functions total) are explicitly NOT
-ported here, left for TASK-033.
+**TASK-033 (2026-07-22): candlestick coverage completed.** All 20
+detector/predicate functions from ``CandlestickPatternEngine.mqh`` are now
+ported: the original 4 (bullish/bearish pin bar incl. TASK-017's
+wick-to-body fix, bullish/bearish engulfing) plus the 16 TASK-033 added
+(dragonfly/gravestone rejection, marubozu, doji, spinning top, inside/
+outside bar, tweezer top/bottom, harami-detect + harami-confirmed,
+morning/evening star, three white soldiers/three black crows, three-bar
+reversal). Each is kept algebraically identical to the MQL5 source, never
+re-derived.
+
+**Chart patterns (TASK-033):** double top/bottom and head-and-shoulders/
+inverse, ported from ``ChartPatternEngine.mqh``, including the sloped-
+neckline linear interpolation. **Scope boundary, matching
+``ChartPatternEngine.mqh``'s own current implementation exactly:** triple
+top/bottom and the other 13 master-prompt chart-pattern families
+(triangles, rectangle, flags, pennant, wedges, parallel channel,
+cup-and-handle) are NOT ported here -- ``TASK-039_CHART_PATTERN_COMPLETION.md``
+owns building those in MQL5 first; this module cannot port what does not
+exist in the MQL5 source yet.
+
+These chart patterns depend on a minimal port of ``SwingEngine.mqh``'s own
+confirmed-pivot predicate (``is_confirmed_swing_high``/
+``is_confirmed_swing_low`` and their nearest-match finders below) --
+**explicitly scoped to just the pivot predicate this file's own patterns
+need, not a full ``SwingEngine.mqh`` port** (that module has its own
+broader responsibilities this task does not attempt to replicate).
 
 **Array convention, stated explicitly (a common point of confusion this
 project has flagged before):** these functions use the SAME "logical
@@ -26,12 +38,14 @@ completed bar, increasing index is OLDER (opposite of a typical
 chronologically-ascending pandas DataFrame). A caller building these
 arrays from ascending-time OHLC data must reverse it first.
 
-**Cross-check against a real MQL5-exported detector-results CSV is NOT YET
-POSSIBLE** -- no MQL5 module in this project exports pattern-detection
-results to a file (``CandlestickPatternEngine.mqh`` has no CSV/export
-function). ``compare_to_mql5_export`` is provided as a generic join/diff
-utility for when such an export exists, explicitly marked pending real
-data per the reproducibility contract's rule 7.
+**Cross-check against a real MQL5-exported detector-results CSV** is
+possible for the original 4 patterns via ``Export_PatternDetectorResults.mq5``
+(``TASK-037``), but that export is intentionally scoped to only those 4
+(matching what ``detect_all_patterns()`` computed when that export was
+built) -- extending the export to cover TASK-033's newly-ported patterns
+is a follow-up, not yet done. No MQL5 export exists yet for the chart
+patterns either. ``compare_to_mql5_export`` remains a generic join/diff
+utility for whichever exports exist.
 """
 
 from __future__ import annotations
@@ -40,6 +54,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -139,6 +154,21 @@ def size_percentile(highs: Sequence[float], lows: Sequence[float], k: int, windo
         elif r == range_k:
             less_count += 0.5
     return less_count / total
+
+
+def atr_size(
+    highs: Sequence[float], lows: Sequence[float], atr_values: Sequence[float], k: int
+) -> float:
+    """Direct port of CP_AtrSizeArray: range[k]/ATR[k]."""
+
+    n = len(highs)
+    if k < 0 or k >= n:
+        return 0.0
+    candle_range = highs[k] - lows[k]
+    a = atr_values[k]
+    if a <= 0.0:
+        return 0.0
+    return candle_range / a
 
 
 def is_bullish_pin_bar(
@@ -268,6 +298,804 @@ def is_bearish_engulfing(
     return size_percentile(highs, lows, k, size_window) >= min_size_percentile
 
 
+# --- TASK-033: the remaining 15 CP_Is*Array predicates + CP_DetectHaramiArray --
+
+
+def is_dragonfly_rejection(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_body_ratio: float = 0.10,
+    min_wick_ratio: float = 0.70,
+) -> bool:
+    """Direct port of CP_IsDragonflyRejectionArray."""
+
+    m = measure_ratios(opens, highs, lows, closes, k)
+    if not m.valid:
+        return False
+    return (
+        m.body_ratio <= max_body_ratio
+        and m.lower_wick_ratio >= min_wick_ratio
+        and m.upper_wick_ratio <= max_body_ratio
+    )
+
+
+def is_gravestone_rejection(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_body_ratio: float = 0.10,
+    min_wick_ratio: float = 0.70,
+) -> bool:
+    """Direct port of CP_IsGravestoneRejectionArray."""
+
+    m = measure_ratios(opens, highs, lows, closes, k)
+    if not m.valid:
+        return False
+    return (
+        m.body_ratio <= max_body_ratio
+        and m.upper_wick_ratio >= min_wick_ratio
+        and m.lower_wick_ratio <= max_body_ratio
+    )
+
+
+def is_marubozu(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    atr_values: Sequence[float],
+    k: int,
+    min_body_ratio: float = 0.90,
+    displacement_atr_multiple: float = 1.5,
+) -> bool:
+    """Direct port of CP_IsMarubozuArray."""
+
+    m = measure_ratios(opens, highs, lows, closes, k)
+    if not m.valid or m.body_ratio < min_body_ratio:
+        return False
+    return atr_size(highs, lows, atr_values, k) >= displacement_atr_multiple
+
+
+def is_doji(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_body_ratio: float = 0.10,
+) -> bool:
+    """Direct port of CP_IsDojiArray."""
+
+    m = measure_ratios(opens, highs, lows, closes, k)
+    return m.valid and m.body_ratio <= max_body_ratio
+
+
+def is_spinning_top(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    doji_max_body_ratio: float = 0.10,
+    max_body_ratio: float = 0.35,
+    min_wick_ratio: float = 0.20,
+) -> bool:
+    """Direct port of CP_IsSpinningTopArray."""
+
+    m = measure_ratios(opens, highs, lows, closes, k)
+    if not m.valid:
+        return False
+    if m.body_ratio <= doji_max_body_ratio or m.body_ratio > max_body_ratio:
+        return False
+    return m.upper_wick_ratio >= min_wick_ratio and m.lower_wick_ratio >= min_wick_ratio
+
+
+def is_inside_bar(highs: Sequence[float], lows: Sequence[float], k: int) -> bool:
+    """Direct port of CP_IsInsideBarArray."""
+
+    n = len(highs)
+    if k < 0 or k + 1 >= n:
+        return False
+    return highs[k] < highs[k + 1] and lows[k] > lows[k + 1]
+
+
+def is_outside_bar(highs: Sequence[float], lows: Sequence[float], k: int) -> bool:
+    """Direct port of CP_IsOutsideBarArray."""
+
+    n = len(highs)
+    if k < 0 or k + 1 >= n:
+        return False
+    return highs[k] > highs[k + 1] and lows[k] < lows[k + 1]
+
+
+def is_tweezer_top(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    atr_values: Sequence[float],
+    k: int,
+    tolerance_atr: float = 0.10,
+) -> bool:
+    """Direct port of CP_IsTweezerTopArray."""
+
+    n = len(highs)
+    if k < 0 or k + 1 >= n:
+        return False
+    atr = atr_values[k]
+    if atr <= 0.0:
+        return False
+
+    close_highs = abs(highs[k] - highs[k + 1]) <= atr * tolerance_atr
+    prior_up = closes[k + 1] > opens[k + 1]
+    current_down = closes[k] < opens[k]
+    return close_highs and prior_up and current_down
+
+
+def is_tweezer_bottom(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    atr_values: Sequence[float],
+    k: int,
+    tolerance_atr: float = 0.10,
+) -> bool:
+    """Direct port of CP_IsTweezerBottomArray."""
+
+    n = len(lows)
+    if k < 0 or k + 1 >= n:
+        return False
+    atr = atr_values[k]
+    if atr <= 0.0:
+        return False
+
+    close_lows = abs(lows[k] - lows[k + 1]) <= atr * tolerance_atr
+    prior_down = closes[k + 1] < opens[k + 1]
+    current_up = closes[k] > opens[k]
+    return close_lows and prior_down and current_up
+
+
+class HaramiDirection(str, Enum):
+    """Direct port of ENUM_HARAMI_DIRECTION."""
+
+    NONE = "NONE"
+    BULLISH_IMPLIED = "BULLISH_IMPLIED"
+    BEARISH_IMPLIED = "BEARISH_IMPLIED"
+
+
+def detect_harami(
+    opens: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_ratio: float = 0.50,
+) -> HaramiDirection:
+    """Direct port of CP_DetectHaramiArray."""
+
+    n = len(closes)
+    if k < 0 or k + 1 >= n:
+        return HaramiDirection.NONE
+
+    bh_k = max(opens[k], closes[k])
+    bl_k = min(opens[k], closes[k])
+    bh_k1 = max(opens[k + 1], closes[k + 1])
+    bl_k1 = min(opens[k + 1], closes[k + 1])
+    body_k = bh_k - bl_k
+    body_k1 = bh_k1 - bl_k1
+
+    if body_k1 <= 0.0 or body_k >= body_k1 * max_ratio:
+        return HaramiDirection.NONE
+    if not (bh_k <= bh_k1 and bl_k >= bl_k1):
+        return HaramiDirection.NONE
+
+    return (
+        HaramiDirection.BEARISH_IMPLIED
+        if closes[k + 1] > opens[k + 1]
+        else HaramiDirection.BULLISH_IMPLIED
+    )
+
+
+def is_harami_confirmed(
+    closes: Sequence[float],
+    k: int,
+    implied_direction: HaramiDirection,
+) -> bool:
+    """Direct port of CP_IsHaramiConfirmedArray."""
+
+    n = len(closes)
+    if k < 1 or k + 1 >= n:
+        return False
+    if implied_direction == HaramiDirection.BULLISH_IMPLIED:
+        return closes[k - 1] > closes[k + 1]
+    if implied_direction == HaramiDirection.BEARISH_IMPLIED:
+        return closes[k - 1] < closes[k + 1]
+    return False
+
+
+def is_morning_star(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_middle_body_ratio: float = 0.30,
+    max_overlap: float = 0.50,
+) -> bool:
+    """Direct port of CP_IsMorningStarArray."""
+
+    n = len(closes)
+    if k < 0 or k + 2 >= n:
+        return False
+    if not (closes[k + 2] < opens[k + 2]):  # first candle bearish
+        return False
+
+    mid = measure_ratios(opens, highs, lows, closes, k + 1)
+    if not mid.valid or mid.body_ratio > max_middle_body_ratio:
+        return False
+
+    bh1 = max(opens[k + 2], closes[k + 2])
+    bl1 = min(opens[k + 2], closes[k + 2])
+    body1 = bh1 - bl1
+    if body1 <= 0.0:
+        return False
+
+    overlap = max(0.0, min(highs[k + 1], bh1) - max(lows[k + 1], bl1))
+    if overlap / body1 > max_overlap:
+        return False
+
+    if not (closes[k] > opens[k]):  # third candle bullish
+        return False
+    midpoint1 = (opens[k + 2] + closes[k + 2]) / 2.0
+    return closes[k] > midpoint1
+
+
+def is_evening_star(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    max_middle_body_ratio: float = 0.30,
+    max_overlap: float = 0.50,
+) -> bool:
+    """Direct port of CP_IsEveningStarArray."""
+
+    n = len(closes)
+    if k < 0 or k + 2 >= n:
+        return False
+    if not (closes[k + 2] > opens[k + 2]):  # first candle bullish
+        return False
+
+    mid = measure_ratios(opens, highs, lows, closes, k + 1)
+    if not mid.valid or mid.body_ratio > max_middle_body_ratio:
+        return False
+
+    bh1 = max(opens[k + 2], closes[k + 2])
+    bl1 = min(opens[k + 2], closes[k + 2])
+    body1 = bh1 - bl1
+    if body1 <= 0.0:
+        return False
+
+    overlap = max(0.0, min(highs[k + 1], bh1) - max(lows[k + 1], bl1))
+    if overlap / body1 > max_overlap:
+        return False
+
+    if not (closes[k] < opens[k]):  # third candle bearish
+        return False
+    midpoint1 = (opens[k + 2] + closes[k + 2]) / 2.0
+    return closes[k] < midpoint1
+
+
+def is_three_white_soldiers(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    min_body_ratio: float = 0.55,
+    max_upper_wick_ratio: float = 0.20,
+) -> bool:
+    """Direct port of CP_IsThreeWhiteSoldiersArray."""
+
+    n = len(closes)
+    if k < 0 or k + 2 >= n:
+        return False
+
+    for i in range(3):
+        idx = k + i
+        if not (closes[idx] > opens[idx]):
+            return False
+        m = measure_ratios(opens, highs, lows, closes, idx)
+        if (
+            not m.valid
+            or m.body_ratio < min_body_ratio
+            or m.upper_wick_ratio > max_upper_wick_ratio
+        ):
+            return False
+    if not (opens[k] > opens[k + 1] > opens[k + 2]):
+        return False
+    if not (closes[k] > closes[k + 1] > closes[k + 2]):
+        return False
+    return True
+
+
+def is_three_black_crows(
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    min_body_ratio: float = 0.55,
+    max_lower_wick_ratio: float = 0.20,
+) -> bool:
+    """Direct port of CP_IsThreeBlackCrowsArray."""
+
+    n = len(closes)
+    if k < 0 or k + 2 >= n:
+        return False
+
+    for i in range(3):
+        idx = k + i
+        if not (closes[idx] < opens[idx]):
+            return False
+        m = measure_ratios(opens, highs, lows, closes, idx)
+        if (
+            not m.valid
+            or m.body_ratio < min_body_ratio
+            or m.lower_wick_ratio > max_lower_wick_ratio
+        ):
+            return False
+    if not (opens[k] < opens[k + 1] < opens[k + 2]):
+        return False
+    if not (closes[k] < closes[k + 1] < closes[k + 2]):
+        return False
+    return True
+
+
+# --- Minimal SwingEngine.mqh pivot-predicate port -------------------------------
+# Scoped to exactly what CP_IsThreeBarReversalArray and this file's own chart
+# patterns need -- see module docstring for why this is not a full port.
+
+
+def is_confirmed_swing_high(highs: Sequence[float], k: int, depth: int) -> bool:
+    """Direct port of SE_IsConfirmedSwingHighArray."""
+
+    n = len(highs)
+    if depth <= 0 or k < depth or k + depth >= n:
+        return False
+    high_k = highs[k]
+    for offset in range(1, depth + 1):
+        if highs[k - offset] >= high_k or highs[k + offset] >= high_k:
+            return False
+    return True
+
+
+def is_confirmed_swing_low(lows: Sequence[float], k: int, depth: int) -> bool:
+    """Direct port of SE_IsConfirmedSwingLowArray."""
+
+    n = len(lows)
+    if depth <= 0 or k < depth or k + depth >= n:
+        return False
+    low_k = lows[k]
+    for offset in range(1, depth + 1):
+        if lows[k - offset] <= low_k or lows[k + offset] <= low_k:
+            return False
+    return True
+
+
+def find_nearest_confirmed_swing_high(
+    highs: Sequence[float], min_index: int, depth: int, max_lookback: int
+) -> Optional[int]:
+    """Direct port of SE_FindNearestConfirmedSwingHighArray. Returns None
+    (MQL5's found_index=-1/False) if none found in range."""
+
+    if depth <= 0 or max_lookback <= 0:
+        return None
+    start = max(min_index, depth)
+    last_k = start + max_lookback - 1
+    if last_k + depth >= len(highs):
+        return None
+    for k in range(start, last_k + 1):
+        if is_confirmed_swing_high(highs, k, depth):
+            return k
+    return None
+
+
+def find_nearest_confirmed_swing_low(
+    lows: Sequence[float], min_index: int, depth: int, max_lookback: int
+) -> Optional[int]:
+    """Direct port of SE_FindNearestConfirmedSwingLowArray."""
+
+    if depth <= 0 or max_lookback <= 0:
+        return None
+    start = max(min_index, depth)
+    last_k = start + max_lookback - 1
+    if last_k + depth >= len(lows):
+        return None
+    for k in range(start, last_k + 1):
+        if is_confirmed_swing_low(lows, k, depth):
+            return k
+    return None
+
+
+def is_three_bar_reversal(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    opens: Sequence[float],
+    closes: Sequence[float],
+    k: int,
+    swing_depth: int,
+) -> bool:
+    """Direct port of CP_IsThreeBarReversalArray."""
+
+    n = len(closes)
+    if k < 0 or k + 2 >= n:
+        return False
+
+    if is_confirmed_swing_low(lows, k + 1, swing_depth):
+        return closes[k] > opens[k + 2]
+    if is_confirmed_swing_high(highs, k + 1, swing_depth):
+        return closes[k] < opens[k + 2]
+    return False
+
+
+# --- TASK-033: ChartPatternEngine.mqh port (double top/bottom, --------------
+# head-and-shoulders/inverse) -- see module docstring for the exact scope
+# boundary (triple top/bottom and the other 13 master-prompt chart-pattern
+# families are TASK-039's, not ported here).
+
+
+class ChartPatternType(str, Enum):
+    NONE = "NONE"
+    DOUBLE_TOP = "DOUBLE_TOP"
+    DOUBLE_BOTTOM = "DOUBLE_BOTTOM"
+    HEAD_SHOULDERS = "HEAD_SHOULDERS"
+    INV_HEAD_SHOULDERS = "INV_HEAD_SHOULDERS"
+
+
+@dataclass(frozen=True)
+class ChartPatternResult:
+    found: bool
+    type: ChartPatternType
+    boundary_price: float
+    extreme_price: float
+    target: float
+    stop: float
+    breakout_index: int  # -1 if no confirmed breakout found yet
+
+
+def _empty_chart_pattern_result() -> ChartPatternResult:
+    return ChartPatternResult(False, ChartPatternType.NONE, 0.0, 0.0, 0.0, 0.0, -1)
+
+
+def linear_interpolate(x1: int, y1: float, x2: int, y2: float, k: int) -> float:
+    """Direct port of CPT_LinearInterpolate."""
+
+    if x1 == x2:
+        return y1
+    return y1 + (y2 - y1) * (x1 - k) / (x1 - x2)
+
+
+def has_prior_trend(
+    closes: Sequence[float], reference_index: int, trend_bars: int, require_up: bool
+) -> bool:
+    """Direct port of CPT_HasPriorTrend."""
+
+    n = len(closes)
+    if reference_index < 0 or reference_index + trend_bars >= n:
+        return False
+    earlier = closes[reference_index + trend_bars]
+    later = closes[reference_index]
+    return earlier < later if require_up else earlier > later
+
+
+def detect_double_top(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    min_pullback_atr: float,
+    trend_bars: int,
+    breakout_buffer_atr: float,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectDoubleTopArray."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    h1 = find_nearest_confirmed_swing_high(highs, 0, depth, max_lookback)
+    if h1 is None:
+        return _empty_chart_pattern_result()
+    h2 = find_nearest_confirmed_swing_high(highs, h1 + 1, depth, max_lookback)
+    if h2 is None:
+        return _empty_chart_pattern_result()
+
+    if abs(highs[h1] - highs[h2]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    trough = find_nearest_confirmed_swing_low(lows, h1 + 1, depth, h2 - h1)
+    if trough is None or trough >= h2:
+        return _empty_chart_pattern_result()
+
+    neckline = lows[trough]
+    extreme = max(highs[h1], highs[h2])  # highest peak, per the reference source
+
+    if extreme - neckline < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if not has_prior_trend(closes, h2, trend_bars, True):
+        return _empty_chart_pattern_result()
+
+    breakout_level_index = -1
+    breakout_level = neckline - current_atr * breakout_buffer_atr
+    for k in range(h1 - 1, -1, -1):
+        if closes[k] < breakout_level:
+            breakout_level_index = k
+            break
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.DOUBLE_TOP,
+        boundary_price=neckline,
+        extreme_price=extreme,
+        target=neckline - (extreme - neckline),
+        stop=highs[h1] + current_atr * breakout_buffer_atr,
+        breakout_index=breakout_level_index,
+    )
+
+
+def detect_double_bottom(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    min_pullback_atr: float,
+    trend_bars: int,
+    breakout_buffer_atr: float,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectDoubleBottomArray (mirror of double top)."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    l1 = find_nearest_confirmed_swing_low(lows, 0, depth, max_lookback)
+    if l1 is None:
+        return _empty_chart_pattern_result()
+    l2 = find_nearest_confirmed_swing_low(lows, l1 + 1, depth, max_lookback)
+    if l2 is None:
+        return _empty_chart_pattern_result()
+
+    if abs(lows[l1] - lows[l2]) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    peak = find_nearest_confirmed_swing_high(highs, l1 + 1, depth, l2 - l1)
+    if peak is None or peak >= l2:
+        return _empty_chart_pattern_result()
+
+    neckline = highs[peak]
+    extreme = min(lows[l1], lows[l2])  # lowest trough
+
+    if neckline - extreme < min_pullback_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if not has_prior_trend(closes, l2, trend_bars, False):
+        return _empty_chart_pattern_result()
+
+    breakout_level_index = -1
+    breakout_level = neckline + current_atr * breakout_buffer_atr
+    for k in range(l1 - 1, -1, -1):
+        if closes[k] > breakout_level:
+            breakout_level_index = k
+            break
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.DOUBLE_BOTTOM,
+        boundary_price=neckline,
+        extreme_price=extreme,
+        target=neckline + (neckline - extreme),
+        stop=lows[l1] - current_atr * breakout_buffer_atr,
+        breakout_index=breakout_level_index,
+    )
+
+
+def detect_head_and_shoulders(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    time_tolerance: float,
+    min_head_prominence_atr: float,
+    breakout_buffer_atr: float,
+    trend_bars: int,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectHeadAndShouldersArray."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    rs = find_nearest_confirmed_swing_high(highs, 0, depth, max_lookback)
+    if rs is None:
+        return _empty_chart_pattern_result()
+    head = find_nearest_confirmed_swing_high(highs, rs + 1, depth, max_lookback)
+    if head is None:
+        return _empty_chart_pattern_result()
+    ls = find_nearest_confirmed_swing_high(highs, head + 1, depth, max_lookback)
+    if ls is None:
+        return _empty_chart_pattern_result()
+
+    head_price, rs_price, ls_price = highs[head], highs[rs], highs[ls]
+    if head_price <= max(ls_price, rs_price):
+        return _empty_chart_pattern_result()
+    if head_price - max(ls_price, rs_price) < min_head_prominence_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if abs(ls_price - rs_price) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    ls_to_head = float(ls - head)
+    head_to_rs = float(head - rs)
+    if ls_to_head <= 0.0 or head_to_rs <= 0.0:
+        return _empty_chart_pattern_result()
+    time_diff_ratio = abs(ls_to_head - head_to_rs) / max(ls_to_head, head_to_rs)
+    if time_diff_ratio > time_tolerance:
+        return _empty_chart_pattern_result()
+
+    if not has_prior_trend(closes, ls, trend_bars, True):
+        return _empty_chart_pattern_result()
+
+    trough1 = find_nearest_confirmed_swing_low(lows, head + 1, depth, ls - head)
+    if trough1 is None or trough1 >= ls:
+        return _empty_chart_pattern_result()
+
+    trough2 = find_nearest_confirmed_swing_low(lows, rs + 1, depth, head - rs)
+    if trough2 is None or trough2 >= head:
+        return _empty_chart_pattern_result()
+
+    breakout_index = -1
+    for k in range(rs - 1, -1, -1):
+        neck_k = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], k)
+        if closes[k] < neck_k - current_atr * breakout_buffer_atr:
+            breakout_index = k
+            break
+
+    neckline_at_head = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], head)
+    target_reference = breakout_index if breakout_index >= 0 else rs
+    neckline_at_target = linear_interpolate(
+        trough1, lows[trough1], trough2, lows[trough2], target_reference
+    )
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.HEAD_SHOULDERS,
+        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], rs),
+        extreme_price=head_price,
+        target=neckline_at_target - (head_price - neckline_at_head),
+        stop=rs_price + current_atr * breakout_buffer_atr,
+        breakout_index=breakout_index,
+    )
+
+
+def detect_inverse_head_and_shoulders(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    depth: int,
+    max_lookback: int,
+    current_atr: float,
+    price_tolerance_atr: float,
+    time_tolerance: float,
+    min_head_prominence_atr: float,
+    breakout_buffer_atr: float,
+    trend_bars: int,
+) -> ChartPatternResult:
+    """Direct port of CPT_DetectInverseHeadAndShouldersArray (mirror of
+    head-and-shoulders on swing lows)."""
+
+    if current_atr <= 0.0:
+        return _empty_chart_pattern_result()
+
+    rs = find_nearest_confirmed_swing_low(lows, 0, depth, max_lookback)
+    if rs is None:
+        return _empty_chart_pattern_result()
+    head = find_nearest_confirmed_swing_low(lows, rs + 1, depth, max_lookback)
+    if head is None:
+        return _empty_chart_pattern_result()
+    ls = find_nearest_confirmed_swing_low(lows, head + 1, depth, max_lookback)
+    if ls is None:
+        return _empty_chart_pattern_result()
+
+    head_price, rs_price, ls_price = lows[head], lows[rs], lows[ls]
+    if head_price >= min(ls_price, rs_price):
+        return _empty_chart_pattern_result()
+    if min(ls_price, rs_price) - head_price < min_head_prominence_atr * current_atr:
+        return _empty_chart_pattern_result()
+    if abs(ls_price - rs_price) > current_atr * price_tolerance_atr:
+        return _empty_chart_pattern_result()
+
+    ls_to_head = float(ls - head)
+    head_to_rs = float(head - rs)
+    if ls_to_head <= 0.0 or head_to_rs <= 0.0:
+        return _empty_chart_pattern_result()
+    time_diff_ratio = abs(ls_to_head - head_to_rs) / max(ls_to_head, head_to_rs)
+    if time_diff_ratio > time_tolerance:
+        return _empty_chart_pattern_result()
+
+    if not has_prior_trend(closes, ls, trend_bars, False):
+        return _empty_chart_pattern_result()
+
+    peak1 = find_nearest_confirmed_swing_high(highs, head + 1, depth, ls - head)
+    if peak1 is None or peak1 >= ls:
+        return _empty_chart_pattern_result()
+
+    peak2 = find_nearest_confirmed_swing_high(highs, rs + 1, depth, head - rs)
+    if peak2 is None or peak2 >= head:
+        return _empty_chart_pattern_result()
+
+    breakout_index = -1
+    for k in range(rs - 1, -1, -1):
+        neck_k = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], k)
+        if closes[k] > neck_k + current_atr * breakout_buffer_atr:
+            breakout_index = k
+            break
+
+    neckline_at_head = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], head)
+    target_reference = breakout_index if breakout_index >= 0 else rs
+    neckline_at_target = linear_interpolate(
+        peak1, highs[peak1], peak2, highs[peak2], target_reference
+    )
+
+    return ChartPatternResult(
+        found=True,
+        type=ChartPatternType.INV_HEAD_SHOULDERS,
+        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], rs),
+        extreme_price=head_price,
+        target=neckline_at_target + (neckline_at_head - head_price),
+        stop=rs_price - current_atr * breakout_buffer_atr,
+        breakout_index=breakout_index,
+    )
+
+
+def check_retest(
+    closes: Sequence[float],
+    touch_index: int,
+    boundary_price: float,
+    is_bullish_breakout: bool,
+    current_atr: float,
+    failure_tolerance_atr: float,
+    max_bars: int,
+) -> Optional[bool]:
+    """Direct port of CPT_CheckRetestArray. Returns None if touch_index < 0
+    (matching the MQL5 source's own False return -- 'holds' is not
+    meaningful in that case); otherwise returns whether the retest holds."""
+
+    if touch_index < 0:
+        return None
+
+    end = max(0, touch_index - max_bars)
+    for k in range(touch_index, end - 1, -1):
+        if k < 0:
+            break
+        if is_bullish_breakout:
+            if closes[k] < boundary_price - current_atr * failure_tolerance_atr:
+                return False
+        else:
+            if closes[k] > boundary_price + current_atr * failure_tolerance_atr:
+                return False
+    return True
+
+
 def detect_all_patterns(
     opens: Sequence[float],
     highs: Sequence[float],
@@ -275,6 +1103,8 @@ def detect_all_patterns(
     closes: Sequence[float],
     trend_lookback: int = 5,
     size_window: int = 20,
+    atr_values: Optional[Sequence[float]] = None,
+    swing_depth: Optional[int] = None,
 ) -> pd.DataFrame:
     """Runs every ported pattern at every valid logical index k, returning
     a DataFrame with one row per k and one boolean column per pattern.
@@ -290,6 +1120,18 @@ def detect_all_patterns(
     `closes[k + trend_lookback]` can silently wrap around to the END of
     the array (Python negative-index semantics) and compare against an
     unrelated bar instead of raising.
+
+    **TASK-033: 'atr_values'/'swing_depth' are OPT-IN (default None),
+    deliberately NOT changing this function's default 4-column output --
+    `Export_PatternDetectorResults.mq5` (TASK-037) was built to match
+    exactly that default shape, and changing it silently would break that
+    already-built export's comparability. Passing atr_values adds the
+    ATR-dependent columns (marubozu, tweezer top/bottom); passing
+    swing_depth additionally adds three_bar_reversal. Every OTHER new
+    TASK-033 pattern (dragonfly/gravestone rejection, doji, spinning top,
+    inside/outside bar, harami-detected/confirmed, morning/evening star,
+    three white soldiers/three black crows) needs neither and is always
+    included.**
     """
 
     if trend_lookback < 1:
@@ -300,23 +1142,35 @@ def detect_all_patterns(
     n = len(closes)
     rows = []
     for k in range(n):
-        rows.append(
-            {
-                "k": k,
-                "bullish_pin_bar": is_bullish_pin_bar(
-                    opens, highs, lows, closes, k, trend_lookback
-                ),
-                "bearish_pin_bar": is_bearish_pin_bar(
-                    opens, highs, lows, closes, k, trend_lookback
-                ),
-                "bullish_engulfing": is_bullish_engulfing(
-                    opens, highs, lows, closes, k, size_window
-                ),
-                "bearish_engulfing": is_bearish_engulfing(
-                    opens, highs, lows, closes, k, size_window
-                ),
-            }
-        )
+        harami_direction = detect_harami(opens, closes, k)
+        row = {
+            "k": k,
+            "bullish_pin_bar": is_bullish_pin_bar(opens, highs, lows, closes, k, trend_lookback),
+            "bearish_pin_bar": is_bearish_pin_bar(opens, highs, lows, closes, k, trend_lookback),
+            "bullish_engulfing": is_bullish_engulfing(opens, highs, lows, closes, k, size_window),
+            "bearish_engulfing": is_bearish_engulfing(opens, highs, lows, closes, k, size_window),
+            "dragonfly_rejection": is_dragonfly_rejection(opens, highs, lows, closes, k),
+            "gravestone_rejection": is_gravestone_rejection(opens, highs, lows, closes, k),
+            "doji": is_doji(opens, highs, lows, closes, k),
+            "spinning_top": is_spinning_top(opens, highs, lows, closes, k),
+            "inside_bar": is_inside_bar(highs, lows, k),
+            "outside_bar": is_outside_bar(highs, lows, k),
+            "harami_detected": harami_direction != HaramiDirection.NONE,
+            "harami_confirmed": is_harami_confirmed(closes, k, harami_direction),
+            "morning_star": is_morning_star(opens, highs, lows, closes, k),
+            "evening_star": is_evening_star(opens, highs, lows, closes, k),
+            "three_white_soldiers": is_three_white_soldiers(opens, highs, lows, closes, k),
+            "three_black_crows": is_three_black_crows(opens, highs, lows, closes, k),
+        }
+        if atr_values is not None:
+            row["marubozu"] = is_marubozu(opens, highs, lows, closes, atr_values, k)
+            row["tweezer_top"] = is_tweezer_top(opens, highs, lows, closes, atr_values, k)
+            row["tweezer_bottom"] = is_tweezer_bottom(opens, highs, lows, closes, atr_values, k)
+        if swing_depth is not None:
+            row["three_bar_reversal"] = is_three_bar_reversal(
+                highs, lows, opens, closes, k, swing_depth
+            )
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
