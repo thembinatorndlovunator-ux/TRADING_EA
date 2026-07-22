@@ -185,18 +185,33 @@ new-engine-only functionality. `01_BASELINE/` must not be modified.
 
 ## Files affected
 
+**Corrected, 2026-07-22 (Codex review finding, seventh round, P2 finding
+20): this list previously did not match commit `712d4c6` (the actual
+TASK-036 commit) -- it omitted `AsyncFillCorrelator.mqh`, the three
+Routing modules, and four MQL test scripts, while listing
+`analysis/schema.py`, which that commit never touched. Rebuilt directly
+from `git show --stat 712d4c6`.**
+
 - `03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/DecisionJournal.mqh`
 - `03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5` (including a
   new `OnTradeTransaction` handler for async `PLACED`-then-later-fill
   correlation -- added, 2026-07-22 Codex review finding, fifth round)
+- `03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/AsyncFillCorrelator.mqh`
+  (new)
 - `03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/OrderManager.mqh`
   (added, 2026-07-22 Codex review finding, fifth round -- previously
   omitted despite Specification item 4's async-fill correlation work
   requiring changes here)
+- `03_SOURCE_CODE/MQL5/Include/ThembaEA/Routing/ConflictResolver.mqh`
+- `03_SOURCE_CODE/MQL5/Include/ThembaEA/Routing/SignalScorer.mqh`
+- `03_SOURCE_CODE/MQL5/Include/ThembaEA/Routing/StrategyRouter.mqh`
+- `03_SOURCE_CODE/MQL5/Scripts/Test_AsyncFillCorrelator.mq5` (new)
+- `03_SOURCE_CODE/MQL5/Scripts/Test_DecisionJournal.mq5`
+- `03_SOURCE_CODE/MQL5/Scripts/Test_OrderManager.mq5`
+- `03_SOURCE_CODE/MQL5/Scripts/Test_StrategyRouter.mq5`
 - `TRADE_DECISION_SCHEMA.json`
-- `03_SOURCE_CODE/Python/analysis/schema.py`
-- `03_SOURCE_CODE/Python/data_collection/journal_reader.py` (remove the
-  now-fixed encoding caveat from its docstring once verified)
+- `03_SOURCE_CODE/Python/data_collection/journal_reader.py` (docstring-only
+  encoding-caveat update)
 - `TASKS.md` and this task file
 
 No file under `01_BASELINE/` may be modified.

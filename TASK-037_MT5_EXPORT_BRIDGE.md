@@ -280,13 +280,19 @@ own desktop MT5 session can do the latter.**
       `news_events.csv`.
 - [x] (built, not yet run) Pattern-detector export --
       `Export_PatternDetectorResults.mq5` runs the live
-      `CandlestickPatternEngine.mqh` predicates, **scoped to exactly the 4
-      patterns `pattern_validation.py`'s own `detect_all_patterns()`
-      currently computes** (bullish/bearish pin bar, bullish/bearish
-      engulfing) -- a stated scope decision, since `ChartPatternEngine.mqh`
-      and the other 14 candlestick predicates have no corresponding
-      Python-side implementation yet (TASK-033, not started) to compare
-      against. Extend this export once TASK-033 ships more.
+      `CandlestickPatternEngine.mqh` predicates. **Corrected, 2026-07-22
+      (Codex review finding, seventh round, P2 finding 20): this previously
+      said the export was scoped to only the original 4 patterns because
+      "TASK-033, not started" -- TASK-033 shipped 2026-07-22, and this same
+      review round's own P1 finding 11 fix extended the export to the FULL
+      matching set `detect_all_patterns()` now computes (all sixteen
+      always-included candlestick patterns plus marubozu/tweezer_top/
+      tweezer_bottom/three_bar_reversal), plus symbol/timestamp/OHLC/atr
+      provenance columns. `ChartPatternEngine.mqh`'s own chart patterns
+      (double/triple top/bottom, head-and-shoulders/inverse) are NOT
+      exported by this script -- that remains a genuine, separate,
+      not-yet-built export (see TASK-039's row in `TASKS.md` for the
+      chart-pattern side's own status).**
 - [x] (built, not yet run/labelled) Predicted-regime export + labelling
       protocol -- `Export_PredictedRegime.mq5` runs
       `MarketRegimeEngine.mqh`'s own `MRE_ClassifyArray` (the live

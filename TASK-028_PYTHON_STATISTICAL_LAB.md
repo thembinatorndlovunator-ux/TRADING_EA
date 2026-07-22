@@ -892,3 +892,55 @@ so this canonical file does not read as if history stopped at round 2.
   actually run it against a real/demo account, which this sandbox cannot
   do. P0-2 moves from "no export exists" to "export exists, real data
   does not yet" -- still not resolved, not silently claimed done.
+
+- **Round 7 (2026-07-22), a seventh independent Codex review** (requested
+  once round 6's 3 P0s reached the disposition this file's own round-6
+  entry above named, per that entry's own "a seventh independent review
+  should be requested once the 3 P0s have a resolution or an agreed
+  disposition" condition): **20 findings (10 P0, 9 P1, 1 P2), disposition
+  CHANGES REQUESTED**, written to
+  `09_HANDOVERS/codex_to_claude/TASK-028_review.md`. All 20 are now
+  resolved, each with a real fix, a regression test reproducing the exact
+  reported counterexample, and either a clean MetaEditor compile (0
+  errors/0 warnings; full evidence retained in
+  `09_HANDOVERS/compile_evidence/TASK-028_round7_full_compile_evidence_2026-07-22.txt`,
+  covering the EA and all 38 `Test_*.mq5`/`Export_*.mq5` scripts, not just
+  this round's own touched files) or a passing Python test suite (694
+  passed as of the last P1 fix; commits below run sequentially, so a
+  later commit's own test count supersedes an earlier one). All 10 P0s:
+  IntentManager's create-if-absent race (finding 1), the journal-to-
+  history identity/event schema mismatch (finding 2), the live order
+  path's hard-risk-policy gaps (finding 3), MT5-calendar decode/timing
+  bugs (finding 4), news fail-safe gaps (finding 5), IntradayModeRouter's
+  non-canonical formula now replaced with the real TASK-002 section 1
+  spec (finding 6), regime fail-open/non-journaled-failure behavior
+  (finding 7), end-of-day closure and exit-management ordering (finding
+  8), `Export_TradeHistory`'s multi-fill/reversal/cost/stop bugs (finding
+  9, now backed by a new pure `TradeHistoryAggregator.mqh` module), and
+  broker-timestamp UTC mislabeling (finding 10). All 9 P1s: pattern export
+  schema incompatibility + triple-top/bottom geometry (finding 11,
+  including wiring the triple detectors into `ChartPatternStrategy.mqh`'s
+  live path for the first time), the predicted-regime exporter rewritten
+  to replay the full gated state machine chronologically instead of the
+  raw stateless classifier (finding 12), a new `analysis/
+  equity_curve_metrics.py` Python consumer for the equity-tick export
+  (finding 13, closing round 6's own P0-2 for good), daily/weekly
+  baseline double-counting from a cash-flow-adjustment ordering bug
+  (finding 14), six Python domain-validation gaps across
+  `regime_validation.py`/`join_signal_to_outcome.py`/
+  `parameter_stability.py`/`trade_math.py` (finding 15), journal
+  vocabulary/signal_id-collision/file-locking/build-provenance issues
+  (finding 18, publisher-side; schema.py's own vocabulary fix is finding
+  17's own subject too), eight pipelines' result-CSV-before-provenance-
+  sidecar ordering plus several other provenance/resource-ceiling gaps
+  (finding 16), and permissive/unauthenticated research conventions --
+  `news_state` now a real `Literal["CLEAR", "BLACKOUT"]` and
+  `compare_releases.py`'s new period-coverage-ratio fields (finding 17).
+  The 1 P2 (finding 20) is this canonical-documentation-accuracy finding
+  itself -- resolved by this same history entry, `TASKS.md`'s own
+  corrected rows, `TASK-036`/`TASK-037`/`TASK-039`'s own corrected
+  sections, and a new `TASK-042_REMAINING_CHART_PATTERNS.md` registering
+  TASK-039's previously-unnamed remaining-chart-pattern owner under a
+  concrete task number. See
+  `09_HANDOVERS/claude_to_codex/TASK-028_round7_handover.md` for the full,
+  per-finding commit-by-commit account.

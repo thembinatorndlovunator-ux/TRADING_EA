@@ -134,18 +134,35 @@ No file under `01_BASELINE/` may be modified.
 ## Acceptance criteria
 
 **Status, 2026-07-22 -- a stated, honest scope decision under this
-sprint's own time constraints, not a silent partial claim:** of the 13
-families this task owns, **2 are built (triple top, triple bottom)** --
-the two lowest-risk, most direct extensions of the already-verified
-double top/bottom logic (same swing-finder plumbing, one additional
-peak/trough). **The remaining 11 (ascending/descending/symmetrical
-triangle, rectangle/consolidation box, bull/bear flag, pennant, rising/
-falling wedge, parallel channel) plus cup-and-handle are explicitly NOT
-built** -- each needs genuinely new trendline-slope-fitting design work
-(not a direct extension of existing swing-pivot logic the way triple
-top/bottom is), which this sprint's remaining time does not allow to do
-carefully. This gap is named here, not silently dropped; a future task
-must pick it up.
+sprint's own time constraints, not a silent partial claim.**
+
+**Corrected, 2026-07-22 (Codex review finding, seventh round, P2 finding
+20): the count below was previously internally inconsistent -- it
+described "the remaining 11" families and THEN separately said "plus
+cup-and-handle" as if that were a 12th item beyond the master set of 17,
+when cup-and-handle is one of the 17 and belongs inside that same
+"remaining" count. The arithmetic, stated explicitly: 17 total master-
+prompt-listed families = 4 built by TASK-033 (double top, double bottom,
+head-and-shoulders, inverse head-and-shoulders) + 2 built by this task
+(triple top, triple bottom) + 10 named below (triangles/rectangle/
+flags/pennant/wedges/channel) + 1 (cup-and-handle) = 17. Remaining and
+NOT built: 11 (the 10 named plus cup-and-handle), not "11 plus
+cup-and-handle" (which would total 18).**
+
+Of the 13 families this task owns (17 minus TASK-033's 4), **2 are built
+(triple top, triple bottom)** -- the two lowest-risk, most direct
+extensions of the already-verified double top/bottom logic (same
+swing-finder plumbing, one additional peak/trough). **The remaining 11
+(ascending/descending/symmetrical triangle, rectangle/consolidation box,
+bull/bear flag, pennant, rising/falling wedge, parallel channel, and
+cup-and-handle) are explicitly NOT built** -- each needs genuinely new
+trendline-slope-fitting design work (not a direct extension of existing
+swing-pivot logic the way triple top/bottom is), which this sprint's
+remaining time does not allow to do carefully. **This gap is now
+registered under a concrete numbered task, TASK-042 (not yet started,
+see `TASKS.md`), closing the "future owner unnamed" ownership gap this
+same review round's own finding flagged -- not left as an unassigned
+"a future task must pick it up."**
 
 - [x] Triple top/triple bottom implemented in `ChartPatternEngine.mqh`
       (`CPT_DetectTripleTopArray`/`CPT_DetectTripleBottomArray`, plus two
@@ -182,13 +199,15 @@ must pick it up.
 
 ## Status
 
-In progress, partial by explicit scope decision — triple top/triple
-bottom built, compiled clean (0 errors/0 warnings, real MetaEditor
-evidence), and ported to Python with cross-checked hand-verified
-fixtures (`Test_ChartPatternEngine.mq5` + `test_pattern_validation.py`,
-70 tests passing, full 655-test suite passes). The remaining 11
-trendline-slope-fitting pattern families and cup-and-handle are
-explicitly named as NOT built this sprint (see Acceptance criteria's own
-status note) — a future task must pick up that remaining, genuinely
-larger design effort. Independent review deferred to the consolidated
-end-of-sprint Codex review.
+Done, partial by explicit scope decision — triple top/triple bottom
+built, and (2026-07-22, Codex review round 7, P1 finding 11) their
+geometry corrected to the canonical spec (three-way pairwise tolerance,
+sloped neckline through both troughs/peaks) and wired into
+`ChartPatternStrategy.mqh`'s live trend-breakout-retest setup, matching
+the Python port exactly; both sides compile/pass clean (0 errors/0
+warnings; full Python suite passes). The remaining 11 families (10
+trendline-slope-fitting patterns plus cup-and-handle) are explicitly
+named as NOT built this sprint and are now registered under TASK-042 (see
+`TASKS.md`), not an unassigned "future task." Independent review: round 7
+of this project's consolidated Codex review process has reviewed this
+task's own work and found the finding above, which is now resolved.
