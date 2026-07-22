@@ -67,7 +67,14 @@ from analysis.csv_io import (
     read_csv_with_required_columns,
     sanitize_dataframe_for_csv,
 )
-from analysis.metrics import InsufficientSampleError, expectancy, profit_factor, win_rate
+from analysis.metrics import (
+    MAX_N_RESAMPLES,
+    MIN_N_RESAMPLES,
+    InsufficientSampleError,
+    expectancy,
+    profit_factor,
+    win_rate,
+)
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_utc_series
 
@@ -163,6 +170,19 @@ def compute_breakdown(
     missing = [d for d in dimensions if d not in df.columns]
     if missing:
         raise ValueError(f"compute_breakdown: dimension(s) not present in data: {missing}")
+    # **Added, 2026-07-22 Codex review finding (fifth round): n_resamples/
+    # confidence were previously validated only INSIDE expectancy()'s own
+    # bootstrap branch (n>=2 per group) -- a caller passing n_resamples=0
+    # was silently accepted whenever every group happened to be a
+    # singleton (no group ever reached n>=2, so the bootstrap call, and
+    # therefore the validation inside it, was never reached). Validated
+    # here UNCONDITIONALLY, independent of the data's actual group sizes.**
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], got {n_resamples}"
+        )
 
     has_r_multiple = "r_multiple" in df.columns
 

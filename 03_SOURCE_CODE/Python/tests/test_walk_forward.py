@@ -373,6 +373,25 @@ def test_zero_windows_does_not_crash(tmp_path):
     assert payload["summary"]["mean_test_expectancy_r"] is None
 
 
+def test_n_resamples_rejected_unconditionally_even_with_zero_windows(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    n_resamples/confidence were previously validated only INSIDE
+    _slice_metrics's own bootstrap call -- when zero windows are
+    generated, that call (and the validation inside it) is never reached
+    at all, silently accepting n_resamples=0. Must now raise regardless
+    of how many windows the data actually produces."""
+
+    path = tmp_path / "trades.csv"
+    pd.DataFrame([_row("t1", _BASE, 104.0, 10.0)]).to_csv(path, index=False)
+
+    with pytest.raises(ValueError):
+        run(path, train_days=365, test_days=365, step_days=365, n_resamples=0)
+    with pytest.raises(ValueError):
+        run(path, train_days=365, test_days=365, step_days=365, confidence=1.5)
+    with pytest.raises(ValueError):
+        run(path, train_days=365, test_days=365, step_days=365, n_resamples=10_000_000)
+
+
 def test_mean_test_expectancy_ignores_nan_windows_not_just_none(tmp_path):
     """Regression for a Codex review finding: `r is not None` does not
     filter out pandas' NaN (the empty-window sentinel a DataFrame column

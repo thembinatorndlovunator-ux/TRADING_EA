@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from analysis.compare_releases import (
+    MAX_N_RESAMPLES,
     MIN_N_PER_GROUP,
     MIN_N_RESAMPLES,
     main,
@@ -79,6 +80,20 @@ def test_below_minimum_n_resamples_rejected():
             [1.0] * MIN_N_PER_GROUP,
             [1.0] * MIN_N_PER_GROUP,
             n_resamples=MIN_N_RESAMPLES - 1,
+            seed=1,
+        )
+
+
+def test_above_maximum_n_resamples_rejected():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    no upper bound previously existed on n_resamples anywhere in this
+    project, permitting an accidental unbounded memory/time request."""
+
+    with pytest.raises(ValueError):
+        two_sample_bootstrap_diff(
+            [1.0] * MIN_N_PER_GROUP,
+            [1.0] * MIN_N_PER_GROUP,
+            n_resamples=MAX_N_RESAMPLES + 1,
             seed=1,
         )
 

@@ -127,6 +127,29 @@ def test_sweep_rejects_overflowing_mean_r_diff():
         sweep_giveback_percent([extreme_path, extreme_path], [60.0], arm_rr=1.25)
 
 
+def test_sweep_rejects_n_resamples_unconditionally_even_with_single_path():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    n_resamples/confidence were previously validated only INSIDE the
+    per-row bootstrap branch (reached only when a row has >= 2 paths) --
+    a caller passing n_resamples=0 with just ONE path was silently
+    accepted since the bootstrap call, and the validation inside it, was
+    never reached. Must now raise regardless of path count."""
+
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B], [40.0], n_resamples=0)
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B], [40.0], confidence=1.5)
+
+
+def test_sweep_rejects_n_resamples_above_upper_bound():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    no upper bound previously existed on n_resamples, permitting an
+    accidental unbounded memory/time request."""
+
+    with pytest.raises(ValueError):
+        sweep_giveback_percent([PATH_B, PATH_C], [40.0], n_resamples=10_000_000)
+
+
 # --- run() (CSV wrapper) ------------------------------------------------------
 
 

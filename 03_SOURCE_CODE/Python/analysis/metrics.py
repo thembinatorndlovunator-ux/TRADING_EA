@@ -40,6 +40,14 @@ class InsufficientSampleError(ValueError):
 
 
 MIN_N_RESAMPLES = 100  # below this a percentile bootstrap CI is not a defensible estimate
+# **Added, 2026-07-22 Codex review finding (fifth round): no bootstrap/
+# Monte Carlo entry point anywhere in this project bounded n_resamples
+# from above, permitting an accidental (or adversarial) unbounded memory/
+# time request. This is a documented resource ceiling, not a statistical
+# one -- every caller in this project uses far fewer resamples in
+# practice; raise it only with a deliberate reason, not to silence this
+# check.**
+MAX_N_RESAMPLES = 100_000
 
 
 @dataclass(frozen=True)
@@ -398,6 +406,11 @@ def bootstrap_confidence_interval(
         raise ValueError(
             f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round): no upper
+    # bound previously existed, permitting an accidental unbounded
+    # memory/time request.**
+    if n_resamples > MAX_N_RESAMPLES:
+        raise ValueError(f"n_resamples must be <= {MAX_N_RESAMPLES}, got {n_resamples}")
 
     import numpy as np
 

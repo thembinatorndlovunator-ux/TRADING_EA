@@ -75,6 +75,10 @@ from analysis.trade_math import compute_r_multiple
 NUMERIC_COLUMNS = ("entry_price", "exit_price", "stop_price", "profit")
 MIN_N_PER_GROUP = 10  # below this, a bootstrap CI cannot represent real uncertainty
 MIN_N_RESAMPLES = 100
+# **Added, 2026-07-22 Codex review finding (fifth round): no upper bound
+# previously existed on n_resamples, permitting an accidental unbounded
+# memory/time request.**
+MAX_N_RESAMPLES = 100_000
 
 
 def _load_trades_with_r_multiple(trades_csv: Path, symbol_filter: Optional[str]) -> pd.DataFrame:
@@ -176,6 +180,11 @@ def two_sample_bootstrap_diff(
         raise ValueError(
             f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round): no upper
+    # bound previously existed, permitting an accidental unbounded
+    # memory/time request.**
+    if n_resamples > MAX_N_RESAMPLES:
+        raise ValueError(f"n_resamples must be <= {MAX_N_RESAMPLES}, got {n_resamples}")
     if not all(math.isfinite(v) for v in baseline_values) or not all(
         math.isfinite(v) for v in candidate_values
     ):

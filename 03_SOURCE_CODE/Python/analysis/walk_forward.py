@@ -62,7 +62,13 @@ from analysis.csv_io import (
     parse_is_long,
     read_csv_with_required_columns,
 )
-from analysis.metrics import InsufficientSampleError, expectancy, win_rate
+from analysis.metrics import (
+    MAX_N_RESAMPLES,
+    MIN_N_RESAMPLES,
+    InsufficientSampleError,
+    expectancy,
+    win_rate,
+)
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
@@ -241,6 +247,20 @@ def run(
     'seed'/'n_resamples'/'confidence' feed every per-window expectancy
     bootstrap and win_rate Wilson interval (see module docstring's
     2026-07-22 correction) -- always explicit, never hidden."""
+
+    # **Added, 2026-07-22 Codex review finding (fifth round): n_resamples/
+    # confidence were previously validated only INSIDE _slice_metrics's
+    # bootstrap call -- if zero windows were generated (or every window's
+    # slice was too small to reach the bootstrap branch), that call, and
+    # therefore the validation inside it, was never reached, silently
+    # accepting e.g. n_resamples=0. Validated here UNCONDITIONALLY,
+    # independent of how many windows the data actually produces.**
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], got {n_resamples}"
+        )
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
     # link to an input is also caught -- Codex review finding, third round.

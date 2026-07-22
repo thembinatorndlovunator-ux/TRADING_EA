@@ -76,6 +76,10 @@ from analysis.resampling import seeded_bootstrap_indices
 
 REQUIRED_COLUMNS = {"trade_id", "profit"}
 MIN_N_RESAMPLES = 100  # below this a percentile scenario-bound estimate is not defensible
+# **Added, 2026-07-22 Codex review finding (fifth round): no upper bound
+# previously existed on n_resamples, permitting an accidental unbounded
+# memory/time request.**
+MAX_N_RESAMPLES = 100_000
 MIN_N_TRADES = 20  # **Added, 2026-07-22 Codex review finding:** below this, resampling
 # manufactures apparent precision the underlying sample cannot support
 # -- a direct probe with a single historical trade previously returned
@@ -150,6 +154,11 @@ def run_monte_carlo(
         raise ValueError(
             f"n_resamples must be >= {MIN_N_RESAMPLES} for a defensible CI, got {n_resamples}"
         )
+    # **Added, 2026-07-22 Codex review finding (fifth round): no upper
+    # bound previously existed, permitting an accidental unbounded
+    # memory/time request.**
+    if n_resamples > MAX_N_RESAMPLES:
+        raise ValueError(f"n_resamples must be <= {MAX_N_RESAMPLES}, got {n_resamples}")
     if not (0.0 < confidence < 1.0):
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
     if not all(math.isfinite(p) for p in pnl):

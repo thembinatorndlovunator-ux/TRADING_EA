@@ -8,7 +8,14 @@ import pytest
 
 from analysis.csv_io import CsvSchemaError
 from analysis.metrics import InsufficientSampleError
-from analysis.monte_carlo import MIN_N_RESAMPLES, MIN_N_TRADES, main, run, run_monte_carlo
+from analysis.monte_carlo import (
+    MAX_N_RESAMPLES,
+    MIN_N_RESAMPLES,
+    MIN_N_TRADES,
+    main,
+    run,
+    run_monte_carlo,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -74,6 +81,15 @@ def test_below_minimum_n_resamples_rejected():
     with pytest.raises(ValueError):
         run_monte_carlo(VALID_PNL_20, n_resamples=1, seed=1)
     assert MIN_N_RESAMPLES > 1
+
+
+def test_above_maximum_n_resamples_rejected():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    no upper bound previously existed on n_resamples anywhere in this
+    project, permitting an accidental unbounded memory/time request."""
+
+    with pytest.raises(ValueError):
+        run_monte_carlo(VALID_PNL_20, n_resamples=MAX_N_RESAMPLES + 1, seed=1)
 
 
 def test_rejects_aggregate_overflow_even_when_individual_resamples_are_finite():

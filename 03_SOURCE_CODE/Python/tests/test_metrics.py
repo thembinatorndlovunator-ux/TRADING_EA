@@ -238,6 +238,15 @@ def test_bootstrap_ci_rejects_below_min_resamples():
         bootstrap_confidence_interval([1.0, 2.0, 3.0], n_resamples=50, seed=1)
 
 
+def test_bootstrap_ci_rejects_above_max_resamples():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    no upper bound previously existed on n_resamples anywhere in this
+    project, permitting an accidental unbounded memory/time request."""
+
+    with pytest.raises(ValueError):
+        bootstrap_confidence_interval([1.0, 2.0, 3.0], n_resamples=10_000_000, seed=1)
+
+
 def test_bootstrap_ci_rejects_confidence_out_of_range():
     """Regression for a Codex review finding: confidence 0 or 1 with a
     single resample previously returned a degenerate interval instead of

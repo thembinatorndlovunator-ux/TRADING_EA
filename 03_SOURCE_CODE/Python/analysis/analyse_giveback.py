@@ -59,7 +59,13 @@ from analysis.csv_io import (
     sanitize_dataframe_for_csv,
 )
 from analysis.exit_simulation import simulate_giveback_path
-from analysis.metrics import InsufficientSampleError, bootstrap_confidence_interval, win_rate
+from analysis.metrics import (
+    MAX_N_RESAMPLES,
+    MIN_N_RESAMPLES,
+    InsufficientSampleError,
+    bootstrap_confidence_interval,
+    win_rate,
+)
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import compute_r_multiple
@@ -117,6 +123,15 @@ def run(
     # real seed of 0, a real reproducibility-breaking mismatch. Always an
     # explicit int now, matching monte_carlo.py/compare_releases.py.**
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (fifth round): the two
+    # bootstrap calls below previously hard-coded n_resamples=2000/
+    # confidence=0.95 (matching bootstrap_confidence_interval's own
+    # defaults) with no way for a caller to override or even discover
+    # what was actually used -- the persisted summary independently
+    # hard-coded the SAME two literals rather than reporting the real
+    # values.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
     # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
     # slippage_note exist on ReportMetadata but no analysis caller exposed
     # or populated them.**
@@ -147,6 +162,19 @@ def run(
     if non_finite_params:
         raise ValueError(
             f"analyse_giveback: model parameters must be finite, got non-finite: {non_finite_params}"
+        )
+    # **Added, 2026-07-22 Codex review finding (fifth round): n_resamples/
+    # confidence were previously validated only INSIDE the two
+    # bootstrap_confidence_interval calls below, each gated on its own
+    # subset having >= 2 observations -- a caller passing n_resamples=0
+    # was silently accepted whenever both subsets were too small to ever
+    # reach either call. Validated here UNCONDITIONALLY, independent of
+    # how many trades/triggers the data actually produces.**
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], got {n_resamples}"
         )
     # The effective (post-clamp) values applied by exit_simulation.py's own
     # should_giveback_close_v637/v811 -- mirrored here (not re-derived) so
@@ -342,7 +370,13 @@ def run(
                 # finding: this mean previously had NO interval at all).
                 if len(triggered) >= 2:
                     r_diffs = [getattr(c, f"{model}_r_diff") for c in triggered]
-                    boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed)
+                    boot = bootstrap_confidence_interval(
+                        r_diffs,
+                        statistic="mean",
+                        seed=seed,
+                        n_resamples=n_resamples,
+                        confidence=confidence,
+                    )
                     r_diff_ci_lower = boot.ci_lower
                     r_diff_ci_upper = boot.ci_upper
             # **Added, 2026-07-22 Codex review finding (fourth round):**
@@ -361,7 +395,11 @@ def run(
             full_cohort_ci_upper = None
             if len(full_cohort_r_diffs) >= 2:
                 boot_full = bootstrap_confidence_interval(
-                    full_cohort_r_diffs, statistic="mean", seed=seed
+                    full_cohort_r_diffs,
+                    statistic="mean",
+                    seed=seed,
+                    n_resamples=n_resamples,
+                    confidence=confidence,
                 )
                 full_cohort_ci_lower = boot_full.ci_lower
                 full_cohort_ci_upper = boot_full.ci_upper
@@ -373,18 +411,24 @@ def run(
                 "mean_r_diff_when_triggered_ci_upper": r_diff_ci_upper,
                 # **Added, 2026-07-22 Codex review finding (third round):**
                 # confidence/resample count were previously omitted from
-                # the persisted output entirely.
-                "mean_r_diff_confidence": 0.95 if len(triggered) >= 2 else None,
-                "mean_r_diff_n_resamples": 2000 if len(triggered) >= 2 else None,
+                # the persisted output entirely. **Fixed, 2026-07-22 Codex
+                # review finding (fifth round): these previously hard-coded
+                # the LITERALS 0.95/2000 (matching bootstrap_confidence_
+                # interval's own defaults) instead of the caller's actual
+                # 'confidence'/'n_resamples' arguments -- a caller who
+                # overrode either got a report that silently lied about
+                # what was actually used.**
+                "mean_r_diff_confidence": confidence if len(triggered) >= 2 else None,
+                "mean_r_diff_n_resamples": n_resamples if len(triggered) >= 2 else None,
                 "mean_r_diff_seed": seed if len(triggered) >= 2 else None,
                 "mean_r_diff_full_cohort": mean_r_diff_full_cohort,
                 "mean_r_diff_full_cohort_ci_lower": full_cohort_ci_lower,
                 "mean_r_diff_full_cohort_ci_upper": full_cohort_ci_upper,
                 "mean_r_diff_full_cohort_confidence": (
-                    0.95 if len(full_cohort_r_diffs) >= 2 else None
+                    confidence if len(full_cohort_r_diffs) >= 2 else None
                 ),
                 "mean_r_diff_full_cohort_n_resamples": (
-                    2000 if len(full_cohort_r_diffs) >= 2 else None
+                    n_resamples if len(full_cohort_r_diffs) >= 2 else None
                 ),
                 "mean_r_diff_full_cohort_seed": seed if len(full_cohort_r_diffs) >= 2 else None,
             }
@@ -400,7 +444,10 @@ def run(
                 # guard help when it fires?" vs. "how often does the
                 # guard help across every trade?") are answerable.
                 try:
-                    wr = win_rate([getattr(c, f"{model}_r_diff") > 0.0 for c in triggered])
+                    wr = win_rate(
+                        [getattr(c, f"{model}_r_diff") > 0.0 for c in triggered],
+                        confidence=confidence,
+                    )
                     model_summary["guard_helped_rate_when_triggered"] = wr.win_rate
                     model_summary["guard_helped_rate_when_triggered_ci"] = [
                         wr.ci_lower,
@@ -420,7 +467,7 @@ def run(
                     and getattr(c, f"{model}_r_diff") > 0.0
                     for c in comparisons
                 ]
-                wr_full = win_rate(full_cohort_outcomes)
+                wr_full = win_rate(full_cohort_outcomes, confidence=confidence)
                 model_summary["guard_helped_rate_full_cohort"] = wr_full.win_rate
                 model_summary["guard_helped_rate_full_cohort_ci"] = [
                     wr_full.ci_lower,
@@ -449,6 +496,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v811-floor-r", type=float, default=0.1)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-resamples", type=int, default=2000)
+    parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--spread-note", default=None)
     parser.add_argument("--slippage-note", default=None)
     return parser
@@ -469,6 +518,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             v811_floor_r=args.v811_floor_r,
             symbol=args.symbol,
             seed=args.seed,
+            n_resamples=args.n_resamples,
+            confidence=args.confidence,
             spread_note=args.spread_note,
             slippage_note=args.slippage_note,
         )

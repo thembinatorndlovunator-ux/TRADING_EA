@@ -182,6 +182,40 @@ def test_nan_model_parameters_rejected_not_silently_clamped(tmp_path):
         )
 
 
+def test_n_resamples_rejected_unconditionally_even_with_single_trade(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    n_resamples/confidence were previously validated only INSIDE the two
+    bootstrap_confidence_interval calls, each gated on its own subset
+    having >= 2 observations -- a single-trade run (both the triggered
+    subset and the full cohort have exactly 1 comparison) previously
+    NEVER reached either call, silently accepting n_resamples=0. Must now
+    raise regardless of how many trades are actually compared."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path, [101.0, 102.0, 104.0, 101.4, 100.6])
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T04:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    with pytest.raises(ValueError):
+        run(trades_path, bars_path, n_resamples=0)
+    with pytest.raises(ValueError):
+        run(trades_path, bars_path, confidence=1.5)
+    with pytest.raises(ValueError):
+        run(trades_path, bars_path, n_resamples=10_000_000)
+
+
 def test_summary_persists_requested_and_effective_model_params(tmp_path):
     """Regression for a Codex review finding (2026-07-22, fourth round):
     an out-of-range-but-finite setting is silently clamped by

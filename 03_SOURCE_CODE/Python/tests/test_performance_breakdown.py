@@ -145,6 +145,24 @@ def test_compute_breakdown_rejects_dimension_outside_whitelist():
         compute_breakdown(df, ["trade_id"])
 
 
+def test_compute_breakdown_rejects_n_resamples_unconditionally_when_every_group_is_singleton():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    n_resamples/confidence were previously validated only INSIDE
+    expectancy()'s own bootstrap branch (n>=2 per group) -- a caller
+    passing n_resamples=0 was silently accepted whenever every group
+    happened to be a singleton (n==1), since the bootstrap call, and the
+    validation inside it, was never reached. Must now raise regardless of
+    the data's actual group sizes."""
+
+    df = pd.DataFrame({"trade_id": ["t1", "t2"], "strategy": ["A", "B"], "profit": [10.0, 20.0]})
+    with pytest.raises(ValueError):
+        compute_breakdown(df, ["strategy"], n_resamples=0)
+    with pytest.raises(ValueError):
+        compute_breakdown(df, ["strategy"], confidence=1.5)
+    with pytest.raises(ValueError):
+        compute_breakdown(df, ["strategy"], n_resamples=10_000_000)
+
+
 def test_compute_breakdown_reports_r_multiple_expectancy_when_present():
     """Regression for a Codex review finding (2026-07-22, third round):
     the documented r_multiple input was accepted but never used -- only

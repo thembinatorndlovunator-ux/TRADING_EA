@@ -58,7 +58,7 @@ from analysis.csv_io import (
     read_csv_with_required_columns,
 )
 from analysis.exit_simulation import simulate_giveback_path
-from analysis.metrics import bootstrap_confidence_interval
+from analysis.metrics import MAX_N_RESAMPLES, MIN_N_RESAMPLES, bootstrap_confidence_interval
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 
 REQUIRED_COLUMNS = {"path_id", "bar_index", "r_value"}
@@ -144,6 +144,13 @@ def sweep_giveback_percent(
     arm_rr: float = 1.25,
     close_trigger_floor_r: float = 0.05,
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (fifth round): the
+    # bootstrap call below previously hard-coded n_resamples=2000/
+    # confidence=0.95 (bootstrap_confidence_interval's own defaults),
+    # with no way for a caller to override or discover what was used --
+    # matching the same gap already fixed in analyse_giveback.py.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
 ) -> list[StabilityRow]:
     """For each value in 'giveback_percents', simulates the V6.37 giveback
     guard against every path in 'r_paths' (each path's actual final R is
@@ -162,6 +169,19 @@ def sweep_giveback_percent(
 
     if not r_paths:
         raise ValueError("sweep_giveback_percent: r_paths must not be empty")
+    # **Added, 2026-07-22 Codex review finding (fifth round): validated
+    # UNCONDITIONALLY here rather than only inside the per-row bootstrap
+    # branch below, matching the same fix already applied to
+    # analyse_giveback.py/performance_breakdown.py/walk_forward.py --
+    # bad n_resamples/confidence must be rejected even if every row
+    # happens to have fewer than 2 paths and never reaches that branch.**
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"sweep_giveback_percent: confidence must be in (0, 1), got {confidence}")
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"sweep_giveback_percent: n_resamples must be in [{MIN_N_RESAMPLES}, "
+            f"{MAX_N_RESAMPLES}], got {n_resamples}"
+        )
     if not giveback_percents:
         raise ValueError("sweep_giveback_percent: giveback_percents must not be empty")
     if any(not p for p in r_paths):
@@ -230,7 +250,13 @@ def sweep_giveback_percent(
         # bootstrap_confidence_interval already computes correctly for
         # zero-variance data -- see its own test coverage.**
         if len(r_diffs) >= 2:
-            boot = bootstrap_confidence_interval(r_diffs, statistic="mean", seed=seed)
+            boot = bootstrap_confidence_interval(
+                r_diffs,
+                statistic="mean",
+                seed=seed,
+                n_resamples=n_resamples,
+                confidence=confidence,
+            )
             ci_lower, ci_upper = boot.ci_lower, boot.ci_upper
 
         rows.append(
@@ -255,6 +281,8 @@ def run(
     arm_rr: float = 1.25,
     close_trigger_floor_r: float = 0.05,
     seed: int = 42,
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
     symbol: Optional[str] = None,
     # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
     # slippage_note exist on ReportMetadata but no analysis caller exposed
@@ -285,6 +313,8 @@ def run(
         arm_rr=arm_rr,
         close_trigger_floor_r=close_trigger_floor_r,
         seed=seed,
+        n_resamples=n_resamples,
+        confidence=confidence,
     )
     result = pd.DataFrame([r.__dict__ for r in rows])
 
@@ -315,8 +345,13 @@ def run(
                 # row's CI was likewise omitted.
                 "arm_rr": arm_rr,
                 "close_trigger_floor_r": close_trigger_floor_r,
-                "bootstrap_confidence": 0.95,
-                "bootstrap_n_resamples": 2000,
+                # **Fixed, 2026-07-22 Codex review finding (fifth round):**
+                # these previously hard-coded the LITERALS 0.95/2000
+                # regardless of what was actually passed to
+                # sweep_giveback_percent, silently lying to a caller who
+                # overrode either.
+                "bootstrap_confidence": confidence,
+                "bootstrap_n_resamples": n_resamples,
             },
         }
         atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
@@ -336,6 +371,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--arm-rr", type=float, default=1.25)
     parser.add_argument("--close-trigger-floor-r", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-resamples", type=int, default=2000)
+    parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--spread-note", default=None)
     parser.add_argument("--slippage-note", default=None)
@@ -353,6 +390,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             arm_rr=args.arm_rr,
             close_trigger_floor_r=args.close_trigger_floor_r,
             seed=args.seed,
+            n_resamples=args.n_resamples,
+            confidence=args.confidence,
             symbol=args.symbol,
             spread_note=args.spread_note,
             slippage_note=args.slippage_note,
