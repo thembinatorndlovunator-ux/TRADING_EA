@@ -44,6 +44,21 @@ def test_compute_r_multiple_rejects_overflow_to_non_finite():
         compute_r_multiple(True, 100.0, 100.0 - 1e-10, 1e300)
 
 
+def test_compute_r_multiple_rejects_overflowed_intermediate_risk_distance():
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 15): entry_price=1e308, initial_stop_price=-1e308, price=0.0
+    are all individually finite, but risk_distance = entry - stop overflows
+    to +inf (2e308 exceeds the double range) while favor_distance stays a
+    finite -1e308. -1e308 / inf previously evaluated silently to -0.0 -- a
+    plausible-looking but mathematically WRONG result (the true ratio,
+    without the intermediate overflow, is -0.5) -- and slipped past the
+    sixth-round fix's "only check the final result" guard because -0.0 IS
+    finite. This must now raise, not silently return -0.0."""
+
+    with pytest.raises(ValueError):
+        compute_r_multiple(True, 1e308, -1e308, 0.0)
+
+
 # --- compute_mfe_mae --------------------------------------------------------
 
 

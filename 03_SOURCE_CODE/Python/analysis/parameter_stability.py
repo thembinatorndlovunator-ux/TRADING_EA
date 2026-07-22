@@ -192,7 +192,17 @@ def _load_r_paths_from_csv(path: Path) -> tuple[list[list[float]], str]:
     left open here. Returns the hash from this single read.**
     """
 
-    df, file_hash = read_csv_with_required_columns_and_hash(path, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 15): path_id was previously read with pandas' own inferred dtype --
+    # a CSV containing purely-numeric-looking path_id values (e.g. "001"
+    # and "1") silently collapsed to the SAME numeric value (leading
+    # zeroes discarded), exactly the durable-identifier dtype bug
+    # 'read_csv_with_required_columns_and_hash' already documents its own
+    # 'dtype' parameter exists to prevent (see csv_io.py) -- this call
+    # simply never used it for 'path_id'.**
+    df, file_hash = read_csv_with_required_columns_and_hash(
+        path, REQUIRED_COLUMNS, dtype={"path_id": str}
+    )
     if df.empty:
         raise CsvSchemaError(f"{path}: zero rows")
     assert_finite_columns(df, ["bar_index", "r_value"], path)

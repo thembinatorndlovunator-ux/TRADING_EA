@@ -277,6 +277,77 @@ def test_structure_read_failure_modeled_as_neutral_caller_supplied_bias():
     # attempt (see module docstring).
 
 
+# --- Non-finite/zero-divisor domain validation (Codex review finding, ----------
+# seventh round, P1 finding 15) -------------------------------------------------
+# A NaN current_atr previously slipped past the `current_atr <= 0.0` guard
+# (NaN comparisons are always False in Python) and could still classify as a
+# "valid" result; a zero trend_slope_atr_divisor previously raised a raw
+# ZeroDivisionError instead of a clean domain error.
+
+
+def test_classify_rejects_nan_current_atr():
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            float("nan"),
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **COMMON_KWARGS,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_infinite_ema_now():
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=float("inf"),
+            ema_prior=100.0,
+            adx_now=50.0,
+            **COMMON_KWARGS,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_zero_trend_slope_atr_divisor():
+    kwargs = dict(COMMON_KWARGS)
+    kwargs["trend_slope_atr_divisor"] = 0.0
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **kwargs,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_non_finite_closes():
+    bad_closes = [104.0, float("nan"), 102.0, 101.0, 100.0]
+    with pytest.raises(ValueError):
+        classify(
+            bad_closes,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **COMMON_KWARGS,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
 # --- is_untradeable_spread_or_liquidity (gating override) ----------------------
 # Cross-checked directly against Test_MarketRegimeEngine.mq5's own hand-traced
 # assertions (section 8) -- identical input values, identical expected results.
@@ -316,6 +387,20 @@ def test_hysteresis_full_scenario_matches_mql5_cross_check():
 
     e5 = apply_hysteresis(state, Regime.NEWS_BLACKOUT, True, 2)
     assert e5 == Regime.NEWS_BLACKOUT  # bypass takes effect immediately
+
+
+def test_apply_hysteresis_rejects_non_positive_required_bars():
+    """Codex review finding (seventh round, P1 finding 15):
+    required_bars=0 was previously accepted even though a confirmation-bar
+    count must be positive -- required_bars=0 makes
+    `pending_count >= required_bars` true on the FIRST ever pending read,
+    confirming a regime with zero actual hysteresis at all."""
+
+    state = init_hysteresis_state()
+    with pytest.raises(ValueError):
+        apply_hysteresis(state, Regime.TRENDING_UP, False, required_bars=0)
+    with pytest.raises(ValueError):
+        apply_hysteresis(state, Regime.TRENDING_UP, False, required_bars=-1)
 
 
 def test_hysteresis_borderline_flapping_input_never_confirms():
@@ -363,23 +448,23 @@ def test_transition_history_records_only_genuine_confirmed_transitions():
     history = RegimeTransitionHistory(max_entries=10)
 
     # First call ever -- nothing to transition FROM yet, must not record.
-    history.record_confirmed(1, Regime.TRENDING_UP)
+    history.record_confirmed(1, Regime.TRENDING_UP, True)
     assert len(history) == 0
 
     # Repeated confirmation of the SAME regime -- never a transition.
-    history.record_confirmed(2, Regime.TRENDING_UP)
-    history.record_confirmed(3, Regime.TRENDING_UP)
+    history.record_confirmed(2, Regime.TRENDING_UP, True)
+    history.record_confirmed(3, Regime.TRENDING_UP, True)
     assert len(history) == 0
 
     # A genuine change -- exactly one transition recorded.
-    history.record_confirmed(4, Regime.RANGING)
+    history.record_confirmed(4, Regime.RANGING, True)
     assert len(history) == 1
     assert history.entries[0].timestamp == 4
     assert history.entries[0].from_regime == Regime.TRENDING_UP
     assert history.entries[0].to_regime == Regime.RANGING
 
     # Another genuine change.
-    history.record_confirmed(5, Regime.COMPRESSION)
+    history.record_confirmed(5, Regime.COMPRESSION, True)
     assert len(history) == 2
     assert history.entries[1].from_regime == Regime.RANGING
     assert history.entries[1].to_regime == Regime.COMPRESSION
@@ -387,13 +472,13 @@ def test_transition_history_records_only_genuine_confirmed_transitions():
 
 def test_transition_history_evicts_oldest_entry_at_capacity():
     history = RegimeTransitionHistory(max_entries=2)
-    history.record_confirmed(0, Regime.TRENDING_UP)  # seeds _last_confirmed_regime, no entry
-    history.record_confirmed(1, Regime.RANGING)  # transition 1: TRENDING_UP -> RANGING
-    history.record_confirmed(2, Regime.COMPRESSION)  # transition 2: RANGING -> COMPRESSION
+    history.record_confirmed(0, Regime.TRENDING_UP, True)  # seeds _last_confirmed_regime, no entry
+    history.record_confirmed(1, Regime.RANGING, True)  # transition 1: TRENDING_UP -> RANGING
+    history.record_confirmed(2, Regime.COMPRESSION, True)  # transition 2: RANGING -> COMPRESSION
     assert len(history) == 2
 
     # A third transition exceeds capacity -- the OLDEST entry is evicted.
-    history.record_confirmed(3, Regime.TRENDING_DOWN)  # transition 3: COMPRESSION -> TRENDING_DOWN
+    history.record_confirmed(3, Regime.TRENDING_DOWN, True)  # transition 3: COMPRESSION -> TRENDING_DOWN
     assert len(history) == 2
     assert history.entries[0].from_regime == Regime.RANGING  # transition 1 evicted
     assert history.entries[0].to_regime == Regime.COMPRESSION
@@ -406,10 +491,42 @@ def test_transition_history_rejects_non_positive_max_entries():
         RegimeTransitionHistory(max_entries=0)
 
 
+def test_transition_history_ignores_pre_confirmation_sentinel_calls():
+    """Codex review finding (seventh round, P1 finding 15): before
+    hysteresis's first genuine confirmation, apply_hysteresis() returns the
+    TRANSITION_OR_UNCERTAIN sentinel -- calling record_confirmed with that
+    sentinel and has_confirmed=False (the real caller pattern, threading
+    state.has_confirmed straight through) must never seed
+    _last_confirmed_regime nor record a phantom transition once the FIRST
+    real confirmation later arrives."""
+
+    history = RegimeTransitionHistory(max_entries=10)
+
+    # Several bars before hysteresis has confirmed anything -- these must
+    # be ignored entirely, exactly mirroring what a caller thread would
+    # look like: apply_hysteresis() returns TRANSITION_OR_UNCERTAIN,
+    # state.has_confirmed is still False.
+    history.record_confirmed(1, Regime.TRANSITION_OR_UNCERTAIN, False)
+    history.record_confirmed(2, Regime.TRANSITION_OR_UNCERTAIN, False)
+    assert len(history) == 0
+
+    # The FIRST genuine confirmation must NOT be recorded as a transition
+    # FROM the sentinel -- there is nothing to transition from yet.
+    history.record_confirmed(3, Regime.TRENDING_UP, True)
+    assert len(history) == 0
+
+    # A genuine subsequent change IS recorded, and correctly FROM
+    # TRENDING_UP (the first real confirmation), never from the sentinel.
+    history.record_confirmed(4, Regime.RANGING, True)
+    assert len(history) == 1
+    assert history.entries[0].from_regime == Regime.TRENDING_UP
+    assert history.entries[0].to_regime == Regime.RANGING
+
+
 def test_transition_history_entries_property_is_a_defensive_copy():
     history = RegimeTransitionHistory(max_entries=10)
-    history.record_confirmed(0, Regime.TRENDING_UP)
-    history.record_confirmed(1, Regime.RANGING)
+    history.record_confirmed(0, Regime.TRENDING_UP, True)
+    history.record_confirmed(1, Regime.RANGING, True)
 
     entries = history.entries
     entries.append("not_a_real_entry")  # mutating the returned list itself

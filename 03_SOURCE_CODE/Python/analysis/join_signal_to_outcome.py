@@ -265,8 +265,21 @@ def _direction_matches_is_long(direction: object, is_long: object) -> bool:
             is_long_bool = False
         else:
             return False  # unparseable is_long string is a conflict, not a silent False
+    # **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 15): the previous `else: is_long_bool = bool(is_long)` branch
+    # accepted ANY object via Python's own truthiness rules -- a numeric
+    # is_long=2 (not a valid boolean encoding under this project's own
+    # true/false convention) was silently accepted as truthy ("long"),
+    # exactly like a genuine True. Only an actual bool, or a canonical
+    # 1/0 numeric encoding, is now recognized; anything else is a
+    # conflict, matching the string branch's own strict "unrecognized is
+    # a conflict, never silently coerced" behavior.**
+    elif is_long is True or is_long == 1:
+        is_long_bool = True
+    elif is_long is False or is_long == 0:
+        is_long_bool = False
     else:
-        is_long_bool = bool(is_long)
+        return False  # unrecognized is_long value is a conflict, not silently coerced via bool()
     return (direction_str == "BUY") == is_long_bool
 
 

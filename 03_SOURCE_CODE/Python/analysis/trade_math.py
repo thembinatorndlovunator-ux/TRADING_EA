@@ -37,15 +37,39 @@ def compute_r_multiple(
     already either catches ValueError as a per-row error or lets it
     propagate to its own CLI's existing ValueError handler, so this
     raise does not change either pipeline's error-reporting shape.**
+
+    **Extended, 2026-07-22 Codex review finding (seventh round, P1 finding
+    15): the sixth-round fix only checked the FINAL ratio -- with finite
+    entry_price=1e308, initial_stop_price=-1e308, price=0.0 (all
+    individually finite), risk_distance = entry - stop overflows to +inf
+    (2e308 exceeds the double range) while favor_distance stays a finite
+    -1e308. -1e308 / inf silently evaluates to -0.0, a plausible-looking
+    but mathematically WRONG result (the true ratio, without the
+    intermediate overflow, is -0.5) -- and it slipped past the old
+    "only check the final result" guard because -0.0 IS finite. Both
+    intermediate distances are now checked for finiteness immediately
+    after being computed, before either is used for the `<= 0.0` gate or
+    the division.**
     """
 
     risk_distance = (
         (entry_price - initial_stop_price) if is_long else (initial_stop_price - entry_price)
     )
+    if not math.isfinite(risk_distance):
+        raise ValueError(
+            f"compute_r_multiple: risk_distance overflowed to a non-finite value "
+            f"({risk_distance!r}) from entry_price={entry_price!r}, "
+            f"initial_stop_price={initial_stop_price!r}"
+        )
     if risk_distance <= 0.0:
         return 0.0
 
     favor_distance = (price - entry_price) if is_long else (entry_price - price)
+    if not math.isfinite(favor_distance):
+        raise ValueError(
+            f"compute_r_multiple: favor_distance overflowed to a non-finite value "
+            f"({favor_distance!r}) from entry_price={entry_price!r}, price={price!r}"
+        )
     r_multiple = favor_distance / risk_distance
     if not math.isfinite(r_multiple):
         raise ValueError(

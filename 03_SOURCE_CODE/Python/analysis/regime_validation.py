@@ -66,6 +66,7 @@ transition-history buffer, all ported from ``MarketRegimeEngine.mqh``:**
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Sequence
@@ -127,6 +128,35 @@ def classify(
     n = len(closes)
     if efficiency_window <= 0 or efficiency_window >= n:
         return invalid
+
+    # **Added, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 15): non-finite inputs (NaN/inf) must be rejected outright, not
+    # silently propagated through _clamp01 -- a NaN current_atr previously
+    # slipped past the `current_atr <= 0.0` guard below (NaN comparisons
+    # are always False in Python) and could still classify as a "valid"
+    # TRENDING_UP/etc. result. A zero trend_slope_atr_divisor previously
+    # raised a raw ZeroDivisionError instead of a clean domain error.**
+    scalar_inputs = {
+        "current_atr": current_atr,
+        "ema_now": ema_now,
+        "ema_prior": ema_prior,
+        "adx_now": adx_now,
+        "trend_threshold": trend_threshold,
+        "expansion_threshold": expansion_threshold,
+        "compression_threshold": compression_threshold,
+        "min_efficiency": min_efficiency,
+        "trend_slope_atr_divisor": trend_slope_atr_divisor,
+        "swing_agreement": swing_agreement,
+    }
+    for name, value in scalar_inputs.items():
+        if not math.isfinite(value):
+            raise ValueError(f"classify: {name} must be finite, got {value!r}")
+    if trend_slope_atr_divisor == 0.0:
+        raise ValueError("classify: trend_slope_atr_divisor must not be zero")
+    if any(not math.isfinite(c) for c in closes):
+        raise ValueError("classify: 'closes' contains a non-finite value")
+    if any(not math.isfinite(v) for v in atr_percentile_values):
+        raise ValueError("classify: 'atr_percentile_values' contains a non-finite value")
 
     # --- Efficiency ratio ----------------------------------------------------
     num = abs(closes[0] - closes[efficiency_window])
@@ -246,6 +276,14 @@ def apply_hysteresis(
     TRANSITION_OR_UNCERTAIN rather than a half-confirmed guess, matching
     the MQL5 source exactly."""
 
+    # **Added, 2026-07-22 Codex review finding (seventh round, P1 finding
+    # 15): required_bars=0 was previously accepted even though a
+    # confirmation-bar count must be positive -- required_bars=0 makes
+    # `pending_count >= required_bars` true on the FIRST ever pending read,
+    # confirming a regime with zero actual hysteresis at all.**
+    if required_bars <= 0:
+        raise ValueError(f"apply_hysteresis: required_bars must be positive, got {required_bars}")
+
     if bypass_hysteresis:
         state.confirmed_regime = raw_regime
         state.has_confirmed = True
@@ -302,15 +340,37 @@ class RegimeTransitionHistory:
         self._entries: list[RegimeTransition] = []
         self._last_confirmed_regime: Optional[Regime] = None
 
-    def record_confirmed(self, timestamp: object, confirmed_regime: Regime) -> None:
-        """Call once per bar with apply_hysteresis()'s own return value
-        (the CONFIRMED/effective regime, never the raw pre-hysteresis
-        read). Appends a new entry ONLY when the confirmed regime
+    def record_confirmed(
+        self, timestamp: object, confirmed_regime: Regime, has_confirmed: bool
+    ) -> None:
+        """Call once per bar with apply_hysteresis()'s own return value AND
+        the SAME RegimeHysteresisState's own 'has_confirmed' flag (i.e.
+        'state.has_confirmed' right after that same apply_hysteresis()
+        call) -- appends a new entry ONLY when the confirmed regime
         genuinely differs from the last one recorded -- repeated
         confirmations of the same regime (the common case, bar after
         bar) never append a duplicate entry. Evicts the oldest entry once
         max_entries is exceeded (a true ring buffer, not an unbounded
-        list)."""
+        list).
+
+        **Fixed, 2026-07-22 Codex review finding (seventh round, P1 finding
+        15): before hysteresis's FIRST genuine confirmation,
+        apply_hysteresis() returns the TRANSITION_OR_UNCERTAIN sentinel --
+        which is indistinguishable, at the enum level alone, from a
+        regime that later becomes GENUINELY confirmed as
+        TRANSITION_OR_UNCERTAIN. Calling this method during that
+        pre-confirmation window previously seeded _last_confirmed_regime
+        with the sentinel, so the very FIRST real confirmation recorded a
+        phantom "transition" FROM that sentinel, even though no regime
+        was ever actually confirmed before it. 'has_confirmed' (the
+        caller's own state.has_confirmed) disambiguates this -- a call
+        made before hysteresis has ever confirmed anything is ignored
+        entirely, neither seeding _last_confirmed_regime nor recording a
+        transition.**"""
+
+        if not has_confirmed:
+            return  # nothing genuinely confirmed yet -- never seed from or transition from a
+                     # placeholder sentinel
 
         if (
             self._last_confirmed_regime is not None

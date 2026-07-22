@@ -477,6 +477,24 @@ def test_run_reads_real_csv_and_reproduces_hand_traced_numbers(tmp_path):
     assert by_pct.loc[40.0, "mean_r_diff_over_all_paths"] == pytest.approx(0.25)
 
 
+def test_run_preserves_numeric_looking_path_id_as_text(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 15): path_id was previously read with pandas' own inferred
+    dtype -- a CSV containing purely-numeric-looking path_id values (e.g.
+    "001" and "1") silently collapsed to the SAME numeric value (leading
+    zeroes discarded), which this module's own composite-key
+    (path_id, bar_index) uniqueness check would then reject as a
+    duplicate -- two GENUINELY distinct paths could not both be loaded.
+    Both must now be preserved as distinct text identifiers and load
+    successfully as 2 separate paths."""
+
+    r_paths_csv = tmp_path / "r_paths.csv"
+    _write_r_paths_csv(r_paths_csv, {"001": PATH_B, "1": PATH_C})
+
+    result = run(r_paths_csv, [40.0])
+    assert result.set_index("giveback_percent").loc[40.0, "n_paths"] == 2
+
+
 def test_run_writes_output_with_real_dataset_hash(tmp_path):
     r_paths_csv = tmp_path / "r_paths.csv"
     _write_r_paths_csv(r_paths_csv, {"pB": PATH_B, "pC": PATH_C})

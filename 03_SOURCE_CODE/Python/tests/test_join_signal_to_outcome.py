@@ -682,6 +682,38 @@ def test_unparseable_is_long_string_is_a_conflict_not_silently_coerced_to_false(
     assert "direction/is_long" in row_errors[0]["error"]
 
 
+def test_unrecognized_numeric_is_long_value_is_a_conflict_not_silently_coerced_to_true():
+    """Regression for a Codex review finding (2026-07-22, seventh round,
+    P1 finding 15): a numeric is_long=2 (not a valid boolean encoding
+    under this project's own true/false convention) previously fell
+    through to `bool(is_long)`, and Python's own truthiness rules accept
+    ANY nonzero number as True -- direction=SELL, is_long=2 previously
+    joined successfully because 2 was silently coerced to True/"long",
+    which does NOT agree with SELL, yet the bug this masks runs the other
+    way too: only an actual bool or a canonical 1/0 encoding may now
+    resolve is_long -- anything else (2, -1, 3.5, ...) is a conflict."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "SELL"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": 2}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(joined) == 0
+    assert len(row_errors) == 1
+    assert "direction/is_long" in row_errors[0]["error"]
+
+
+def test_canonical_numeric_is_long_encoding_still_agrees():
+    """A canonical numeric 1/0 encoding (not a Python bool, but the
+    project's own true/false convention) must still resolve correctly --
+    the seventh-round fix must not turn a legitimate 0/1 encoding into a
+    false conflict."""
+
+    journal = _journal_df([{"order_id": "o1", "strategy": "SR_BOUNCE", "direction": "BUY"}])
+    trades = _trades_df([{"trade_id": "t1", "order_id": "o1", "profit": 30.0, "is_long": 1}])
+    joined, row_errors = join_signal_to_outcome(journal, trades)
+    assert len(row_errors) == 0
+    assert len(joined) == 1
+
+
 def test_aggregated_profit_overflow_to_infinite_is_a_row_error():
     """Regression for a Codex review finding (2026-07-22, sixth round):
     two individually finite fill profits (1e308 each) can still overflow
