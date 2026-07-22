@@ -691,9 +691,19 @@ def run(
                 "not implemented -- needs TASK-037 to export multiple cost scenarios per release, "
                 "not just spread_note/slippage_note provenance"
             ),
+            # **Fixed, 2026-07-22 Codex review finding (seventh round, P1
+            # finding 13): this disclosure was stale -- EquityTickRecorder.mq5
+            # now exports a genuine intratrade equity-tick series, and
+            # analysis.equity_curve_metrics.run() is the Python consumer that
+            # computes both real metrics from it. Neither is wired directly
+            # into THIS function's own output yet (a caller runs it
+            # separately, passing each release's own equity_ticks.csv) --
+            # that wiring, not the underlying export/metric gap, is what
+            # remains.**
             "account_or_daily_equity_peak_giveback": (
-                "not implemented -- needs TASK-037 to export an intratrade equity-tick series; "
-                "balance_peak_giveback in baseline_summary/candidate_summary is a different, "
+                "not computed by this function -- run analysis.equity_curve_metrics.run() "
+                "separately against each release's own equity_ticks.csv (EquityTickRecorder.mq5); "
+                "balance_peak_giveback in baseline_summary/candidate_summary remains a different, "
                 "balance-based proxy, see analysis.metrics.compute_balance_peak_giveback"
             ),
         },
