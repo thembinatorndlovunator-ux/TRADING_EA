@@ -144,6 +144,26 @@ must not be modified.
    consistently by both the export and every Python consumer -- see the
    cross-file inconsistency `analysis/analyse_giveback.py` and
    `analysis/parameter_stability.py` currently have.
+
+   **Scoped explicitly, 2026-07-22 Codex review finding (sixth round):
+   picking a convention for the EXPORT alone does not resolve this.**
+   `calculate_mfe_mae.py` currently uses bar-OPEN timestamps with a
+   HALF-OPEN `[entry, exit)` window; `analyse_giveback.py` currently uses
+   bar-CLOSE timestamps with an INCLUSIVE `[entry, exit]` window;
+   `parameter_stability.py`'s own `r_paths.csv` schema requires
+   `bar_index` 0 to be an exact pre-bar `0.0`. Whichever single
+   convention this task picks, it MUST also include updating whichever of
+   these three Python consumers does not already match it (their window/
+   timestamp semantics, not merely their docstrings) as part of THIS
+   task's own scope -- naming a convention without changing the
+   non-conforming consumer code leaves the real cross-file mismatch
+   exactly as unresolved as before, just with an export that follows one
+   of the three existing conventions arbitrarily. Real MT5 deals occur at
+   tick times, not exact bar boundaries, so this also requires deciding
+   (and documenting) how a tick-time entry/exit is mapped onto whichever
+   discrete bar-boundary convention is chosen -- silently rounding to the
+   nearest bar boundary is a real semantic choice, not a formality, and
+   must be stated and tested, not left implicit.
 7. **Account equity-tick export (added, 2026-07-22 Codex review finding,
    fifth round):** a script exporting a genuine intratrade, mark-to-market
    EQUITY time series (`symbol-agnostic account-level timestamp, equity`
@@ -214,9 +234,15 @@ No file under `01_BASELINE/` may be modified.
    confirm the output matches its documented schema exactly.
 3. Feed each export into its corresponding Python pipeline
    (`analyse_baseline.py`, `join_news_events.py`,
-   `pattern_validation.compare_to_mql5_export`,
-   `calculate_mfe_mae.py`, `parameter_stability.py`) and confirm it runs
+   `pattern_validation.compare_to_mql5_export`, `calculate_mfe_mae.py`,
+   `analyse_giveback.py`, `parameter_stability.py`) and confirm it runs
    without a schema error -- the first genuine "Real-data run" for each.
+   **`analyse_giveback.py` explicitly included, 2026-07-22 Codex review
+   finding (sixth round): this list previously omitted it, so this task
+   could pass its own test plan without ever running the OHLC/R-path
+   export against `analyse_giveback.py` at all -- despite that script
+   being one of the two Python consumers whose bar-boundary convention
+   Specification item 6 requires this task to reconcile.**
 4. Verify the net-P/L aggregation formula (Specification item 1) against
    a real small MT5 Deals export field-by-field (added, 2026-07-22 Codex
    review finding, fifth round).

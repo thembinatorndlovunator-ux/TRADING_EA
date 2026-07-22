@@ -314,6 +314,29 @@ def test_compute_mfe_mae_rejects_non_finite_or_non_positive_cadence():
         )
 
 
+def test_compute_mfe_mae_rejects_cadence_that_quantizes_to_zero_timedelta():
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    finite, strictly-positive expected_cadence_minutes below pandas'
+    Timedelta resolution (roughly 1.67e-11 minutes) quantizes to EXACTLY
+    Timedelta(0) -- the finite/positive check alone previously let this
+    through, and the subsequent division by a zero Timedelta raised an
+    uncaught ZeroDivisionError (not a clean ValueError), crashing the
+    entire run rather than becoming a single row error."""
+
+    bars = _bars()
+    with pytest.raises(ValueError):
+        compute_mfe_mae(
+            trade_id="t-quantizes-to-zero",
+            is_long=True,
+            entry_price=100.0,
+            stop_price=98.0,
+            entry_time=bars["timestamp"].iloc[0],
+            exit_time=bars["timestamp"].iloc[1],
+            bars=bars,
+            expected_cadence_minutes=1e-15,
+        )
+
+
 def test_compute_mfe_mae_window_is_half_open_partial_bar_subset():
     # **Re-traced, 2026-07-22 Codex review finding (third round):** entry
     # at bar1 (01:00), exit at bar3 (03:00) -- the half-open window

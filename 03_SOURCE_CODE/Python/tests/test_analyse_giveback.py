@@ -709,6 +709,10 @@ def test_writes_output_csv_and_summary_json(tmp_path):
     summary = json.loads(summary_json.read_text(encoding="utf-8"))
     assert summary["n_trades_compared"] == 1
     assert summary["v637"]["n_triggered"] == 1
+    # **Added, 2026-07-22 Codex review finding (sixth round): the
+    # declared cadence is enforced against bar coverage but was
+    # previously never persisted in this artifact.**
+    assert summary["expected_cadence_minutes"] == _DEFAULT_CADENCE_MINUTES
 
 
 def test_cli_main_success(tmp_path, capsys):

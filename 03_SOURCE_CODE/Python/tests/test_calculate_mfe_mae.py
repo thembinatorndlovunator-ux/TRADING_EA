@@ -433,6 +433,10 @@ def test_writes_output_csv_and_errors_json(tmp_path):
     payload = json.loads(errors_json.read_text(encoding="utf-8"))
     assert payload["summary"]["n_results"] == 1
     assert payload["summary"]["n_row_errors"] == 0
+    # **Added, 2026-07-22 Codex review finding (sixth round): the
+    # declared cadence is enforced against bar coverage but was
+    # previously never persisted in this artifact.**
+    assert payload["summary"]["expected_cadence_minutes"] == _DEFAULT_CADENCE_MINUTES
 
 
 def test_errors_json_auto_derived_when_omitted(tmp_path):

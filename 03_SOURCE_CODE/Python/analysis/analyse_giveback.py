@@ -417,6 +417,11 @@ def run(
             # hidden.
             "requested_model_params": model_params,
             "effective_model_params": effective_params,
+            # **Added, 2026-07-22 Codex review finding (sixth round): the
+            # declared cadence is enforced against every trade's bar
+            # coverage but was never itself PERSISTED anywhere in this
+            # artifact -- see calculate_mfe_mae.py's matching fix.
+            "expected_cadence_minutes": expected_cadence_minutes,
         }
         for model in ("v637", "v811"):
             triggered = [c for c in comparisons if getattr(c, f"{model}_trigger_r") is not None]

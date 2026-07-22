@@ -263,6 +263,13 @@ def run(
                 "n_trades_input": len(trades),
                 "n_results": len(results),
                 "n_row_errors": len(row_errors),
+                # **Added, 2026-07-22 Codex review finding (sixth round):
+                # the declared cadence is enforced against every trade's
+                # bar coverage but was never itself PERSISTED anywhere in
+                # this artifact -- a reader could not tell what cadence
+                # this result was actually verified against without
+                # separately knowing the caller's own invocation.
+                "expected_cadence_minutes": expected_cadence_minutes,
             },
             "row_errors": row_errors,
         }

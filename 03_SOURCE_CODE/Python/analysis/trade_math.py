@@ -145,7 +145,8 @@ def assert_complete_bar_coverage(
     were aligned.**
 
     Raises ValueError if 'expected_cadence_minutes' is not finite and > 0,
-    or if the window duration is not an exact multiple of it.
+    if it quantizes to a zero ``pandas.Timedelta`` (see below), or if the
+    window duration is not an exact multiple of it.
     """
 
     if not math.isfinite(expected_cadence_minutes) or expected_cadence_minutes <= 0:
@@ -154,6 +155,21 @@ def assert_complete_bar_coverage(
             f"got {expected_cadence_minutes}"
         )
     cadence = pd.Timedelta(minutes=expected_cadence_minutes)
+    # **Added, 2026-07-22 Codex review finding (sixth round): a finite,
+    # strictly-positive 'expected_cadence_minutes' below pandas'
+    # Timedelta resolution (nanoseconds -- roughly 1.67e-11 minutes)
+    # quantizes to EXACTLY Timedelta(0) here. The finite/positive check
+    # above passed, so the division below previously ran anyway and
+    # raised an uncaught ZeroDivisionError -- not a clean ValueError, and
+    # not caught by any caller's own (ValueError, ...) row-error handler,
+    # so one such trade previously crashed the ENTIRE run, not just that
+    # row.**
+    if cadence <= pd.Timedelta(0):
+        raise ValueError(
+            f"trade_id={trade_id}: expected_cadence_minutes ({expected_cadence_minutes}) is too "
+            "small to represent as a nonzero pandas.Timedelta -- effectively zero cadence, "
+            "cannot verify bar coverage against it"
+        )
     expected_bar_count = (window_end - window_start) / cadence
     if expected_bar_count != round(expected_bar_count):
         raise IncompleteBarCoverageError(
