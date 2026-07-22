@@ -208,6 +208,23 @@ int OnInit()
                SymbolInfoString(g_symbol, SYMBOL_PATH));
 
    // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 5): NEWS_PROVIDER_NONE returns "no blackout" unconditionally --
+   // PROJECT_RULES.md's macro-news-filter requirement for metals/forex is
+   // mandatory, not an operator preference (unlike the synthetic-index
+   // case, where NullNewsProvider semantics are the CORRECT behavior, not
+   // a bypass). Refuse to run rather than silently let an operator disable
+   // a mandatory control by selecting NONE on a metal/forex symbol.**
+   if(InpNewsProviderSource == NEWS_PROVIDER_NONE &&
+      (g_market_family == MARKET_FAMILY_METAL || g_market_family == MARKET_FAMILY_FOREX))
+     {
+      PrintFormat("ThembaEA: InpNewsProviderSource=NEWS_PROVIDER_NONE is not permitted on a "
+                  "%s symbol ('%s') -- the macro news-blackout filter is mandatory for metals/"
+                  "forex, not an operator preference. Select MT5_CALENDAR or FAIR_ECONOMY. "
+                  "Refusing to run.", IMR_MarketFamilyToString(g_market_family), g_symbol);
+      return INIT_FAILED;
+     }
+
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
    // 1): the create-if-absent bootstrap for this symbol+magic's durable-
    // intent lock now runs exactly once here, before any order-submission
    // logic can ever call IM_BeginIntent — see IntentManager.mqh's own

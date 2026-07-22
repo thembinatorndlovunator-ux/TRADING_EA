@@ -273,10 +273,41 @@ bool       g_fep_cache_valid = false;
 datetime   g_fep_last_fetch_time = 0;
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 5):** a coarse, cheap shape check -- an HTTP 200 whose body is empty,       |
+//| an HTML error page, truncated garbage, or a changed/incompatible schema        |
+//| does NOT look like a JSON array at all (FEP_ParseFeedJson itself would          |
+//| tolerantly parse it to 0 events, which the live wrapper below CANNOT             |
+//| distinguish from a genuinely empty real calendar week without this                  |
+//| check). This is deliberately NOT a full JSON-schema validator -- it only              |
+//| rejects input that could not possibly be a valid (even empty, "[]") feed               |
+//| response, closing the specific fail-open gap the review reported without                 |
+//| attempting to validate every field this module does not otherwise need.                    |
+//+------------------------------------------------------------------+
+bool FEP_LooksLikeJsonArray(const string json_text)
+  {
+   string trimmed = json_text;
+   StringTrimLeft(trimmed);
+   StringTrimRight(trimmed);
+   if(StringLen(trimmed) < 2)
+      return false; // too short to be even an empty array "[]"
+   if(StringGetCharacter(trimmed, 0) != '[')
+      return false;
+   if(StringGetCharacter(trimmed, StringLen(trimmed) - 1) != ']')
+      return false;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| Fetches the live feed via WebRequest and parses it. Returns the       |
-//| event count (>= 0) on success, -1 on any transport/HTTP failure —         |
-//| caller must treat -1 as "provider unavailable," matching                     |
-//| MTC_FetchEvents's own -1 convention.                                            |
+//| event count (>= 0) on success, -1 on any transport/HTTP failure OR         |
+//| a response that does not even look like a JSON array (added, seventh          |
+//| round P0 finding 5 -- previously an HTTP 200 with an empty/malformed             |
+//| body silently parsed to a "successful" 0-event result, which                        |
+//| FEP_EnsureCache then cached as a genuinely-verified empty calendar,                    |
+//| reporting "no blackout" instead of "provider unavailable"). Caller must                  |
+//| treat -1 as "provider unavailable," matching MTC_FetchEvents's own -1                      |
+//| convention.                                                                                     |
 //+------------------------------------------------------------------+
 int FEP_FetchLive(SNewsEvent &events_out[])
   {
@@ -297,6 +328,15 @@ int FEP_FetchLive(SNewsEvent &events_out[])
      }
 
    string json_text = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   if(!FEP_LooksLikeJsonArray(json_text))
+     {
+      PrintFormat("FairEconomyNewsProvider: response from '%s' does not look like a valid JSON "
+                  "array (length=%d) -- treating as a provider failure, NOT a verified-empty "
+                  "calendar; the caller applies the fail-closed policy.", FEP_FEED_URL,
+                  StringLen(json_text));
+      return -1;
+     }
+
    return FEP_ParseFeedJson(json_text, events_out);
   }
 

@@ -112,12 +112,34 @@ void OnStart()
    Check("event 2 currency EUR parsed", events[2].currency == "EUR");
 
    //--- 8. Malformed/empty input parses to zero events, never crashes ------
+   //--- **This tests FEP_ParseFeedJson, the PURE parser, in isolation --------
+   //--- deliberately tolerant, per its own documented contract. This is NOT --
+   //--- the fail-open bug the seventh-round review reported (Codex review -----
+   //--- finding, P0 finding 5) -- that bug was in FEP_FetchLive treating an -----
+   //--- HTTP-200-but-garbage-body response as a verified-empty result. Test 8a ---
+   //--- below exercises the NEW live-fetch-level guard that closes it.** ---------
    SNewsEvent empty_events[];
    int empty_count = FEP_ParseFeedJson("", empty_events);
    Check("empty input parses to 0 events", empty_count == 0);
    SNewsEvent garbage_events[];
    int garbage_count = FEP_ParseFeedJson("not valid json at all {{{", garbage_events);
    Check("malformed input parses to 0 events (no crash, no guessed data)", garbage_count == 0);
+
+   //--- 8a. **Codex review finding, seventh round, P0 finding 5**: -----------
+   //--- FEP_LooksLikeJsonArray -- the live-fetch-level guard that now REJECTS ----
+   //--- (as a provider failure, not a verified-empty result) exactly the kind -----
+   //--- of response that test 8 above shows the pure parser would otherwise --------
+   //--- silently accept as "0 events, success". ------------------------------------
+   Check("an empty response body does not look like a JSON array",
+         FEP_LooksLikeJsonArray("") == false);
+   Check("an HTML error page does not look like a JSON array",
+         FEP_LooksLikeJsonArray("<html><body>502 Bad Gateway</body></html>") == false);
+   Check("truncated/malformed garbage does not look like a JSON array",
+         FEP_LooksLikeJsonArray("not valid json at all {{{") == false);
+   Check("a genuinely empty JSON array DOES look like one (a real empty "
+         "calendar week must not be rejected)", FEP_LooksLikeJsonArray("[]") == true);
+   Check("a real, well-formed feed sample looks like a JSON array",
+         FEP_LooksLikeJsonArray(sample) == true);
 
    //--- 9. LIVE fetch — expected to fail (URL not yet allowed in this ------
    //--- terminal), exercising the fail-closed path for real -----------------
