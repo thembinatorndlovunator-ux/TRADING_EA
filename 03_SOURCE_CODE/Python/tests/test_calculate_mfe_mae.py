@@ -6,9 +6,30 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from analysis.calculate_mfe_mae import TradesSchemaError, main, run
+from analysis.calculate_mfe_mae import TradesSchemaError
+from analysis.calculate_mfe_mae import main as _real_main
+from analysis.calculate_mfe_mae import run as _real_run
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# **Added, 2026-07-22 Codex review finding (fifth round):
+# expected_cadence_minutes is now a REQUIRED run()/CLI parameter (see
+# that module's own docstring) -- every _write_bars() fixture below is
+# hourly (60-minute cadence), so this is the correct default for every
+# test that doesn't override it explicitly.**
+_DEFAULT_CADENCE_MINUTES = 60.0
+
+
+def run(*args, **kwargs):
+    kwargs.setdefault("expected_cadence_minutes", _DEFAULT_CADENCE_MINUTES)
+    return _real_run(*args, **kwargs)
+
+
+def main(argv=None):
+    argv = list(argv) if argv is not None else []
+    if "--expected-cadence-minutes" not in argv:
+        argv = argv + ["--expected-cadence-minutes", str(_DEFAULT_CADENCE_MINUTES)]
+    return _real_main(argv)
 
 
 def _write_bars(path: Path) -> None:
@@ -232,6 +253,70 @@ def test_no_bars_in_window_captured_as_row_error(tmp_path):
     assert result.results == []
     assert len(result.row_errors) == 1
     assert "no-data" in result.row_errors[0]["trade_id"]
+
+
+def test_incomplete_bar_coverage_captured_as_row_error(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, fifth round): a
+    trade from 00:00 to 03:00 with bars only at 00:00 and 03:00 (the exit
+    bar itself excluded by the half-open window) previously completed
+    successfully with n_bars=1, silently ignoring the missing 01:00/02:00
+    exposure. Must now be a row error, not a "successful" partial
+    result."""
+
+    bars_path = tmp_path / "bars.csv"
+    pd.DataFrame(
+        {
+            "symbol": ["XAUUSD", "XAUUSD"],
+            "timestamp": ["2026-07-21T00:00:00Z", "2026-07-21T03:00:00Z"],
+            "high": [101.0, 999.0],
+            "low": [99.0, 0.0],
+        }
+    ).to_csv(bars_path, index=False)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "sparse-1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+
+    result = run(trades_path, bars_path, expected_cadence_minutes=60.0)
+    assert result.results == []
+    assert len(result.row_errors) == 1
+    assert result.row_errors[0]["trade_id"] == "sparse-1"
+
+
+def test_expected_cadence_minutes_is_required(tmp_path):
+    """run() itself (not this test file's default-injecting wrapper) must
+    reject a call with no cadence declared at all."""
+
+    bars_path = tmp_path / "bars.csv"
+    _write_bars(bars_path)
+    trades_path = tmp_path / "trades.csv"
+    _write_trades(
+        trades_path,
+        [
+            {
+                "trade_id": "t1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "stop_price": 98.0,
+            }
+        ],
+    )
+    with pytest.raises(TypeError):
+        _real_run(trades_path, bars_path)
 
 
 def test_writes_output_csv_and_errors_json(tmp_path):

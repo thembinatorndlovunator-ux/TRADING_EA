@@ -9,6 +9,7 @@ module does not re-derive the formula independently.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pandas as pd
@@ -61,6 +62,26 @@ class BarAlignmentError(ValueError):
     docstring for why this matters."""
 
 
+class IncompleteBarCoverageError(ValueError):
+    """Raised when the bars actually present in a trade's
+    [entry_time, exit_time) window do not form a COMPLETE, gap-free
+    sequence at the caller-declared cadence -- endpoint alignment alone
+    (entry_time/exit_time each matching SOME bar) does not guarantee
+    every bar IN BETWEEN is also present.
+
+    **Added, 2026-07-22 Codex review finding (fifth round): a trade from
+    00:00 to 03:00 with bars only at 00:00 and 03:00 (the exit bar itself
+    excluded by the half-open window) previously completed successfully
+    and reported ONE measured bar, silently ignoring the missing 01:00
+    and 02:00 exposure -- endpoint alignment was enforced, but expected
+    cadence/timeframe and gaps were not.** With an expected 60-minute
+    cadence declared, this trade's window should contain bars at 00:00,
+    01:00, and 02:00 (3 bars, matching a 3-hour half-open window) -- only
+    1 was present, so the guard/exposure data used to compute MFE/MAE is
+    genuinely incomplete, not a legitimately sparse market.
+    """
+
+
 class ZeroDurationTradeUnmeasurableError(ValueError):
     """Raised when entry_time == exit_time (a trade with zero recorded
     duration). Under this module's own bar-OPEN convention, equal
@@ -78,6 +99,65 @@ class ZeroDurationTradeUnmeasurableError(ValueError):
     rather than silently approximated.**"""
 
 
+def assert_complete_bar_coverage(
+    window_timestamps: pd.Series,
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+    expected_cadence_minutes: float,
+    trade_id: str,
+) -> None:
+    """Raises IncompleteBarCoverageError unless 'window_timestamps' (the
+    bar timestamps actually found within a trade's [window_start,
+    window_end) half-open window) form a COMPLETE, gap-free sequence at
+    exactly 'expected_cadence_minutes' -- i.e. exactly
+    ``(window_end - window_start) / cadence`` bars, each exactly one
+    cadence apart from the next. Endpoint alignment alone (the window's
+    two boundaries each matching SOME bar) does not guarantee every bar
+    IN BETWEEN is also present.
+
+    **Added, 2026-07-22 Codex review finding (fifth round): shared by
+    ``compute_mfe_mae`` and ``analyse_giveback.py``'s own R-path
+    construction -- both previously accepted a sparse bar subset as
+    complete evidence merely because it was non-empty and its endpoints
+    were aligned.**
+
+    Raises ValueError if 'expected_cadence_minutes' is not finite and > 0,
+    or if the window duration is not an exact multiple of it.
+    """
+
+    if not math.isfinite(expected_cadence_minutes) or expected_cadence_minutes <= 0:
+        raise ValueError(
+            f"trade_id={trade_id}: expected_cadence_minutes must be a finite number > 0, "
+            f"got {expected_cadence_minutes}"
+        )
+    cadence = pd.Timedelta(minutes=expected_cadence_minutes)
+    expected_bar_count = (window_end - window_start) / cadence
+    if expected_bar_count != round(expected_bar_count):
+        raise IncompleteBarCoverageError(
+            f"trade_id={trade_id}: window duration ({window_end - window_start}) is not an "
+            f"exact multiple of the declared {expected_cadence_minutes}-minute cadence -- "
+            "cannot verify complete bar coverage"
+        )
+    expected_bar_count = round(expected_bar_count)
+    if len(window_timestamps) != expected_bar_count:
+        raise IncompleteBarCoverageError(
+            f"trade_id={trade_id}: window [{window_start}, {window_end}) at "
+            f"{expected_cadence_minutes}-minute cadence should contain {expected_bar_count} "
+            f"bar(s), found {len(window_timestamps)} -- incomplete bar coverage (a gap in the "
+            "bars input), not a legitimately sparse market"
+        )
+    sorted_timestamps = sorted(window_timestamps)
+    for i in range(len(sorted_timestamps) - 1):
+        gap = sorted_timestamps[i + 1] - sorted_timestamps[i]
+        if gap != cadence:
+            raise IncompleteBarCoverageError(
+                f"trade_id={trade_id}: bars at {sorted_timestamps[i]} and "
+                f"{sorted_timestamps[i + 1]} are {gap} apart, not the declared "
+                f"{expected_cadence_minutes}-minute cadence -- a gap or duplicate in the bars "
+                "input"
+            )
+
+
 def compute_mfe_mae(
     trade_id: str,
     is_long: bool,
@@ -86,11 +166,24 @@ def compute_mfe_mae(
     entry_time: pd.Timestamp,
     exit_time: pd.Timestamp,
     bars: pd.DataFrame,
+    *,
+    # **Added, 2026-07-22 Codex review finding (fifth round): see
+    # IncompleteBarCoverageError's own docstring for the exact
+    # counterexample this closes. Required (not optional) so a caller
+    # cannot silently skip declaring what cadence its own bars.csv export
+    # is supposed to be at.**
+    expected_cadence_minutes: float,
 ) -> MfeMaeResult:
     """Computes MFE/MAE for one trade from a bars DataFrame with
     'timestamp', 'high', 'low' columns (any symbol filtering is the
     caller's responsibility -- this function does not know about
     symbols).
+
+    'expected_cadence_minutes' is the caller-declared bar interval (e.g.
+    1.0 for M1 bars) -- the window's actual bars must form a COMPLETE,
+    gap-free sequence at exactly this cadence (see
+    IncompleteBarCoverageError's own docstring), not merely have their
+    two ENDPOINTS aligned to some bar.
 
     **Bar-timestamp convention, declared explicitly: 'timestamp' is the
     bar's OPEN time** (the standard MT5 convention).
@@ -132,9 +225,16 @@ def compute_mfe_mae(
     (see above). Raises NoBarsInWindowError if no bar falls within the
     window -- a trade with a computable MFE/MAE of exactly 0.0 is
     different from a trade with no data at all, and the two must never
-    be conflated.
+    be conflated. Raises ValueError if 'expected_cadence_minutes' is not
+    finite and > 0. Raises IncompleteBarCoverageError if the window's
+    bars do not form a complete, gap-free sequence at that cadence.
     """
 
+    if not math.isfinite(expected_cadence_minutes) or expected_cadence_minutes <= 0:
+        raise ValueError(
+            f"trade_id={trade_id}: expected_cadence_minutes must be a finite number > 0, "
+            f"got {expected_cadence_minutes}"
+        )
     if entry_time > exit_time:
         raise ValueError(f"entry_time ({entry_time}) must not be after exit_time ({exit_time})")
 
@@ -162,6 +262,14 @@ def compute_mfe_mae(
         raise NoBarsInWindowError(
             f"trade_id={trade_id}: no bars found between {entry_time} and {exit_time}"
         )
+
+    # **Added, 2026-07-22 Codex review finding (fifth round): endpoint
+    # alignment (checked above) does not guarantee every bar IN BETWEEN
+    # is also present -- see IncompleteBarCoverageError's own docstring
+    # for the exact reproduced counterexample.
+    assert_complete_bar_coverage(
+        window["timestamp"], entry_time, exit_time, expected_cadence_minutes, trade_id
+    )
 
     if is_long:
         mfe_price = max(0.0, float(window["high"].max()) - entry_price)

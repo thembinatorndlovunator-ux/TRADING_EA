@@ -5,6 +5,7 @@ import pytest
 
 from analysis.trade_math import (
     BarAlignmentError,
+    IncompleteBarCoverageError,
     ZeroDurationTradeUnmeasurableError,
     compute_mfe_mae,
     compute_r_multiple,
@@ -62,6 +63,7 @@ def test_compute_mfe_mae_long_hand_computed():
         entry_time=bars["timestamp"].iloc[0],
         exit_time=bars["timestamp"].iloc[-1],
         bars=bars,
+        expected_cadence_minutes=60.0,
     )
     assert result.mfe_price == pytest.approx(5.0)  # 105 - 100
     assert result.mae_price == pytest.approx(3.0)  # 100 - 97
@@ -95,6 +97,7 @@ def test_compute_mfe_mae_exit_bar_excluded_from_window():
         entry_time=bars["timestamp"].iloc[0],
         exit_time=bars["timestamp"].iloc[1],
         bars=bars,
+        expected_cadence_minutes=60.0,
     )
     assert result.n_bars == 1
     assert result.mfe_price == pytest.approx(1.0)  # 101 - 100, bar 0 only
@@ -128,6 +131,7 @@ def test_compute_mfe_mae_same_bar_trade_is_unmeasurable():
             entry_time=bars["timestamp"].iloc[0],
             exit_time=bars["timestamp"].iloc[0],
             bars=bars,
+            expected_cadence_minutes=60.0,
         )
 
 
@@ -141,6 +145,7 @@ def test_compute_mfe_mae_short_hand_computed():
         entry_time=bars["timestamp"].iloc[0],
         exit_time=bars["timestamp"].iloc[-1],
         bars=bars,
+        expected_cadence_minutes=60.0,
     )
     assert result.mfe_price == pytest.approx(3.0)  # 100 - 97
     assert result.mae_price == pytest.approx(5.0)  # 105 - 100
@@ -167,6 +172,7 @@ def test_compute_mfe_mae_misaligned_entry_time_raises_bar_alignment_error():
             entry_time=far_future,
             exit_time=far_future + pd.Timedelta(hours=1),
             bars=bars,
+            expected_cadence_minutes=60.0,
         )
 
 
@@ -181,6 +187,7 @@ def test_compute_mfe_mae_misaligned_exit_time_raises_bar_alignment_error():
             entry_time=bars["timestamp"].iloc[0],
             exit_time=bars["timestamp"].iloc[0] + pd.Timedelta(minutes=30),  # not a bar timestamp
             bars=bars,
+            expected_cadence_minutes=60.0,
         )
 
 
@@ -202,6 +209,7 @@ def test_compute_mfe_mae_empty_bars_raises_bar_alignment_error_not_no_bars_error
             entry_time=pd.Timestamp("2026-07-21T00:00Z"),
             exit_time=pd.Timestamp("2026-07-21T01:00Z"),
             bars=empty_bars,
+            expected_cadence_minutes=60.0,
         )
 
 
@@ -216,6 +224,80 @@ def test_compute_mfe_mae_entry_after_exit_raises():
             entry_time=bars["timestamp"].iloc[-1],
             exit_time=bars["timestamp"].iloc[0],
             bars=bars,
+            expected_cadence_minutes=60.0,
+        )
+
+
+def test_compute_mfe_mae_rejects_incomplete_bar_coverage():
+    """Regression for a Codex review finding (2026-07-22, fifth round):
+    a trade from 00:00 to 03:00 with bars only at 00:00 and 03:00 (the
+    exit bar itself excluded by the half-open window) previously
+    completed successfully and reported ONE measured bar, silently
+    ignoring the missing 01:00 and 02:00 exposure -- endpoint alignment
+    was enforced, but expected cadence/coverage was not. Must now raise
+    IncompleteBarCoverageError instead of a spuriously "successful"
+    partial result."""
+
+    sparse_bars = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-07-21T00:00Z", "2026-07-21T03:00Z"]),
+            "high": [101.0, 999.0],  # extreme value at the (excluded) exit bar
+            "low": [99.0, 0.0],
+        }
+    )
+    with pytest.raises(IncompleteBarCoverageError):
+        compute_mfe_mae(
+            trade_id="t-sparse",
+            is_long=True,
+            entry_price=100.0,
+            stop_price=98.0,
+            entry_time=pd.Timestamp("2026-07-21T00:00Z"),
+            exit_time=pd.Timestamp("2026-07-21T03:00Z"),
+            bars=sparse_bars,
+            expected_cadence_minutes=60.0,
+        )
+
+
+def test_compute_mfe_mae_complete_coverage_at_declared_cadence_succeeds():
+    # Same window as the sparse-coverage test above, but with all 4 real
+    # hourly bars present -- must succeed, proving the fix distinguishes
+    # genuinely complete coverage from a gap.
+    result = compute_mfe_mae(
+        trade_id="t-complete",
+        is_long=True,
+        entry_price=100.0,
+        stop_price=98.0,
+        entry_time=pd.Timestamp("2026-07-21T00:00Z"),
+        exit_time=pd.Timestamp("2026-07-21T03:00Z"),
+        bars=_bars(),
+        expected_cadence_minutes=60.0,
+    )
+    assert result.n_bars == 3  # 00:00, 01:00, 02:00 -- exit bar excluded
+
+
+def test_compute_mfe_mae_rejects_non_finite_or_non_positive_cadence():
+    bars = _bars()
+    with pytest.raises(ValueError):
+        compute_mfe_mae(
+            trade_id="t-bad-cadence",
+            is_long=True,
+            entry_price=100.0,
+            stop_price=98.0,
+            entry_time=bars["timestamp"].iloc[0],
+            exit_time=bars["timestamp"].iloc[1],
+            bars=bars,
+            expected_cadence_minutes=0.0,
+        )
+    with pytest.raises(ValueError):
+        compute_mfe_mae(
+            trade_id="t-bad-cadence-2",
+            is_long=True,
+            entry_price=100.0,
+            stop_price=98.0,
+            entry_time=bars["timestamp"].iloc[0],
+            exit_time=bars["timestamp"].iloc[1],
+            bars=bars,
+            expected_cadence_minutes=float("nan"),
         )
 
 
@@ -233,6 +315,7 @@ def test_compute_mfe_mae_window_is_half_open_partial_bar_subset():
         entry_time=bars["timestamp"].iloc[1],
         exit_time=bars["timestamp"].iloc[3],
         bars=bars,
+        expected_cadence_minutes=60.0,
     )
     assert result.n_bars == 2
     assert result.mfe_price == pytest.approx(5.0)

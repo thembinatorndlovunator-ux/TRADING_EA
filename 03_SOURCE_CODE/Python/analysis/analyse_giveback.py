@@ -68,7 +68,10 @@ from analysis.metrics import (
 )
 from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
-from analysis.trade_math import compute_r_multiple
+from analysis.trade_math import (
+    assert_complete_bar_coverage,
+    compute_r_multiple,
+)
 
 REQUIRED_TRADE_COLUMNS = {
     "trade_id",
@@ -115,6 +118,13 @@ def run(
     v637_floor_r: float = 0.05,
     v811_arm_r: float = 0.8,
     v811_floor_r: float = 0.1,
+    # **Added, 2026-07-22 Codex review finding (fifth round): REQUIRED --
+    # see trade_math.IncompleteBarCoverageError's own docstring. Endpoint
+    # alignment of entry_time/exit_time to SOME bar does not guarantee
+    # every bar in between is also present; a caller must declare what
+    # cadence bars_csv is actually supposed to be at so a gap can be
+    # detected instead of silently accepted as a sparse-but-complete path.
+    expected_cadence_minutes: float,
     symbol: Optional[str] = None,
     # **Fixed, 2026-07-22 Codex review finding (third round): this was
     # 'Optional[int] = None', combined with a call site using
@@ -268,6 +278,24 @@ def run(
             if symbol_bars.empty:
                 row_errors.append({"trade_id": trade_id, "error": "no bars found in trade window"})
                 continue
+
+            # **Added, 2026-07-22 Codex review finding (fifth round):**
+            # endpoint alignment (checked above) does not guarantee every
+            # bar IN BETWEEN is also present -- see
+            # trade_math.IncompleteBarCoverageError's own docstring for
+            # the exact reproduced counterexample
+            # (calculate_mfe_mae.py's, but the same gap existed here).
+            # This window is INCLUSIVE of exit_time (bar-CLOSE
+            # convention, unlike calculate_mfe_mae.py's half-open one) --
+            # shifting the end by one cadence makes the same
+            # half-open-window coverage math apply without changing it.
+            assert_complete_bar_coverage(
+                symbol_bars["timestamp"],
+                entry_time,
+                exit_time + pd.Timedelta(minutes=expected_cadence_minutes),
+                expected_cadence_minutes,
+                trade_id,
+            )
 
             r_path = [
                 compute_r_multiple(is_long, entry_price, stop_price, close)
@@ -494,6 +522,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v637-floor-r", type=float, default=0.05)
     parser.add_argument("--v811-arm-r", type=float, default=0.8)
     parser.add_argument("--v811-floor-r", type=float, default=0.1)
+    # **Added, 2026-07-22 Codex review finding (fifth round): required --
+    # see run()'s own comment.**
+    parser.add_argument("--expected-cadence-minutes", type=float, required=True)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-resamples", type=int, default=2000)
@@ -516,6 +547,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             v637_floor_r=args.v637_floor_r,
             v811_arm_r=args.v811_arm_r,
             v811_floor_r=args.v811_floor_r,
+            expected_cadence_minutes=args.expected_cadence_minutes,
             symbol=args.symbol,
             seed=args.seed,
             n_resamples=args.n_resamples,

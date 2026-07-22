@@ -10,13 +10,24 @@ case-insensitive; ``entry_time``/``exit_time`` must be ISO-8601 UTC, same
 convention as ``DJ_FormatIso8601Utc``).
 
 ``bars.csv`` columns: ``symbol, timestamp, high, low`` (``timestamp``
-ISO-8601 UTC) -- one row per completed bar, any timeframe, covering at
-least every trade's [entry_time, exit_time] window.
+ISO-8601 UTC) -- one row per completed bar, any SINGLE timeframe, covering
+at least every trade's [entry_time, exit_time] window.
 
 A trade whose window has no matching bars, or whose input row is malformed,
 is recorded in the error report -- never silently dropped or defaulted to
 a zero excursion (see ``trade_math.NoBarsInWindowError``'s own docstring
 for why those two situations must not be conflated).
+
+**Required ``expected_cadence_minutes``, added 2026-07-22 (Codex review
+finding, fifth round):** endpoint alignment (entry_time/exit_time each
+matching SOME bar) does not guarantee every bar IN BETWEEN is also
+present -- a trade from 00:00 to 03:00 with bars only at 00:00 and 03:00
+previously completed and reported ONE measured bar, silently ignoring
+the missing 01:00/02:00 exposure. ``run()`` now requires the caller to
+declare the bars' own cadence (e.g. 1.0 for M1), and a trade whose window
+is not a complete, gap-free sequence at that exact cadence is now a row
+error (``trade_math.IncompleteBarCoverageError``), not silently-accepted
+partial evidence.
 """
 
 from __future__ import annotations
@@ -47,6 +58,7 @@ from analysis.report_metadata import atomic_write_text, build_report_metadata
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import (
     BarAlignmentError,
+    IncompleteBarCoverageError,
     MfeMaeResult,
     NoBarsInWindowError,
     compute_mfe_mae,
@@ -79,6 +91,13 @@ def run(
     output_csv: Optional[Path] = None,
     errors_json: Optional[Path] = None,
     *,
+    # **Added, 2026-07-22 Codex review finding (fifth round): REQUIRED
+    # (not optional) -- see IncompleteBarCoverageError's own docstring
+    # for the exact counterexample this closes (a trade whose window has
+    # its two ENDPOINTS bar-aligned but is missing bars in between,
+    # silently accepted as complete evidence before this fix). A caller
+    # must state what cadence bars_csv is actually supposed to be at.
+    expected_cadence_minutes: float,
     symbol: Optional[str] = None,
     seed: Optional[int] = None,
     # **Added, 2026-07-22 Codex review finding (fourth round): spread_note/
@@ -92,8 +111,9 @@ def run(
     Raises TradesSchemaError/FileNotFoundError for structural problems
     (missing file, missing required column) -- those are script-level
     failures, distinct from a per-ROW problem (malformed timestamp, no
-    bars in window), which is instead collected into 'row_errors' so one
-    bad trade never hides every other trade's valid result.
+    bars in window, incomplete bar coverage within an otherwise-aligned
+    window), which is instead collected into 'row_errors' so one bad
+    trade never hides every other trade's valid result.
     """
 
     # Uses OS-level file-identity (not just Path.resolve()) so a hard
@@ -163,9 +183,16 @@ def run(
                 entry_time=entry_time,
                 exit_time=exit_time,
                 bars=symbol_bars,
+                expected_cadence_minutes=expected_cadence_minutes,
             )
             results.append(result)
-        except (ValueError, NoBarsInWindowError, BarAlignmentError, KeyError) as exc:
+        except (
+            ValueError,
+            NoBarsInWindowError,
+            BarAlignmentError,
+            IncompleteBarCoverageError,
+            KeyError,
+        ) as exc:
             row_errors.append({"trade_id": trade_id, "error": str(exc)})
 
     if output_csv is not None:
@@ -218,6 +245,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bars-csv", required=True, type=Path)
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--errors-json", type=Path, default=None)
+    # **Added, 2026-07-22 Codex review finding (fifth round): required --
+    # see run()'s own comment.**
+    parser.add_argument("--expected-cadence-minutes", type=float, required=True)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--spread-note", default=None)
@@ -233,6 +263,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             bars_csv=args.bars_csv,
             output_csv=args.output_csv,
             errors_json=args.errors_json,
+            expected_cadence_minutes=args.expected_cadence_minutes,
             symbol=args.symbol,
             seed=args.seed,
             spread_note=args.spread_note,
