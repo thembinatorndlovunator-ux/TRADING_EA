@@ -370,3 +370,160 @@ def test_multi_byte_utf8_line_over_byte_limit_but_under_char_limit_rejected(tmp_
     assert len(result.valid_records) == 0
     assert len(result.parse_errors) == 1
     assert "exceeds max line length" in result.parse_errors[0].error
+
+
+def test_byte_distinct_line_endings_and_bom_produce_different_hashes(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    the file was previously opened in TEXT mode ("utf-8-sig"), which
+    performs universal newline translation (CRLF/CR silently rewritten to
+    LF) and strips a leading BOM BEFORE the per-line hash was computed by
+    re-encoding that already-translated/stripped text. Byte-distinct
+    LF-only, CRLF, and BOM+LF variants of otherwise identical content
+    previously all produced the SAME digest -- the documented claim that
+    this hash represents "the exact parsed bytes" was false. Each of the
+    three byte-distinct variants below must now hash differently."""
+
+    record_json = json.dumps(make_valid_record(signal_id="s1"))
+
+    lf_dir = tmp_path / "lf"
+    lf_dir.mkdir()
+    (lf_dir / "decisions_20260721.jsonl").write_bytes((record_json + "\n").encode("utf-8"))
+
+    crlf_dir = tmp_path / "crlf"
+    crlf_dir.mkdir()
+    (crlf_dir / "decisions_20260721.jsonl").write_bytes((record_json + "\r\n").encode("utf-8"))
+
+    bom_lf_dir = tmp_path / "bom_lf"
+    bom_lf_dir.mkdir()
+    (bom_lf_dir / "decisions_20260721.jsonl").write_bytes(
+        b"\xef\xbb\xbf" + (record_json + "\n").encode("utf-8")
+    )
+
+    lf_result = read_journal_directory(lf_dir)
+    crlf_result = read_journal_directory(crlf_dir)
+    bom_lf_result = read_journal_directory(bom_lf_dir)
+
+    # All three parse to the identical valid record (proving the BOM/CRLF
+    # tolerance for PARSING is preserved), but each must hash differently
+    # since their real on-disk bytes genuinely differ.
+    assert len(lf_result.valid_records) == 1
+    assert len(crlf_result.valid_records) == 1
+    assert len(bom_lf_result.valid_records) == 1
+    hashes = {lf_result.dataset_hash, crlf_result.dataset_hash, bom_lf_result.dataset_hash}
+    assert len(hashes) == 3
+
+
+def test_distinct_invalid_byte_streams_produce_different_hashes(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    decode failure previously raised INSIDE the text-mode readline() call
+    itself, before any bytes for that call reached the hasher -- two
+    byte-distinct invalid UTF-8 streams could therefore collapse to the
+    same digest. Raw bytes are now hashed BEFORE decoding is attempted, so
+    two different invalid streams must hash differently even though both
+    fail to decode."""
+
+    dir_a = tmp_path / "a"
+    dir_a.mkdir()
+    (dir_a / "decisions_20260721.jsonl").write_bytes(b"\xff\xfe garbage one")
+
+    dir_b = tmp_path / "b"
+    dir_b.mkdir()
+    (dir_b / "decisions_20260721.jsonl").write_bytes(b"\xff\xfe garbage two, longer")
+
+    result_a = read_journal_directory(dir_a)
+    result_b = read_journal_directory(dir_b)
+
+    assert result_a.valid_records == []
+    assert result_b.valid_records == []
+    assert len(result_a.parse_errors) == 1
+    assert len(result_b.parse_errors) == 1
+    assert "decode failure" in result_a.parse_errors[0].error
+    assert result_a.dataset_hash != result_b.dataset_hash
+
+
+def test_max_total_source_bytes_limit_raises_even_for_all_blank_lines(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    flood of whitespace-only lines previously bypassed both the
+    record-count budget AND any byte-based budget entirely, since each is
+    discarded (as blank) before either check ran. The byte-budget check
+    must fire on every line read, blank or not."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    blank_lines = "   \n" * 100
+    (tmp_path / "decisions_20260721.jsonl").write_text(blank_lines, encoding="utf-8")
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_total_source_bytes=50)
+
+
+def test_max_files_limit_raises(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): no
+    cap previously existed on the number of candidate files a directory
+    read would process."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    for i in range(5):
+        (tmp_path / f"decisions_2026072{i}.jsonl").write_text(
+            json.dumps(make_valid_record(signal_id=f"s{i}")) + "\n", encoding="utf-8"
+        )
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_files=3)
+
+
+def test_max_retained_errors_limit_raises(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): no
+    cap previously existed on the number of retained parse/validation
+    error records -- up to DEFAULT_MAX_RECORDS_PER_DIRECTORY (1,000,000)
+    retained 2000-char error payloads can approach gigabytes."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    bad_lines = "\n".join(["{not valid json"] * 50)
+    (tmp_path / "decisions_20260721.jsonl").write_text(bad_lines + "\n", encoding="utf-8")
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_retained_errors=10)
+
+
+def test_glob_traversal_outside_directory_is_reported_not_silently_skipped(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    candidate path resolving outside 'directory' was previously silently
+    skipped with a bare 'continue' -- indistinguishable from "this file
+    simply does not exist". It must now be reported as a ParseError."""
+
+    parent_file = tmp_path / "outside.jsonl"
+    parent_file.write_text(
+        json.dumps(make_valid_record(signal_id="escaped")) + "\n", encoding="utf-8"
+    )
+
+    subdir = tmp_path / "journal"
+    subdir.mkdir()
+    (subdir / "decisions_20260721.jsonl").write_text(
+        json.dumps(make_valid_record(signal_id="inside")) + "\n", encoding="utf-8"
+    )
+
+    result = read_journal_directory(subdir, pattern="../*.jsonl")
+    assert result.valid_records == []  # the parent file must NOT be read
+    assert len(result.parse_errors) == 1
+    assert "excluded" in result.parse_errors[0].error
+    assert "outside" in result.parse_errors[0].error
+
+
+def test_directory_matching_pattern_is_reported_not_a_crash(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round): a
+    subdirectory whose NAME happens to match 'pattern' previously reached
+    _read_lines_from_file's own path.open() call directly, raising an
+    unhandled PermissionError (Windows) / IsADirectoryError (POSIX) that
+    aborted the entire directory read."""
+
+    (tmp_path / "decisions_20260721.jsonl").mkdir()
+    good_file = tmp_path / "decisions_20260722.jsonl"
+    good_file.write_text(json.dumps(make_valid_record(signal_id="s1")) + "\n", encoding="utf-8")
+
+    result = read_journal_directory(tmp_path)
+    assert len(result.valid_records) == 1
+    assert result.valid_records[0].signal_id == "s1"
+    assert any("not a regular file" in e.error for e in result.parse_errors)

@@ -53,24 +53,31 @@ DEFAULT_MAX_RECORDS_PER_DIRECTORY = 1_000_000
 # DecisionJournal line (one TradeDecision JSON object) is at most a few
 # KB; this is a generous but genuinely bounded ceiling.
 #
-# **Clarified, 2026-07-22 Codex review finding (fifth round): this name
-# implies a byte limit, but ``TextIOWrapper.readline(size)`` bounds
-# CHARACTERS, not bytes -- for UTF-8 content with multi-byte characters,
-# a line could read fewer than MAX_LINE_BYTES characters while actually
-# occupying more than MAX_LINE_BYTES bytes on disk.** The name is kept
-# for backward compatibility (already a public constant other modules
-# import), but ``_read_lines_from_file`` below now ALSO verifies the
-# real UTF-8-encoded byte length of every accepted line and rejects it
-# under the same limit if the character-based read alone was not
-# sufficient to catch it -- a genuine byte bound, not just a character
-# one, regardless of the name.
+# **Simplified, 2026-07-22 Codex review finding (sixth round): the file
+# is now opened in BINARY mode (see ``_read_lines_from_file``'s own
+# docstring), so ``readline(MAX_LINE_BYTES + 1)`` bounds BYTES directly
+# -- the previous text-mode character-vs-byte discrepancy this constant's
+# name used to require a second, separate byte-length check for no longer
+# exists; this is now a genuine, single byte bound.**
 MAX_LINE_BYTES = 1_000_000
+# **Added, 2026-07-22 Codex review finding (sixth round): only
+# nonblank-record count and per-line size were previously bounded -- a
+# caller-controlled directory had no maximum file count, no maximum total
+# source bytes (a flood of whitespace-only lines bypassed the per-line
+# and per-record checks entirely, see ``_read_lines_from_file``'s
+# docstring), and no cap on retained error records (up to
+# DEFAULT_MAX_RECORDS_PER_DIRECTORY 2000-char error payloads can
+# approach gigabytes). All three are now real, enforced ceilings.**
+DEFAULT_MAX_FILES_PER_DIRECTORY = 10_000
+DEFAULT_MAX_TOTAL_SOURCE_BYTES = 2_000_000_000  # 2 GB of raw source bytes per directory
+DEFAULT_MAX_RETAINED_ERRORS = 50_000  # combined parse_errors + validation_errors
 
 
 class JournalReaderLimitError(RuntimeError):
-    """Raised when a journal directory contains more raw lines than
-    'max_records' -- a caller-controlled or corrupted journal directory
-    must not be allowed to exhaust process memory silently."""
+    """Raised when a journal directory contains more raw lines, raw bytes,
+    files, or retained error records than the configured maximum -- a
+    caller-controlled or corrupted journal directory must not be allowed
+    to exhaust process memory silently."""
 
 
 def _reject_non_finite_json_constant(token: str) -> None:
@@ -188,16 +195,20 @@ class JournalReadResult:
         return len(self.valid_records) + len(self.parse_errors) + len(self.validation_errors)
 
 
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
 def _read_lines_from_file(
-    path: Path, source_label: str, remaining_budget: int
-) -> tuple[list[tuple[int, dict]], list[ParseError], int, str]:
+    path: Path, source_label: str, remaining_budget: int, remaining_byte_budget: int
+) -> tuple[list[tuple[int, dict]], list[ParseError], int, int, str]:
     """Parses each non-blank line of 'path' as JSON, STREAMING line-by-line
     (never loading the whole file into memory at once) and raising
     ``JournalReaderLimitError`` as soon as more than 'remaining_budget'
-    non-blank lines have been seen -- across this file alone; the caller
-    tracks the running total across the whole directory. A line that
-    fails to parse (including a non-standard NaN/Infinity constant, a
-    duplicate JSON key, or a decoding failure for the whole file) is
+    non-blank lines, or 'remaining_byte_budget' raw bytes (blank lines
+    included -- see the sixth-round note below), have been seen -- across
+    this file alone; the caller tracks both running totals across the
+    whole directory. A line that fails to parse (including a non-standard
+    NaN/Infinity constant, a duplicate JSON key, or a decoding failure) is
     recorded as a ParseError and EXCLUDED from the returned records --
     never silently dropped without a trace, and never allowed to abort
     reading the rest of the DIRECTORY (one bad file must not hide every
@@ -214,150 +225,185 @@ def _read_lines_from_file(
     physical line with no newline was previously materialized in full
     (arbitrarily large) via plain line iteration, before ANY length check
     -- the 2000-char cap applied only to what got RETAINED in the error
-    record, not to what was read into memory to produce it.
-    ``TextIOWrapper.readline(size)`` reads at most 'size' characters (or
-    to the next newline, whichever comes first), so a line's materialized
-    length is now bounded by ``MAX_LINE_BYTES`` regardless of how long
-    the real line on disk is; an oversized line is reported as a single
-    ParseError (its remainder consumed and discarded, not re-parsed as
-    if it were multiple lines) rather than exhausting memory.**
+    record, not to what was read into memory to produce it.** An oversized
+    line is reported as a single ParseError (its remainder consumed and
+    discarded, not re-parsed as if it were multiple lines) rather than
+    exhausting memory.
 
-    **Returns a 4th element, a hex SHA-256 digest, added 2026-07-22 (Codex
-    review finding, fifth round): a hash computed from a SEPARATE, LATER
-    file open (the "hash-then-parse" or "parse-then-rehash" pattern every
-    caller previously used) is a race DETECTOR, not proof the parsed
-    content equals the reported hash -- a deterministic ABA-mutation
-    probe changed the file, had THIS reader parse the changed bytes, then
-    restored the original bytes before a caller's own post-parse rehash,
-    which matched the ORIGINAL (pre-mutation) hash despite the changed
-    content being what was actually parsed. The digest returned here is
-    instead accumulated INLINE, one line at a time, from the very same
-    read calls that produce 'parsed'/'errors' below -- computed from a
-    single open file handle in a single pass, so it is structurally
-    impossible for the hashed bytes to differ from the parsed ones: there
-    is no second read, and therefore no window for the file to change
-    in between.**
+    **Rewritten, 2026-07-22 Codex review finding (sixth round): the file
+    was previously opened in TEXT mode (``encoding="utf-8-sig"``), which
+    (a) performs universal newline translation -- CRLF and bare CR bytes
+    are silently rewritten to LF before this function ever sees them --
+    and (b) transparently strips a leading BOM. The per-line hash was then
+    computed by RE-ENCODING that already-translated/stripped text
+    (``raw_line.encode("utf-8")``), not the original on-disk bytes.
+    Reproduced counterexample: byte-distinct LF-only, CRLF, and BOM+LF
+    files with otherwise identical content all produced the SAME digest
+    -- the documented claim that this hash represents "the exact parsed
+    bytes" was false. A second, related counterexample: a decode failure
+    previously raised INSIDE the text-mode ``readline()`` call itself,
+    before any bytes for that call reached the hasher (Python's own
+    internal decode buffering can consume more raw bytes than it
+    successfully decodes) -- two byte-distinct invalid UTF-8 streams could
+    therefore collapse to the same digest, since neither contributed the
+    bytes at/after its own failure point.
+
+    Both are closed by opening in BINARY mode and hashing each raw
+    ``bytes`` line the INSTANT it is read, strictly before any decoding is
+    attempted -- decode failure or success can no longer affect what was
+    already hashed. A leading UTF-8 BOM is still stripped for PARSING
+    (matching "utf-8-sig"'s tolerant behavior), but only from the bytes
+    handed to ``.decode()``, never from what was hashed -- the BOM itself
+    is now part of the exact-byte identity, as it must be for the identity
+    to be genuinely exact. A per-line (not file-level) decode failure is
+    reported and reading STOPS for this file (matching the prior
+    file-level-abort behavior as closely as possible while still hashing
+    every byte actually read).
+
+    **Added, 2026-07-22 Codex review finding (sixth round): a flood of
+    whitespace-only (or otherwise blank-after-strip) lines previously
+    bypassed both the record-count budget AND any byte-based budget
+    entirely -- each is discarded before either check runs, so a file
+    consisting almost entirely of near-``MAX_LINE_BYTES``-sized blank
+    lines could grow arbitrarily large while only a handful of lines ever
+    counted as "records".** The new byte-budget check below runs on EVERY
+    line read (blank or not), immediately after hashing and before the
+    blank-line short-circuit, so no line -- record or not -- is exempt
+    from it.
+
+    **Returns a 5th element, a hex SHA-256 digest** (added fifth round,
+    unchanged in spirit by the binary rewrite above): accumulated INLINE,
+    one line at a time, from the very same read calls that produce
+    'parsed'/'errors' below -- computed from a single open file handle in
+    a single pass, so it is structurally impossible for the hashed bytes
+    to differ from the parsed ones: there is no second read, and
+    therefore no window for the file to change in between.
     """
 
     parsed: list[tuple[int, dict]] = []
     errors: list[ParseError] = []
     non_blank_count = 0
+    bytes_read = 0
     hasher = hashlib.sha256()
 
-    try:
-        # "utf-8-sig" tolerates a leading UTF-8 BOM (transparently
-        # stripped) while behaving identically to plain "utf-8" for any
-        # file without one -- a real, benign case worth handling for
-        # free; see the module docstring for the separate, NOT-yet-fixed
-        # FILE_ANSI-vs-UTF-8 cross-language encoding caveat.
-        with path.open("r", encoding="utf-8-sig") as fh:
-            line_number = 0
-            while True:
-                raw_line = fh.readline(MAX_LINE_BYTES + 1)
-                if raw_line == "":
-                    break  # EOF
-                line_number += 1
-                # Hashed INLINE, immediately after this exact read call
-                # and before anything else touches the file -- see the
-                # docstring's ABA-race explanation for why this must
-                # happen here, not via a separate later re-read.
-                hasher.update(raw_line.encode("utf-8"))
+    with path.open("rb") as fh:
+        line_number = 0
+        is_first_line = True
+        while True:
+            raw_bytes = fh.readline(MAX_LINE_BYTES + 1)
+            if raw_bytes == b"":
+                break  # EOF
+            line_number += 1
+            # Hashed INLINE from the EXACT raw bytes read from disk, before
+            # any BOM-stripping or decoding -- see the docstring above for
+            # why this (not a decoded-then-re-encoded str) is the only way
+            # to make this a true exact-byte identity.
+            hasher.update(raw_bytes)
+            bytes_read += len(raw_bytes)
+            if bytes_read > remaining_byte_budget:
+                raise JournalReaderLimitError(
+                    f"{source_label}: more than the remaining max_total_source_bytes budget of "
+                    f"{remaining_byte_budget} bytes -- refusing to load the rest into memory"
+                )
 
-                oversized = len(raw_line) > MAX_LINE_BYTES and not raw_line.endswith("\n")
-                if oversized:
-                    # Consume and discard the rest of this physical line
-                    # (bounded per read) so the file position lands
-                    # correctly at the start of the NEXT real line.
-                    while True:
-                        chunk = fh.readline(MAX_LINE_BYTES + 1)
-                        hasher.update(chunk.encode("utf-8"))
-                        if chunk == "" or chunk.endswith("\n"):
-                            break
+            oversized = len(raw_bytes) > MAX_LINE_BYTES and not raw_bytes.endswith(b"\n")
+            if oversized:
+                # Consume and discard the rest of this physical line
+                # (bounded per read) so the file position lands correctly
+                # at the start of the NEXT real line.
+                while True:
+                    chunk = fh.readline(MAX_LINE_BYTES + 1)
+                    hasher.update(chunk)
+                    bytes_read += len(chunk)
+                    if bytes_read > remaining_byte_budget:
+                        raise JournalReaderLimitError(
+                            f"{source_label}: more than the remaining "
+                            f"max_total_source_bytes budget of {remaining_byte_budget} "
+                            f"bytes -- refusing to load the rest into memory"
+                        )
+                    if chunk == b"" or chunk.endswith(b"\n"):
+                        break
+                errors.append(
+                    ParseError(
+                        source_file=source_label,
+                        line_number=line_number,
+                        raw_line=raw_bytes[:2000].decode("utf-8", errors="replace"),
+                        error=f"line exceeds max line length of {MAX_LINE_BYTES} bytes",
+                    )
+                )
+                continue
 
-                stripped = raw_line.strip()
-                if not stripped:
-                    continue
-                non_blank_count += 1
-                if non_blank_count > remaining_budget:
-                    raise JournalReaderLimitError(
-                        f"{source_label}: more than the remaining max_records budget of "
-                        f"{remaining_budget} lines -- refusing to load the rest into memory"
-                    )
-                # **Added, 2026-07-22 Codex review finding (fifth round):**
-                # the character-based 'oversized' check above (from
-                # readline's own size bound) does not guarantee the line's
-                # real UTF-8 byte length is within MAX_LINE_BYTES -- a
-                # line under the character limit can still exceed it in
-                # bytes if it contains multi-byte characters. Checked here
-                # as a genuine byte-length verification, independent of
-                # (and in addition to) the character-based read bound.
-                if not oversized and len(stripped.encode("utf-8")) > MAX_LINE_BYTES:
-                    oversized = True
-                if oversized:
-                    errors.append(
-                        ParseError(
-                            source_file=source_label,
-                            line_number=line_number,
-                            raw_line=stripped[:2000],
-                            error=f"line exceeds max line length of {MAX_LINE_BYTES} bytes",
-                        )
-                    )
-                    continue
-                try:
-                    record = json.loads(
-                        stripped,
-                        parse_constant=_reject_non_finite_json_constant,
-                        parse_float=_parse_float_rejecting_overflow,
-                        object_pairs_hook=_reject_duplicate_keys,
-                    )
-                # **Added, 2026-07-22 Codex review finding (fifth round):**
-                # a deeply-nested-but-sub-megabyte JSON row (e.g. thousands
-                # of nested arrays/objects) exhausts Python's own call
-                # stack inside json.loads, raising RecursionError -- NOT a
-                # ValueError, so it previously propagated straight out of
-                # this function, aborting the ENTIRE directory read on one
-                # malformed row instead of becoming a single row error.
-                except (ValueError, RecursionError) as exc:
-                    # Cap the retained raw line so one hostile/huge line
-                    # cannot itself become an unbounded in-memory payload
-                    # inside the error record (Codex review finding).
-                    errors.append(
-                        ParseError(
-                            source_file=source_label,
-                            line_number=line_number,
-                            raw_line=stripped[:2000],
-                            error=str(exc) or type(exc).__name__,
-                        )
-                    )
-                    continue
-                if not isinstance(record, dict):
-                    errors.append(
-                        ParseError(
-                            source_file=source_label,
-                            line_number=line_number,
-                            raw_line=stripped[:2000],
-                            error=f"expected a JSON object, got {type(record).__name__}",
-                        )
-                    )
-                    continue
-                parsed.append((line_number, record))
-    except UnicodeDecodeError as exc:
-        # The file was not successfully decodable at all -- the hasher
-        # already reflects whatever raw bytes were actually consumed (via
-        # the per-readline() updates above) up to the failure point;
-        # deliberately NOT re-opening the file a second time to hash "the
-        # whole thing", which would reintroduce exactly the race this
-        # digest exists to avoid.
-        errors.append(
-            ParseError(
-                source_file=source_label,
-                line_number=0,
-                raw_line="",
-                error=f"file-level decode failure (not valid UTF-8): {exc}",
-            )
-        )
+            line_bytes = raw_bytes
+            if is_first_line and line_bytes.startswith(_UTF8_BOM):
+                # Tolerant of a leading BOM for PARSING only, matching
+                # "utf-8-sig"'s prior behavior -- the BOM bytes themselves
+                # were already hashed above, unstripped, so they still
+                # count toward the exact-byte identity.
+                line_bytes = line_bytes[len(_UTF8_BOM) :]
+            is_first_line = False
 
-    return parsed, errors, non_blank_count, hasher.hexdigest()
+            try:
+                raw_line = line_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                errors.append(
+                    ParseError(
+                        source_file=source_label,
+                        line_number=line_number,
+                        raw_line="",
+                        error=f"file-level decode failure (not valid UTF-8): {exc}",
+                    )
+                )
+                break  # matches the prior file-level-abort behavior
+
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            non_blank_count += 1
+            if non_blank_count > remaining_budget:
+                raise JournalReaderLimitError(
+                    f"{source_label}: more than the remaining max_records budget of "
+                    f"{remaining_budget} lines -- refusing to load the rest into memory"
+                )
+            try:
+                record = json.loads(
+                    stripped,
+                    parse_constant=_reject_non_finite_json_constant,
+                    parse_float=_parse_float_rejecting_overflow,
+                    object_pairs_hook=_reject_duplicate_keys,
+                )
+            # **Added, 2026-07-22 Codex review finding (fifth round):**
+            # a deeply-nested-but-sub-megabyte JSON row (e.g. thousands
+            # of nested arrays/objects) exhausts Python's own call
+            # stack inside json.loads, raising RecursionError -- NOT a
+            # ValueError, so it previously propagated straight out of
+            # this function, aborting the ENTIRE directory read on one
+            # malformed row instead of becoming a single row error.
+            except (ValueError, RecursionError) as exc:
+                # Cap the retained raw line so one hostile/huge line
+                # cannot itself become an unbounded in-memory payload
+                # inside the error record (Codex review finding).
+                errors.append(
+                    ParseError(
+                        source_file=source_label,
+                        line_number=line_number,
+                        raw_line=stripped[:2000],
+                        error=str(exc) or type(exc).__name__,
+                    )
+                )
+                continue
+            if not isinstance(record, dict):
+                errors.append(
+                    ParseError(
+                        source_file=source_label,
+                        line_number=line_number,
+                        raw_line=stripped[:2000],
+                        error=f"expected a JSON object, got {type(record).__name__}",
+                    )
+                )
+                continue
+            parsed.append((line_number, record))
+
+    return parsed, errors, non_blank_count, bytes_read, hasher.hexdigest()
 
 
 def read_journal_directory(
@@ -365,6 +411,12 @@ def read_journal_directory(
     pattern: str = "decisions_*.jsonl",
     max_records: int = DEFAULT_MAX_RECORDS_PER_DIRECTORY,
     files: Optional[Sequence[Path]] = None,
+    # **Added, 2026-07-22 Codex review finding (sixth round): see the
+    # module-level constants' own comment for what each of these three
+    # newly-enforced ceilings closes.**
+    max_files: int = DEFAULT_MAX_FILES_PER_DIRECTORY,
+    max_total_source_bytes: int = DEFAULT_MAX_TOTAL_SOURCE_BYTES,
+    max_retained_errors: int = DEFAULT_MAX_RETAINED_ERRORS,
 ) -> JournalReadResult:
     """Reads every file matching 'pattern' in 'directory' (non-recursive,
     matching DJ_JournalFilePath's own flat one-file-per-day layout),
@@ -391,8 +443,29 @@ def read_journal_directory(
     has no journal files yet", which are different, worth-distinguishing
     situations for a caller. Raises JournalReaderLimitError if the total
     number of raw (non-blank) lines across every matched file exceeds
-    'max_records' -- an unbounded read of a caller-controlled directory
-    must not be allowed to exhaust process memory.
+    'max_records', if the total raw byte count across every matched file
+    exceeds 'max_total_source_bytes', if the number of matched files
+    exceeds 'max_files', or if the combined count of retained parse/
+    validation error records exceeds 'max_retained_errors' -- an unbounded
+    read of a caller-controlled directory must not be allowed to exhaust
+    process memory along any of these dimensions.
+
+    **Fixed, 2026-07-22 Codex review finding (sixth round): a candidate
+    path that is not a regular file (e.g. a subdirectory whose NAME
+    happens to match 'pattern', or a broken symlink) previously reached
+    ``_read_lines_from_file``'s own ``path.open()`` call directly, raising
+    an unhandled ``PermissionError``/``IsADirectoryError`` that aborted
+    the entire directory read. It is now excluded and reported as a
+    ParseError instead, the same way an outward-resolving symlink is.**
+
+    **Fixed, 2026-07-22 Codex review finding (sixth round): a candidate
+    path resolving OUTSIDE 'directory' (an outward symlink, or a
+    caller-supplied 'files' entry escaping 'directory') was previously
+    silently skipped with a bare ``continue`` -- indistinguishable from
+    "this file simply does not exist". It is now recorded as a ParseError
+    (source-labelled by its own un-resolved name, since a path escaping
+    'directory' cannot be safely relativized against it) so an excluded
+    requested source is never silently invisible.**
     """
 
     if not directory.is_dir():
@@ -404,9 +477,16 @@ def read_journal_directory(
     all_parse_errors: list[ParseError] = []
     all_validation_errors: list[ValidationError] = []
     total_records_seen = 0
+    total_bytes_seen = 0
     per_file_hashes: list[tuple[str, str]] = []
 
     candidate_paths = sorted(files) if files is not None else sorted(directory.glob(pattern))
+
+    if len(candidate_paths) > max_files:
+        raise JournalReaderLimitError(
+            f"{directory}: {len(candidate_paths)} candidate file(s) exceeds max_files budget of "
+            f"{max_files} -- refusing to read the rest into memory"
+        )
 
     for path in candidate_paths:
         # Defensive: 'pattern' is normally a fixed literal
@@ -415,13 +495,35 @@ def read_journal_directory(
         # escape 'directory' -- Path.glob itself does not prevent this.
         # Every legitimate match's immediate parent is 'directory' itself
         # (glob's default is non-recursive); anything else is rejected.
-        # **Also closes, 2026-07-22 Codex review finding (fifth round):**
-        # an outward symlink resolving outside 'directory' is skipped
-        # HERE, before it ever contributes to 'dataset_hash' below --
-        # unlike a caller's separate compute_dataset_hash(glob(...)) call,
-        # which would hash it anyway despite this reader never analyzing
-        # a single row from it.
+        # **Reported, not silently skipped, 2026-07-22 Codex review
+        # finding (sixth round): see this function's own docstring.**
         if path.resolve().parent != resolved_directory:
+            all_parse_errors.append(
+                ParseError(
+                    source_file=str(path),
+                    line_number=0,
+                    raw_line="",
+                    error=f"excluded: resolves outside journal directory {directory}",
+                )
+            )
+            continue
+
+        # **Added, 2026-07-22 Codex review finding (sixth round):** a
+        # non-regular-file candidate (a subdirectory whose name matches
+        # 'pattern', a broken symlink, a FIFO/device node, etc.) must
+        # never reach ``_read_lines_from_file``'s own ``path.open()`` --
+        # opening a directory raises PermissionError on Windows
+        # (IsADirectoryError on POSIX), which previously propagated
+        # unhandled and aborted the whole directory read.
+        if not path.is_file():
+            all_parse_errors.append(
+                ParseError(
+                    source_file=str(path.resolve().relative_to(resolved_directory)),
+                    line_number=0,
+                    raw_line="",
+                    error="excluded: matched pattern but is not a regular file",
+                )
+            )
             continue
 
         # Source labelled relative to 'directory', not an absolute path
@@ -431,11 +533,13 @@ def read_journal_directory(
         # portable-metadata discipline.
         source_label = str(path.resolve().relative_to(resolved_directory))
         remaining_budget = max_records - total_records_seen
-        parsed, parse_errors, non_blank_count, file_hash = _read_lines_from_file(
-            path, source_label, remaining_budget
+        remaining_byte_budget = max_total_source_bytes - total_bytes_seen
+        parsed, parse_errors, non_blank_count, bytes_read, file_hash = _read_lines_from_file(
+            path, source_label, remaining_budget, remaining_byte_budget
         )
         all_parse_errors.extend(parse_errors)
         total_records_seen += non_blank_count
+        total_bytes_seen += bytes_read
         per_file_hashes.append((source_label, file_hash))
 
         for line_number, raw_record in parsed:
@@ -450,6 +554,17 @@ def read_journal_directory(
                         error=str(exc),
                     )
                 )
+
+        # **Added, 2026-07-22 Codex review finding (sixth round):** checked
+        # after each file (each file's own error count is already
+        # implicitly bounded by max_records) so a directory of many
+        # heavily-malformed files cannot retain an unbounded number of
+        # (up to 2000-char each) error records in memory.
+        if len(all_parse_errors) + len(all_validation_errors) > max_retained_errors:
+            raise JournalReaderLimitError(
+                f"{directory}: retained parse/validation error count exceeds max_retained_errors "
+                f"budget of {max_retained_errors} -- refusing to retain any more error records"
+            )
 
     # Combined, order-independent identity of every file actually read --
     # same sorted-manifest scheme as analysis.report_metadata.compute_dataset_hash

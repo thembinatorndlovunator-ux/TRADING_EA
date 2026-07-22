@@ -44,6 +44,25 @@ def test_missing_required_column_still_raises(tmp_path):
         read_csv_with_required_columns(path, {"trade_id", "profit", "symbol"})
 
 
+def test_oversized_csv_file_rejected_before_reading_into_memory(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    this helper previously read an entire caller-controlled file into
+    bytes/decoded text/a DataFrame with no size ceiling anywhere in this
+    layer, unlike journal_reader.py's own per-file/per-directory byte
+    budgets. A monkeypatched MAX_CSV_FILE_BYTES avoids actually writing a
+    huge file while still proving the stat()-based check runs before any
+    read_bytes() call."""
+
+    import analysis.csv_io as csv_io_module
+
+    monkeypatch.setattr(csv_io_module, "MAX_CSV_FILE_BYTES", 10)
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+
+    with pytest.raises(CsvSchemaError):
+        read_csv_with_required_columns(path, {"trade_id", "profit"})
+
+
 def test_quoted_multiline_duplicate_header_rejected(tmp_path):
     """Regression for a Codex review finding (2026-07-22, third round):
     reading only the first PHYSICAL line missed a header row that itself

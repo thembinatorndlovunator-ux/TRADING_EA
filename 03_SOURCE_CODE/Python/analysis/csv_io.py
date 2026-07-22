@@ -20,11 +20,20 @@ import pandas as pd
 
 class CsvSchemaError(ValueError):
     """Raised when a CSV is missing one or more required columns, contains
-    a duplicate durable ID, a non-finite/missing numeric value, or invalid
-    OHLC geometry -- every one of these is a reportable data-integrity
-    problem per the reproducibility contract's "visible failures, never
-    silently coerced" rule, not something a caller should filter out
-    quietly."""
+    a duplicate durable ID, a non-finite/missing numeric value, invalid
+    OHLC geometry, or exceeds a resource ceiling (file size) -- every one
+    of these is a reportable data-integrity problem per the
+    reproducibility contract's "visible failures, never silently coerced"
+    rule, not something a caller should filter out quietly."""
+
+
+# **Added, 2026-07-22 Codex review finding (sixth round): this helper
+# previously read an entire caller-controlled file into bytes, decoded
+# text, and a DataFrame with no size ceiling at all -- unlike
+# journal_reader.py's own per-file/per-directory byte budgets. A
+# generously large but genuinely bounded ceiling, checked via a cheap
+# stat() BEFORE the unbounded read_bytes() call below.**
+MAX_CSV_FILE_BYTES = 500_000_000  # 500 MB
 
 
 def _read_csv_bytes_checked(
@@ -50,7 +59,20 @@ def _read_csv_bytes_checked(
     once and hashing/parsing that same buffer makes this structurally
     impossible: there is only one read, so there is no window for the
     file to change in between.**
+
+    Raises CsvSchemaError if 'path' exceeds MAX_CSV_FILE_BYTES, checked
+    via a stat() call BEFORE the file is read into memory -- **added,
+    2026-07-22 Codex review finding (sixth round): a caller-controlled
+    CSV of unbounded size previously had no ceiling anywhere in this
+    layer.**
     """
+
+    file_size = path.stat().st_size
+    if file_size > MAX_CSV_FILE_BYTES:
+        raise CsvSchemaError(
+            f"{path}: file size {file_size} bytes exceeds MAX_CSV_FILE_BYTES ceiling of "
+            f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the whole file into memory"
+        )
 
     raw_bytes = path.read_bytes()
     # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
@@ -215,6 +237,21 @@ def assert_path_not_direct_child_of_directory(
     previously each hand-rolled an ad hoc
     ``output_path.resolve().parent == directory.resolve()`` check using
     plain resolved-STRING comparison rather than this shared helper.**
+
+    **Disclosed, not changed, 2026-07-22 Codex review finding (sixth
+    round): the sixth-round review calls this scoping "only partially
+    fixed" since a nested output path under 'directory' is still
+    permitted. That is unchanged from the fifth round's own reasoning
+    above (a non-recursive glob genuinely never descends into a
+    subdirectory, so a nested output cannot collide with a LATER read of
+    the same directory via the same glob) -- widening this to a full
+    ancestry check was tried and reverted during round 5's own
+    remediation because it broke this project's own established
+    ``tmp_path/out/`` output-subfolder pattern (three legitimate tests
+    failed). No new counterexample specific to this scoping was
+    reproduced against the current code; left as explicitly-named,
+    intentionally-unchanged scope rather than re-broadening the check
+    without one.**
     """
 
     if output_path is None:
