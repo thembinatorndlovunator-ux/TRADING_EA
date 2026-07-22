@@ -327,44 +327,67 @@ market_family/intraday_mode finding above.
 
 ## Commit
 
-19+ commits on `claude/task-028-python-statistical-lab` (part 1 through
-all three Codex-review remediation series completed so far — corrected,
-2026-07-22 Codex review finding, fourth round: this previously said
-"both," stale since the third round landed; round 4's own independent
-count is 20 commits, `e37bbec` through `b88b63a` — the durable "19+"
-wording itself is still accurate and deliberately not being replaced
-with a moving target) — see `git log` on that branch for the full,
-current list rather than trusting a specific count/hash recorded here,
-which has gone stale at least twice already (a lesson this document
-itself is a live example of — see the round-2 doc-staleness findings
-above).
+19+ commits on `claude/task-028-python-statistical-lab` (part 1 onward
+— corrected, 2026-07-22 Codex review finding, fourth round: this
+previously said "both," stale since the third round landed; round 4's
+own independent count was 20 commits, `e37bbec` through `b88b63a` — the
+durable "19+" wording itself is still accurate and deliberately not
+being replaced with a moving target). **The "all three... remediation
+series" ordinal claim itself went stale by round 6 (there have now been
+six remediation series) and is deliberately not being replaced with
+another moving target here either (Codex review finding, 2026-07-22,
+sixth round, finding 17) — see `git log --grep=TASK-028` on that branch
+for the full, current list and count rather than trusting a specific
+count/ordinal recorded here, which has now gone stale at least three
+times** (a lesson this document itself is a live example of — see the
+round-2 doc-staleness findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — four independent review rounds
-completed** (2026-07-21, 2026-07-22, 2026-07-22, 2026-07-22; see
+**Codex, via `/code-review ultra` — six independent review rounds
+completed** (2026-07-21, 2026-07-22 x5; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
-round). Round 1: 15 findings (2 P0/11 P1/2 P2), remediation applied with
-regression tests. Round 2: 16 findings (2 P0/11 P1/3 P2), remediation
-applied with regression tests — see the "part 4" remediation notes
-below. **Round 3 independently confirmed most of rounds 1-2's fixes**
-(see that review's own "Corrections independently confirmed" section --
-walk-forward, baseline/release comparison, giveback/MFE finite checks,
-bootstrap CI validation, the Wilson interval, Monte Carlo's minimum-
-trade-count and caveats, path-collision/atomic-write handling, CSV/JSON
-hardening, journal reading, and all declared quality-gate commands were
-all independently verified genuinely improved or resolved), while also
-surfacing 17 NEW findings (3 P0/10 P1/4 P2) against the round-2 HEAD,
-remediated in commit `b88b63a` with regression tests per finding.
-**Round 4 independently confirmed round 3's remediation was genuinely
-applied** (see that review's own "Corrections independently confirmed"
-section), while surfacing 18 further findings (3 P0/11 P1/4 P2) against
-`b88b63a` -- required deliverables that remained absent (equity-peak
-giveback, the missing baseline-comparison metrics, a real session/mode/
-news outcome breakdown), integrity defects in the new signal-to-outcome
-join, and numerous smaller correctness/provenance gaps. Round 4's 18
-findings have now been remediated with regression tests per finding; a
-fifth review round should be requested once the user is ready.
+round -- it always holds the LATEST round's text only, never a
+concatenation of all six; use the "Round 5"/"Round 6" entries in this
+file's own history section below, or `git log --grep=TASK-028`, for
+what earlier rounds actually said). Round 1: 15 findings (2 P0/11 P1/2
+P2), remediation applied with regression tests. Round 2: 16 findings (2
+P0/11 P1/3 P2), remediation applied with regression tests — see the
+"part 4" remediation notes below. **Round 3 independently confirmed most
+of rounds 1-2's fixes** (see that review's own "Corrections
+independently confirmed" section -- walk-forward, baseline/release
+comparison, giveback/MFE finite checks, bootstrap CI validation, the
+Wilson interval, Monte Carlo's minimum-trade-count and caveats, path-
+collision/atomic-write handling, CSV/JSON hardening, journal reading,
+and all declared quality-gate commands were all independently verified
+genuinely improved or resolved), while also surfacing 17 NEW findings (3
+P0/10 P1/4 P2) against the round-2 HEAD, remediated in commit `b88b63a`
+with regression tests per finding. **Round 4 independently confirmed
+round 3's remediation was genuinely applied** (see that review's own
+"Corrections independently confirmed" section), while surfacing 18
+further findings (3 P0/11 P1/4 P2) against `b88b63a` -- required
+deliverables that remained absent (equity-peak giveback, the missing
+baseline-comparison metrics, a real session/mode/news outcome
+breakdown), integrity defects in the new signal-to-outcome join, and
+numerous smaller correctness/provenance gaps. Round 4's 18 findings were
+remediated with regression tests per finding, committed as `750443d`.
+**Round 5 independently confirmed several round-4 fixes were genuine**
+(see that review's own "Corrections independently confirmed" section),
+surfacing its own 18 findings (3 P0/11 P1/4 P2) against `750443d`, each
+resolved with regression tests per finding (commits `aa39ac4` through
+`52e8dec`, canonical-doc update `971e543`). **A sixth review then found
+round 5's "fully resolved" canonical-doc characterization overbroad**,
+surfacing 17 further findings (3 P0/12 P1/2 P2) against `971e543` --
+several reproducing the exact class of counterexample the canonical docs
+had just described as closed. All 12 P1s and both P2s from that sixth
+round are now resolved with regression tests per finding (commits
+`5ebea9a` through `8117111`, listed individually in this file's own
+Round 6 history entry below); the 3 P0s are intentionally not yet
+resolved, pending the user's own input on scope/risk (see the Round 6
+history entry for why each one specifically needs a checkpoint rather
+than an autonomous judgment call). A seventh review round should be
+requested once the 3 P0s have a resolution or an agreed disposition, not
+before.
 
 ## Implementation notes (Claude, part 2 of N — completes the 9 scripts + 10 notebooks)
 
@@ -534,6 +557,17 @@ third round) and then stopped at round 3 without reflecting round 4
 (corrected, 2026-07-22 Codex review finding, fourth round) -- "remediation
 applied, pending independent review" remains the honest phrasing for
 round 4's own 18 findings until a fifth review actually runs.**
+
+**Superseded, 2026-07-22 Codex review finding (sixth round, finding 17):
+this section is a HISTORICAL CHECKPOINT frozen at round 4's own
+remediation point (test count, round count, and "pending independent
+review" phrasing all describe that moment, not the current state) --
+kept as-is rather than endlessly re-edited in place each round, which is
+exactly the "stale duplicated history" pattern round 6 flagged. For the
+CURRENT, Git-verified state, see this file's own "Round 5"/"Round 6"
+history entries further below (or run `git log --grep=TASK-028` /
+`pytest -q` directly) -- do not trust the test count or round count on
+this specific line for anything after round 4.**
 
 ## Implementation notes (Claude, part 3 of N — Codex review remediation)
 
@@ -757,3 +791,70 @@ so this canonical file does not read as if history stopped at round 2.
   the exact class of counterexample this section claimed was closed;
   round 5 alone was not, in fact, sufficient for merge-readiness).** See
   the Round 6 entry below for the corrected, Git-verified state.
+
+- **Round 6** (17 findings: 3 P0/12 P1/2 P2, reviewed against `971e543`,
+  recorded verbatim as `8cb83b0`): confirmed round 5's remediation was
+  real (see that review's own "Corrections independently confirmed"
+  section) but found several items only PARTIALLY closed across the
+  codebase (6: ABA-race provenance fixed in only 3 of 12 entry points; 7:
+  comparability manifest checked for equality but not nonblank content,
+  and ea_version/data_source still optional; 8: `compute_r_multiple`'s
+  own division and `_point_diff`'s subtraction both still unchecked for
+  overflow; 9: the V8.11 2-D grid left the analogous V6.37 grid
+  undone while the canonical docs cited finding 9 as fully resolved
+  anyway). **All 12 P1s and both P2s are now resolved**, each with a
+  regression test reproducing the review's own reported counterexample,
+  committed in finding order: 4 (`5ebea9a` — `join_signal_to_outcome.py`
+  deal_id membership check, unrecognized direction/is_long rejection,
+  aggregated-profit overflow), 5 (`afbca1c` — the ABA-race fix extended
+  to all 9 remaining entry points, implicit-sidecar derivation extended
+  to 8 of them), 6 (`4f4464a` — journal_reader.py rewritten to hash raw
+  bytes in binary mode before any decoding, closing the "hash isn't
+  exact-byte" gap; max_files/max_total_source_bytes/max_retained_errors
+  ceilings added; csv_io.py gained a file-size ceiling), 7 (`905797e` —
+  a shared `csv_io.TRADE_ID_DTYPE` applied to the 7 remaining trades.csv
+  consumers), 8 (`4c7939a` — nonblank validation added to all 7 role-
+  manifest pairs; ea_version/data_source made required, deliberately NOT
+  equality-checked since a comparison's premise is that releases differ;
+  notebook 10's claimed period corrected to match its own fixture), 9
+  (`1612758` — `compute_trade_summary` gained n_resamples/confidence,
+  threaded from `compare_releases.run`'s own top-level settings into both
+  nested summaries; `expectancy`'s n==1 branch now validates its controls
+  unconditionally), 10 (`512c77e` — `compute_r_multiple` hardened at its
+  one shared root, closing three independently-reported overflow
+  counterexamples at once; `compare_releases._point_diff` hardened
+  separately), 11 (`c9e8623` — `sweep_v637_arm_rr_and_giveback_percent`/
+  `run_v637_2d_sweep` added, closing the V6.37 2-D gap; canonical docs'
+  finding-9 overclaim corrected), 12 (`d2c0175` — `longest_losing_streak`
+  renamed to `longest_losing_balance_step_streak`; bootstrap CIs added to
+  avg winner/loser/duration; notebook 01 exercises the authenticated-
+  period route), 13 (`3cd8236` — cadence-quantizes-to-zero ValueError;
+  cadence persisted in both artifacts; TASK-037 required to update the
+  non-conforming consumer, not just name a convention), 14 (`37c4bdc` —
+  `TASK-039_CHART_PATTERN_COMPLETION.md` registered for the 13 unowned
+  chart-pattern families), 15 (`0f1feb7` — TASK-034's metal/synthetic
+  provider-selection rule and synthetic-bypass test added; news_state
+  whitespace/case near-miss normalization), 16 (`8117111` — notebook 10
+  hand-checks `baseline_summary`/`candidate_summary`/`surface_diff` and
+  its false "total separation" claim corrected; `derive_session_state`
+  made real and unit-tested, notebook 04 exercises `UNKNOWN`), 17 (this
+  history entry, `TASKS.md`'s row, and
+  `09_HANDOVERS/claude_to_codex/TASK-028_handover.md`'s own UPDATE
+  section, all corrected in the same pass). 602 tests passing (up from
+  532 at round 5's close), ruff/ruff format/mypy clean, all 11 notebooks
+  re-executed with zero errors as of this update.
+
+  **The 3 P0s (1: durable identity model uses MT5's unstable
+  `POSITION_TICKET` where the documented stable key is
+  `POSITION_IDENTIFIER`/`DEAL_POSITION_ID`; 2: mandatory equity/drawdown/
+  giveback/cost-comparison deliverables remain genuinely blocked without
+  a real intratrade equity-tick export; 3: live mode classification and
+  regime-transition evidence are unowned new EA feature scope) are
+  intentionally NOT resolved as of this update** -- each involves either
+  a live-trading-EA identity/behavior change needing a MetaEditor compile
+  this sandbox cannot perform, an input this project does not have yet,
+  or new feature scope rather than a bug fix; per this project's own
+  workflow discipline, these get a user checkpoint before any code is
+  written, not an autonomous judgment call. A seventh independent review
+  should be requested once the 3 P0s have a resolution or an agreed
+  disposition, not before.

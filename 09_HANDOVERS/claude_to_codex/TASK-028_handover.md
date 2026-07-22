@@ -460,3 +460,70 @@ yet — that request will follow once the remaining findings are resolved.
 --check .` all files already formatted, `mypy analysis data_collection
 --ignore-missing-imports` success (24 source files). All 11 notebooks
 re-executed via `jupyter execute`, all exit 0.
+
+## UPDATE — fifth review completed and closed; sixth review completed, twelve P1s and both P2s resolved (2026-07-22)
+
+**Round 5 completed after the "still pending" list above.** Findings 6,
+7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 were each resolved with a
+regression test reproducing that finding's own counterexample, committed
+across `457970f`, `4e03b2b`, `17077a9`, `3a1bafc`, `ce0ee25`, `52e8dec`,
+then a canonical-doc status update in `971e543`. All 18 of round 5's
+findings (3 P0/11 P1/4 P2) had a landed fix as of `971e543`.
+
+**A sixth independent review then ran** (recorded verbatim in
+`09_HANDOVERS/codex_to_claude/TASK-028_review.md`, commit `8cb83b0`) and
+found round 5's remediation genuinely real but its "fully resolved"
+characterization overbroad: **17 remaining findings (3 P0, 12 P1, 2
+P2)**, several reproducing the exact class of counterexample the
+canonical docs had just described as closed (findings 6/7/8 were each
+only partially closed across the codebase; finding 9's V8.11 grid left
+the analogous V6.37 grid undone while the canonical docs cited it as
+fully resolved anyway).
+
+**All 12 P1s and both P2s are now resolved**, each with a regression
+test reproducing the review's own reported counterexample, committed
+across `5ebea9a` (R6F4: signal/outcome corrupt cross-schema values +
+aggregate overflow), `afbca1c` (R6F5: provenance fix not system-wide
+across 9 more entry points), `4f4464a` (R6F6: journal hash not exact-
+byte, journal reader binary-mode rewrite, resource ceilings), `905797e`
+(R6F7: durable-ID lossy numeric inference via a shared `TRADE_ID_DTYPE`),
+`4c7939a` (R6F8: release-comparison manifest nonblank/authenticated),
+`1612758` (R6F9: resampling/confidence configuration threaded into
+nested summaries), `512c77e` (R6F10: `compute_r_multiple` overflow
+hardening, closing three separate reported counterexamples at their
+shared root), `c9e8623` (R6F11: the missing V6.37 2-D sweep, closing
+round 5's own overclaim), `d2c0175` (R6F12: `longest_losing_streak`
+renamed to `longest_losing_balance_step_streak`, uncertainty added to
+avg winner/loser/duration), `3cd8236` (R6F13: cadence-quantizes-to-zero
+fix, cadence persistence, TASK-037 ownership correction), `37c4bdc`
+(R6F14: TASK-039 registered for the 13 unowned chart-pattern families),
+`0f1feb7` (R6F15: news-provider selection rule + news_state near-miss
+normalization), `8117111` (R6F16: notebook 10/04 hand-checks, a false
+statistical claim corrected, `derive_session_state` made real and
+tested).
+
+**The 3 P0s are intentionally NOT yet resolved, pending the user's own
+input** (per this project's workflow discipline: risky, hard-to-reverse,
+or scope-defining decisions get a checkpoint, not an autonomous
+judgment call): (1) the durable identity model uses MT5's unstable
+`POSITION_TICKET` where the documented stable key is `POSITION_IDENTIFIER`/
+`DEAL_POSITION_ID` — a factual correction, but one that touches live
+`OrderManager.mqh`/`DecisionJournal.mqh` and needs a MetaEditor compile
+this sandbox cannot perform; (2) the mandatory equity/drawdown/giveback/
+cost-comparison deliverables remain genuinely blocked without a real
+intratrade equity-tick export this project does not have; (3) live mode
+classification and regime-transition evidence are unowned new EA feature
+scope (a live `IntradayModeRouter`, a transition-history buffer), not a
+bug fix — registering that as its own numbered follow-up task (matching
+the TASK-031/033/036/037/039 pattern) is the likely next step once
+discussed, not something to build speculatively first.
+
+**Current, real state (verify independently, don't trust this line):**
+602 tests passing, `ruff check .` all checks passed, `ruff format
+--check .` all files already formatted, `mypy analysis data_collection
+--ignore-missing-imports` success (24 source files). All 11 notebooks
+re-executed via `jupyter execute`, all exit 0. **Do not treat this
+update as a request for a seventh review** — per this file's own
+established discipline, that request is made explicitly and separately,
+once the 3 P0s have been discussed and either resolved or given an
+agreed disposition.
