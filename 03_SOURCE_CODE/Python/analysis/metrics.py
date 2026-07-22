@@ -246,7 +246,17 @@ def expectancy(
     non-finite (NaN/inf) -- **fixed, 2026-07-22 Codex review finding
     (third round): the n==1 branch previously ran BEFORE any finiteness
     check, so ``expectancy([NaN])`` silently returned a NaN expectancy
-    instead of a visible error.**
+    instead of a visible error.** Also raises ValueError if 'confidence'
+    is not in (0, 1) or 'n_resamples' is outside
+    [MIN_N_RESAMPLES, MAX_N_RESAMPLES] -- **fixed, 2026-07-22 Codex
+    review finding (sixth round): the single-observation (n==1) early
+    return previously skipped ``bootstrap_confidence_interval``'s own
+    validation of these two controls entirely (that function is only
+    ever called for n>1), so a garbage confidence/n_resamples supplied
+    alongside a single-observation 'pnl' previously succeeded silently
+    instead of raising -- these are now validated unconditionally,
+    before the n==1 branch, regardless of how many observations 'pnl'
+    has.**
     """
 
     n = len(pnl)
@@ -254,6 +264,13 @@ def expectancy(
         raise InsufficientSampleError("expectancy: empty pnl sequence")
     if not all(math.isfinite(x) for x in pnl):
         raise ValueError("expectancy: pnl contains a non-finite (NaN/inf) value")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"expectancy: confidence must be in (0, 1), got {confidence}")
+    if not (MIN_N_RESAMPLES <= n_resamples <= MAX_N_RESAMPLES):
+        raise ValueError(
+            f"expectancy: n_resamples must be in [{MIN_N_RESAMPLES}, {MAX_N_RESAMPLES}], "
+            f"got {n_resamples}"
+        )
 
     mean = sum(pnl) / n
     if n == 1:

@@ -537,10 +537,21 @@ def run(
     # the one input (a caller-asserted period) analyse_baseline.py alone
     # never has.**
     claimed_period_days = (parsed_period_end - parsed_period_start).total_seconds() / 86400.0
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): this
+    # function's own n_resamples/confidence (already used for the
+    # TOP-LEVEL win_rate_diff/expectancy_r_diff below) were previously
+    # never forwarded into either nested summary -- a probe with
+    # n_resamples=100, confidence=0.9 returned those values at the top
+    # level while baseline_summary/candidate_summary silently kept
+    # compute_trade_summary's own defaults (2000/0.95), reporting
+    # internally DIFFERENT inferential configurations inside one JSON
+    # artifact.**
     baseline_summary = compute_trade_summary(
         baseline.sort_values("exit_time"),
         starting_balance=starting_balance,
         seed=seed,
+        n_resamples=n_resamples,
+        confidence=confidence,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
         evaluation_period_days=claimed_period_days,
@@ -549,6 +560,8 @@ def run(
         candidate.sort_values("exit_time"),
         starting_balance=starting_balance,
         seed=seed,
+        n_resamples=n_resamples,
+        confidence=confidence,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
         evaluation_period_days=claimed_period_days,

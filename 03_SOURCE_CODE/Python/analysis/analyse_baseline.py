@@ -101,6 +101,19 @@ def compute_trade_summary(
     *,
     starting_balance: float = 1000.0,
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (sixth round): this
+    # function previously exposed 'seed' but hard-wired every
+    # win_rate()/expectancy() call to their own default n_resamples/
+    # confidence (2000/0.95), regardless of what a caller (e.g.
+    # compare_releases.run, which already exposes its own n_resamples/
+    # confidence for its TOP-LEVEL win_rate_diff/expectancy_r_diff
+    # inference) actually wanted -- a probe with n_resamples=100,
+    # confidence=0.9 previously returned those values at the top level
+    # while the NESTED baseline_summary/candidate_summary silently kept
+    # 2000/0.95, reporting internally DIFFERENT inferential
+    # configurations inside one JSON artifact.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
     giveback_arm_percent: float = 1.0,
     giveback_floor_percent: float = 0.5,
     # **Added, 2026-07-22 Codex review finding (fifth round): 'trades_per_day'
@@ -169,9 +182,9 @@ def compute_trade_summary(
     profits = trades_sorted["profit"].tolist()
     r_multiples = trades_sorted["r_multiple"].tolist()
 
-    wr = win_rate([p > 0 for p in profits])
-    exp_dollars = expectancy(profits, seed=seed)
-    exp_r = expectancy(r_multiples, seed=seed)
+    wr = win_rate([p > 0 for p in profits], confidence=confidence)
+    exp_dollars = expectancy(profits, n_resamples=n_resamples, seed=seed, confidence=confidence)
+    exp_r = expectancy(r_multiples, n_resamples=n_resamples, seed=seed, confidence=confidence)
     pf = profit_factor(profits)
     dd = compute_max_drawdown(balance_curve)
     giveback = compute_balance_peak_giveback(
@@ -318,6 +331,13 @@ def run(
     # regardless of what a caller passed here. Always an explicit int
     # now, matching monte_carlo.py/compare_releases.py.**
     seed: int = 42,
+    # **Added, 2026-07-22 Codex review finding (sixth round): this
+    # script previously had NO CLI/API control over n_resamples/
+    # confidence at all, unlike every other pipeline in this layer --
+    # see compute_trade_summary's own comment for the exact inconsistency
+    # this closes.**
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
     ea_version: Optional[str] = None,
     data_source: Optional[str] = None,
     # **Added, 2026-07-22 Codex review finding (fourth round), renamed
@@ -435,6 +455,8 @@ def run(
         trades_sorted,
         starting_balance=starting_balance,
         seed=seed,
+        n_resamples=n_resamples,
+        confidence=confidence,
         giveback_arm_percent=giveback_arm_percent,
         giveback_floor_percent=giveback_floor_percent,
         evaluation_period_days=evaluation_period_days,
@@ -476,6 +498,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--broker", default=None)
     parser.add_argument("--seed", type=int, default=42)
+    # **Added, 2026-07-22 Codex review finding (sixth round): this script
+    # previously had NO CLI control over n_resamples/confidence at all.**
+    parser.add_argument("--n-resamples", type=int, default=2000)
+    parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--ea-version", default=None)
     parser.add_argument("--data-source", default=None)
     parser.add_argument("--giveback-arm-percent", type=float, default=1.0)
@@ -497,6 +523,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             symbol=args.symbol,
             broker=args.broker,
             seed=args.seed,
+            n_resamples=args.n_resamples,
+            confidence=args.confidence,
             ea_version=args.ea_version,
             data_source=args.data_source,
             giveback_arm_percent=args.giveback_arm_percent,

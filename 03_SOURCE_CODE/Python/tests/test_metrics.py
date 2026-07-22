@@ -132,6 +132,20 @@ def test_expectancy_rejects_overflow_error_during_variance_calculation():
         expectancy([1e308, -1e308], n_resamples=100, seed=1)
 
 
+def test_expectancy_rejects_invalid_controls_even_at_n_equals_1():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    the n==1 early return previously skipped bootstrap_confidence_
+    interval's own validation of confidence/n_resamples entirely (that
+    function is only ever called for n>1) -- a garbage confidence/
+    n_resamples supplied alongside a single-observation pnl previously
+    succeeded silently instead of raising."""
+
+    with pytest.raises(ValueError):
+        expectancy([5.0], confidence=1.5)
+    with pytest.raises(ValueError):
+        expectancy([5.0], n_resamples=1)
+
+
 def test_expectancy_single_observation_has_no_estimable_uncertainty():
     """Regression for a Codex review finding (2026-07-22): reporting
     std_dev=0.0 for a single observation is FALSE PRECISION -- spread is

@@ -65,6 +65,24 @@ def _write_trades(path: Path, rows: list[dict] | None = None) -> None:
     ).to_csv(path, index=False)
 
 
+def test_n_resamples_and_confidence_exposed_and_actually_used(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    compute_trade_summary previously exposed 'seed' but hard-wired every
+    win_rate()/expectancy() call to their own default n_resamples/
+    confidence (2000/0.95), regardless of what a caller passed to run()
+    -- these are now genuinely threaded through and persisted."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(path)
+
+    summary = run(path, n_resamples=150, confidence=0.90)
+    assert summary["expectancy_dollars"]["n_resamples"] == 150
+    assert summary["expectancy_dollars"]["confidence"] == 0.90
+    assert summary["expectancy_r"]["n_resamples"] == 150
+    assert summary["expectancy_r"]["confidence"] == 0.90
+    assert summary["win_rate"]["confidence"] == 0.90
+
+
 def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round):
     'trade_id' was previously read via plain pandas type inference -- a

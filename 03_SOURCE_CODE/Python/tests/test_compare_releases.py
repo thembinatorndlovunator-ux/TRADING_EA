@@ -263,6 +263,36 @@ def test_empty_dataset_raises(tmp_path):
         )
 
 
+def test_n_resamples_and_confidence_forwarded_into_nested_summaries(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    n_resamples/confidence were previously used for the TOP-LEVEL
+    win_rate_diff/expectancy_r_diff inference but never forwarded into
+    baseline_summary/candidate_summary -- a probe with n_resamples=100,
+    confidence=0.9 returned those values at the top level while the
+    nested summaries silently kept compute_trade_summary's own defaults
+    (2000/0.95), reporting internally DIFFERENT inferential
+    configurations inside one JSON artifact."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    _write_trades(baseline_path, [95.0] * 15 + [105.0] * 5, [-10.0] * 15 + [10.0] * 5)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 15 + [95.0] * 5, [10.0] * 15 + [-10.0] * 5)
+
+    summary = run(
+        baseline_path,
+        candidate_path,
+        n_resamples=100,
+        confidence=0.90,
+        period_start=DEFAULT_PERIOD_START,
+        period_end=DEFAULT_PERIOD_END,
+    )
+    assert summary["expectancy_r_diff"]["n_resamples"] == 100
+    assert summary["baseline_summary"]["expectancy_dollars"]["n_resamples"] == 100
+    assert summary["baseline_summary"]["expectancy_dollars"]["confidence"] == 0.90
+    assert summary["candidate_summary"]["expectancy_dollars"]["n_resamples"] == 100
+    assert summary["candidate_summary"]["expectancy_dollars"]["confidence"] == 0.90
+
+
 def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round):
     'trade_id' was previously read via plain pandas type inference -- a
