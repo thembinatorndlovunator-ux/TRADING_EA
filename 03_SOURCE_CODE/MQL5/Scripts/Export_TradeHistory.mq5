@@ -8,36 +8,48 @@
 //| already document: trade_id, symbol, is_long, entry_time, exit_time,      |
 //| entry_price, exit_price, stop_price, profit, order_id, deal_id.             |
 //|                                                                    |
-//| One row per FILL (per closing deal), not per position, per                   |
-//| join_signal_to_outcome.py's own documented cardinality requirement --          |
-//| a position closed across multiple partial-close deals produces multiple         |
-//| rows sharing the same order_id (position_id), each with its own unique            |
-//| trade_id/deal_id. This project's own OM_ClosePosition/                             |
-//| IntradayCloseManager.mqh both close a position's FULL volume in one                  |
-//| deal today, so in practice every export currently produces exactly one                 |
-//| row per position -- but the export itself does not assume that will                     |
-//| always be true.                                                                             |
+//| One row per CLOSING FILL (OUT/OUT_BY/INOUT deal), not per position, per  |
+//| join_signal_to_outcome.py's own documented cardinality requirement -- a    |
+//| position closed across multiple partial-close deals produces multiple       |
+//| rows sharing the same order_id (position_id), each with its own unique       |
+//| trade_id/deal_id; join_signal_to_outcome.py aggregates them back into ONE     |
+//| joined row per position on its own side.                                        |
 //|                                                                    |
-//| **order_id = MT5's POSITION_IDENTIFIER (DEAL_POSITION_ID on the         |
-//| closing deal) -- NEVER the position ticket, matching this project's        |
-//| own P0-1 identity fix (OrderManager.mqh's SOrderOpenResult).**                |
+//| **Rewritten, 2026-07-22 (Codex review finding, seventh round, P0 finding |
+//| 9):** this is now a thin LIVE WRAPPER (matching this project's own          |
+//| established "pure core + live wrapper" split, e.g. ExitOrchestrator.mqh)      |
+//| around TradeHistoryAggregator.mqh's TA_ProcessDeal, which does the real         |
+//| position-lifecycle reconstruction. The previous version indexed every            |
+//| opening deal but kept only the FIRST one found per position_id -- a                 |
+//| position opened across multiple broker-side partial fills (same order,       |
+//| same position_id, several IN deals) silently used only the first fill's         |
+//| price, ignored the others' volume/cost, and read stop_price from the               |
+//| CLOSING deal's own DEAL_SL (which reflects any trailing/break-even                    |
+//| modification made since entry, not the original risk). See                              |
+//| TradeHistoryAggregator.mqh's own header for the full corrected design.**                    |
 //|                                                                    |
-//| **Net-P/L formula, per TASK-037 Specification item 1: net = profit +   |
-//| commission + swap + fee, summed per CLOSING deal (this export's own       |
-//| row granularity is per-fill, so no cross-row aggregation is needed).**        |
-//| This formula is asserted here, not merely assumed -- see the inline           |
-//| comment at its use site. **Verifying this formula against a real MT5           |
-//| Deals export remains the user's own step (this sandbox cannot run a             |
-//| live/demo terminal) -- explicitly flagged, not silently claimed done.**           |
+//| **order_id = MT5's POSITION_IDENTIFIER (DEAL_POSITION_ID) -- NEVER the  |
+//| position ticket, matching this project's own P0-1 identity fix              |
+//| (OrderManager.mqh's SOrderOpenResult).**                                        |
 //|                                                                    |
-//| stop_price is read from the closing deal's own DEAL_SL property (the   |
-//| SL that was active on the position at the moment it closed) --                |
-//| DEAL_SL/DEAL_TP are informational deal properties MT5 populates from            |
-//| the position's state at closing time, not re-derived from the journal              |
-//| or any other source.                                                                  |
+//| **Net-P/L formula, per TASK-037 Specification item 1, EXTENDED by the   |
+//| seventh-round fix above: net = exit_deal_profit + exit_deal_commission +    |
+//| exit_deal_swap + exit_deal_fee + (this leg's total entry-side                    |
+//| commission+swap+fee, allocated proportionally to the volume THIS row is             |
+//| closing). Verifying this formula against a real MT5 Deals export remains               |
+//| the user's own step (this sandbox cannot run a live/demo terminal) --                     |
+//| explicitly flagged, not silently claimed done.**                                             |
+//|                                                                    |
+//| **stop_price is now read from the FIRST opening (DEAL_ENTRY_IN) deal's   |
+//| own DEAL_SL for this leg -- the stop that was active on the position at      |
+//| the moment it was FILLED, before any later trailing/break-even                 |
+//| modification could have changed it. This is the "original submitted/            |
+//| fill-time stop from durable evidence" the review asked for.**                       |
 //+------------------------------------------------------------------+
 #property strict
 #property script_show_inputs
+
+#include "../Include/ThembaEA/Journal/TradeHistoryAggregator.mqh"
 
 input datetime InpFromDate     = D'2020.01.01 00:00:00';
 input datetime InpToDate       = 0; // 0 = now
@@ -91,34 +103,6 @@ void OnStart()
    int total_deals = HistoryDealsTotal();
    PrintFormat("INFO: %d total deals in the selected history window.", total_deals);
 
-   // Pass 1: index every opening (DEAL_ENTRY_IN) deal by its position_id,
-   // so each closing deal below can look up its own entry_price/entry_time.
-   ulong  open_position_ids[];
-   double open_prices[];
-   datetime open_times[];
-
-   for(int i = 0; i < total_deals; i++)
-     {
-      ulong ticket = HistoryDealGetTicket(i);
-      if(ticket == 0)
-         continue;
-      if(InpExportMagic != 0 && HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpExportMagic)
-         continue;
-      if(InpExportSymbol != "" && HistoryDealGetString(ticket, DEAL_SYMBOL) != InpExportSymbol)
-         continue;
-      if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_IN)
-         continue;
-
-      ulong pos_id = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
-      int n = ArraySize(open_position_ids);
-      ArrayResize(open_position_ids, n + 1);
-      ArrayResize(open_prices, n + 1);
-      ArrayResize(open_times, n + 1);
-      open_position_ids[n] = pos_id;
-      open_prices[n] = HistoryDealGetDouble(ticket, DEAL_PRICE);
-      open_times[n] = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
-     }
-
    int handle = FileOpen(InpOutputFile, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ, 0,
                           CP_UTF8);
    if(handle == INVALID_HANDLE)
@@ -131,7 +115,12 @@ void OnStart()
    FileWriteString(handle, "trade_id,symbol,is_long,entry_time,exit_time,entry_price,"
                            "exit_price,stop_price,profit,order_id,deal_id\r\n");
 
+   // Deals are read from HistorySelect in chronological order (MetaQuotes'
+   // own documented ordering) -- TA_ProcessDeal relies on that to build
+   // each position_id's leg incrementally as its constituent deals appear.
+   SPositionLeg legs[];
    int rows_written = 0;
+
    for(int i = 0; i < total_deals; i++)
      {
       ulong ticket = HistoryDealGetTicket(i);
@@ -142,52 +131,34 @@ void OnStart()
       if(InpExportSymbol != "" && HistoryDealGetString(ticket, DEAL_SYMBOL) != InpExportSymbol)
          continue;
 
-      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)
-         continue; // only a CLOSING deal produces a trade row (has exit_price/profit)
+      SDealRecord deal;
+      deal.ticket = ticket;
+      deal.position_id = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+      deal.symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      deal.entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      deal.deal_type = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+      deal.volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      deal.price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      deal.time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      deal.stop_loss = HistoryDealGetDouble(ticket, DEAL_SL);
+      deal.commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      deal.swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+      deal.fee = HistoryDealGetDouble(ticket, DEAL_FEE);
+      deal.raw_profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
 
-      ulong pos_id = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
-      ENUM_DEAL_TYPE deal_type = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
-      // A closing deal's own DEAL_TYPE is the OPPOSITE side of the
-      // position (a SELL deal closes a long position, and vice versa).
-      bool is_long = (deal_type == DEAL_TYPE_SELL);
-
-      double entry_price = 0.0;
-      datetime entry_time = 0;
-      bool found_entry = false;
-      for(int j = 0; j < ArraySize(open_position_ids); j++)
-        {
-         if(open_position_ids[j] == pos_id)
-           {
-            entry_price = open_prices[j];
-            entry_time = open_times[j];
-            found_entry = true;
-            break;
-           }
-        }
-      if(!found_entry)
-        {
-         PrintFormat("WARNING: closing deal #%I64u (position_id=%I64u) has no matching opening "
-                     "deal in this export window -- skipping (its entry likely predates "
-                     "InpFromDate).", ticket, pos_id);
+      STradeRow row;
+      string warning;
+      bool produced = TA_ProcessDeal(legs, deal, row, warning);
+      if(warning != "")
+         PrintFormat("WARNING: %s", warning);
+      if(!produced)
          continue;
-        }
 
-      double exit_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
-      datetime exit_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
-      double stop_price = HistoryDealGetDouble(ticket, DEAL_SL);
-
-      // Net-P/L formula, per this file's own header comment.
-      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT) +
-                       HistoryDealGetDouble(ticket, DEAL_COMMISSION) +
-                       HistoryDealGetDouble(ticket, DEAL_SWAP) +
-                       HistoryDealGetDouble(ticket, DEAL_FEE);
-
-      string symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
       string line = StringFormat(
-         "T%I64u,%s,%s,%s,%s,%.8f,%.8f,%.8f,%.8f,%I64u,%I64u\r\n", ticket, symbol,
-         is_long ? "true" : "false", Iso8601Utc(entry_time), Iso8601Utc(exit_time), entry_price,
-         exit_price, stop_price, profit, pos_id, ticket);
+         "T%I64u,%s,%s,%s,%s,%.8f,%.8f,%.8f,%.8f,%I64u,%I64u\r\n", row.ticket, row.symbol,
+         row.is_long ? "true" : "false", Iso8601Utc(row.entry_time), Iso8601Utc(row.exit_time),
+         row.entry_price, row.exit_price, row.stop_price, row.profit, row.position_id,
+         row.ticket);
       FileWriteString(handle, line);
       rows_written++;
      }
