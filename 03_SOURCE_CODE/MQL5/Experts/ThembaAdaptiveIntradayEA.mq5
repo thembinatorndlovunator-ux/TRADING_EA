@@ -141,6 +141,37 @@ long                    g_signal_counter = 0; // TASK-036: in-process counter fe
 
 int OnInit()
   {
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 3): the input comment claims InpRiskPercentTarget/InpRiskCapPercent
+   // enforce both per-trade and total-open risk, but nothing previously
+   // validated that the target actually stays within the cap, or that
+   // either value is even positive -- a misconfigured target exceeding
+   // the cap had no gate to catch it before OM_CalculateVolume's own
+   // now-added cap check (which only fires per-order, not at startup).
+   if(InpRiskPercentTarget <= 0.0 || InpRiskCapPercent <= 0.0 ||
+      InpRiskPercentTarget > InpRiskCapPercent)
+     {
+      PrintFormat("ThembaEA: invalid risk configuration -- InpRiskPercentTarget=%.4f, "
+                  "InpRiskCapPercent=%.4f. Both must be positive and "
+                  "InpRiskPercentTarget must not exceed InpRiskCapPercent. Refusing to run.",
+                  InpRiskPercentTarget, InpRiskCapPercent);
+      return INIT_FAILED;
+     }
+
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 3): TASK-002_PHASE2_SPECIFICATION.md requires this EA refuse to run
+   // on a hedging-mode account (its own no-add-on/no-concurrent-position
+   // rule and the single-position-per-symbol+magic risk model both assume
+   // netting; a hedging account can hold simultaneous opposing positions
+   // under the same symbol+magic, defeating that assumption entirely).**
+   if((ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE) ==
+      ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
+     {
+      Print("ThembaEA: this account is in HEDGING margin mode -- this EA's risk model assumes "
+            "netting (one position per symbol+magic). Refusing to run.");
+      return INIT_FAILED;
+     }
+
    g_symbol = (InpTradeSymbol == "") ? _Symbol : InpTradeSymbol;
 
    if(!g_profile.Load(g_symbol))
@@ -497,6 +528,61 @@ bool ResolveNewsBlackout(const double current_atr, string &triggering_event_id_o
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 3):** sums risk_cash across every CURRENTLY OPEN position matching this      |
+//| EA's own InpMagicNumber, on ANY symbol -- per                                   |
+//| TASK-002_PHASE2_SPECIFICATION.md section 8's own stated scope ("the 1%             |
+//| per-trade and 1% total-open-risk caps are scoped to this EA's own                     |
+//| managed exposure (own magic number)... no authority or reliable                          |
+//| visibility contract over other EAs'/manual positions"). This needs no                       |
+//| custom cross-instance ledger -- PositionsTotal()/PositionGetTicket already                    |
+//| enumerate every position on the account regardless of which chart/symbol                        |
+//| is asking, so a single instance can already see every position sharing its                         |
+//| own magic number on a different symbol.                                                                |
+//|                                                                    |
+//| A position with no stop (POSITION_SL == 0) is skipped, not counted as        |
+//| zero risk -- this project's no-SL fallback risk formula                          |
+//| (`risk_cash_no_stop`, TASK-002 section 8) is a separate, not-yet-built              |
+//| path; skipping (rather than silently treating as zero) is a stated,                    |
+//| bounded limitation of this fix, not a claim that a stopless position is                    |
+//| risk-free.                                                                                     |
+//+------------------------------------------------------------------+
+double ComputeOwnMagicOpenRiskCash()
+  {
+   double total = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+
+      double sl = PositionGetDouble(POSITION_SL);
+      if(sl == 0.0)
+         continue; // no-SL fallback formula not yet built -- see header comment
+
+      string pos_symbol = PositionGetString(POSITION_SYMBOL);
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      bool pos_is_long = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+
+      double loss_distance = pos_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
+      if(loss_distance <= 0.0)
+         continue;
+
+      CSymbolProfile pos_profile;
+      if(!pos_profile.Load(pos_symbol))
+         continue;
+
+      double risk_cash;
+      if(RM_ComputeRiskCash(pos_profile, loss_distance, volume, risk_cash))
+         total += risk_cash;
+     }
+   return total;
+  }
+
+//+------------------------------------------------------------------+
 //| Gates and, if every check passes, submits a real order for the       |
 //| resolved winning candidate. Only ever called when                     |
 //| InpEnableOrderSubmission is true (see AttemptOrderSubmission's own      |
@@ -518,6 +604,7 @@ bool ResolveNewsBlackout(const double current_atr, string &triggering_event_id_o
 //|  3. Drawdown-based risk reduction, never increase (section 8).                |
 //|  4. Stop-distance floor/cap preflight (section 8, RiskManager.mqh).             |
 //|  5. Position sizing incl. broker-minimum-vs-cap rejection (OrderManager).        |
+//|  5b. Own-magic total-open-risk cap (seventh-round P0 finding 3).                   |
 //|  6. OrderCalcProfit cross-check (RISK_POLICY.md blanket rule).                    |
 //|  7. Durable-intent-guarded real order submission (TASK-034, OrderManager).          |
 //+------------------------------------------------------------------+
@@ -626,6 +713,29 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
      }
    if(sizing.widened_to_minimum)
       AppendReason(passed, "volume_widened_to_broker_minimum");
+
+   //--- 5b. Own-magic total-open-risk cap (Codex review finding, seventh --
+   //--- round, P0 finding 3) -------------------------------------------------
+   // TASK-002_PHASE2_SPECIFICATION.md section 8: "total_open_risk_pct = 100 x
+   // Sum risk_cash_i / current_equity", scoped to this EA's OWN magic number
+   // across every symbol it manages (not other EAs'/manual positions, which
+   // this engine has no visibility contract over) -- checked against the
+   // SAME InpRiskCapPercent value the per-trade check above already uses,
+   // matching the spec's own stated "hard cap 1.00% per trade, 1.00% total
+   // open risk" (both caps share one number in this project's design).
+   double existing_open_risk_cash = ComputeOwnMagicOpenRiskCash();
+   double total_open_risk_percent = 100.0 * (existing_open_risk_cash + sizing.risk_cash_actual) /
+                                     equity;
+   if(total_open_risk_percent > InpRiskCapPercent + 1e-6)
+     {
+      AppendReason(rejected, StringFormat(
+         "total_open_risk_cap_exceeded_%.4fpct_cap_%.4fpct", total_open_risk_percent,
+         InpRiskCapPercent));
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   AppendReason(passed, StringFormat("total_open_risk_cap_clear_%.4fpct", total_open_risk_percent));
 
    //--- 6. OrderCalcProfit cross-check --------------------------------------
    double broker_risk_cash;

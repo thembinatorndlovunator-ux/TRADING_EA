@@ -118,6 +118,26 @@ bool OM_CalculateVolume(const CSymbolProfile &profile, const double equity,
       return false;
      }
 
+   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 3): risk_cap_percent was previously only ever checked in the
+   // volume-widened-to-minimum branch above -- an ORDINARY-sized position
+   // (raw_volume already >= volume_min) had NO cap enforcement at all, so
+   // a misconfigured InpRiskPercentTarget exceeding InpRiskCapPercent (or
+   // a drawdown-multiplier bug elsewhere) could size a position past the
+   // cap with nothing to catch it. This checks the cap unconditionally,
+   // for every sizing outcome, not only the widened-to-minimum path.
+   if(risk_cap_percent > 0.0)
+     {
+      double implied_cap_percent = 100.0 * actual_cash / equity;
+      if(implied_cap_percent > risk_cap_percent + 1e-6)
+        {
+         result.rejection_reason = StringFormat("risk_cap_percent_exceeded_%.4fpct_cap_%.4fpct",
+                                                  implied_cap_percent, risk_cap_percent);
+         result.volume = 0.0;
+         return false;
+        }
+     }
+
    result.volume = volume;
    result.risk_cash_actual = actual_cash;
    return true;

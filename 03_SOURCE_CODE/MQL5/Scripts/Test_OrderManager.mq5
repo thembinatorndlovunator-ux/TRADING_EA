@@ -129,6 +129,33 @@ void OnStart()
    Check("oversized sizing: volume clamped to volume_max (100.0)",
          NearlyEqual(r5.volume, 100.0));
 
+   //--- 5b. **Codex review finding, seventh round, P0 finding 3**: an -------
+   //--- ORDINARY-sized position (not widened to minimum, not clamped to ----
+   //--- volume_max) whose implied risk exceeds risk_cap_percent must be -----
+   //--- REJECTED, not silently accepted -- reproduces the exact reported -----
+   //--- counterexample: risk_percent=2.0% requested with risk_cap_percent=------
+   //--- 1.0%. equity 10000, risk 2% -> risk_cash_target=200. loss_distance -----
+   //--- 1.00 -> cash_per_lot=100. raw_volume=200/100=2.00 (already an exact ----
+   //--- step multiple, no widening/clamping). implied_cap_percent = ------------
+   //--- (1.00*2.00*1/0.01)/10000*100 = 2.0% > risk_cap_percent(1.0%) -> must ---
+   //--- reject.
+   SOrderSizingResult r5b;
+   bool ok5b = OM_CalculateVolume(p, 10000.0, 2.0, 1.00, 1.0, r5b);
+   Check("ordinary-sized sizing exceeding risk_cap_percent is REJECTED "
+         "(previously silently accepted)", ok5b == false);
+   Check("rejected-by-cap case: volume == 0.0", NearlyEqual(r5b.volume, 0.0));
+   Check("rejected-by-cap case: rejection_reason names the cap",
+         StringFind(r5b.rejection_reason, "risk_cap_percent_exceeded") == 0);
+
+   //--- 5c. The SAME risk_percent/risk_cap_percent, now with cap raised to --
+   //--- 3.0% (>= the implied 2.0%) -- must succeed, proving the cap check is --
+   //--- not simply always-reject. -----------------------------------------------
+   SOrderSizingResult r5c;
+   bool ok5c = OM_CalculateVolume(p, 10000.0, 2.0, 1.00, 3.0, r5c);
+   Check("the same sizing succeeds once risk_cap_percent is raised above "
+         "the implied risk", ok5c);
+   Check("cap-clearing case: volume == 2.00", NearlyEqual(r5c.volume, 2.00));
+
    //--- 6. Invalid-input guards -------------------------------------------
    SOrderSizingResult r6;
    Check("zero equity is rejected", OM_CalculateVolume(p, 0.0, 1.0, 1.00, 1.0, r6) == false);
