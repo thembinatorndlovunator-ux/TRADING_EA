@@ -684,3 +684,43 @@ parameter optimization).
 
 Per Codex's own required disposition each round, a third independent
 review round should be requested once the user is ready.
+
+## Implementation notes (Claude, parts 5-7 of N — third, fourth, and fifth Codex review rounds)
+
+**Corrected, 2026-07-22 Codex review finding (fifth round, finding 18):**
+this section was previously never appended after round 2 above, even
+though rounds 3, 4, and (partially) 5 had all already landed in git —
+the round-by-round remediation detail for those rounds lives in each
+round's own commit message and (for rounds 4-5) in
+`09_HANDOVERS/claude_to_codex/TASK-028_handover.md`'s `## UPDATE`
+sections, not duplicated here. This section is a brief, honest pointer
+so this canonical file does not read as if history stopped at round 2.
+
+- **Round 3** (17 findings: 3 P0/10 P1/4 P2, reviewed against `fd07473`):
+  fully resolved, committed as `b88b63a`. Highlights: `join_signal_to_outcome.py`
+  built (the durable journal-decision-to-trade-outcome join), project-wide
+  seed-threading fix (`seed or 42` silently dropping `seed=0`), a real
+  look-ahead regression in `trade_math.compute_mfe_mae` corrected, `ruff
+  format` declared and run as a real gate.
+- **Round 4** (18 findings: 3 P0/11 P1/4 P2, reviewed against `b88b63a`):
+  fully resolved, committed as `750443d`. Highlights: the (since renamed,
+  see round 5) equity-peak-giveback metric and remaining baseline-comparison
+  surface built into `analyse_baseline.py`; `join_signal_to_outcome.py`
+  redesigned for partial-fill aggregation and durable-ID string typing
+  (both since found incomplete by round 5 — see below); a real session/
+  mode/news outcome breakdown added to notebook 04 (since found
+  source-invalid by round 5).
+- **Round 5** (18 findings: 3 P0/11 P1/4 P2, reviewed against `750443d`):
+  **12 of 18 resolved as of this update**, each with a regression test
+  reproducing the review's own counterexample, committed across
+  `aa39ac4`, `9f4784e`, `8b0930f`, `4ce4a43`, `b51bc41`, `8fc05de`. This
+  round caught SELF-INTRODUCED regressions in round 4's own remediation
+  (the `join_signal_to_outcome.py` redesign in particular), not only
+  pre-existing gaps — confirming this project's "every fix needs its own
+  adversarial counterexample test" discipline is warranted. Resolved:
+  findings 1, 2, 3 (all P0), 4, 5, 8, 10, 11, 13, 14 (P1), 15, 16 (P2).
+  Still pending: findings 6, 7, 9, 12 (P1), 17, and the remainder of 18
+  (P2). 503 tests passing, ruff/ruff format/mypy clean, all 11 notebooks
+  re-executed with zero errors as of this update. A sixth independent
+  review will be requested once the remaining round-5 findings are
+  resolved, not before.
