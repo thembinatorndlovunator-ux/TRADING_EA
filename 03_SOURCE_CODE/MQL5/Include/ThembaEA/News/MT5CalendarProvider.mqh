@@ -7,13 +7,17 @@
 //| CalendarValueHistory/CalendarEventById/CalendarCountryById into the       |
 //| provider-agnostic SNewsEvent shape NewsManager.mqh defines.                 |
 //|                                                                    |
-//| **Stated, unverified assumption (flagged for the batched runtime-      |
-//| verification backlog, same discipline as every live-symbol wrapper       |
-//| in this project):** MqlCalendarValue.time is assumed to be expressed       |
-//| in UTC per MQL5's own Calendar-function documentation (unlike bar/tick        |
-//| timestamps elsewhere in this project, which are broker server time) —          |
-//| this has not been independently confirmed against a live feed in this            |
-//| sandboxed session.                                                                 |
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 4):** the previous header stated MqlCalendarValue.time was assumed UTC —      |
+//| MetaQuotes' own documentation for CalendarValueHistory/MqlCalendarValue         |
+//| states the opposite: calendar query bounds and calendar-value times are           |
+//| in TRADE-SERVER time, matching every bar/tick timestamp elsewhere in this            |
+//| project. MTC_FetchEvents now converts its own UTC input bounds to server               |
+//| time before the query, and converts each returned server-time value back                 |
+//| to UTC for 'scheduled_utc' (the previous code did the opposite: passed UTC                  |
+//| bounds directly to a server-time-expecting API, then ADDED the server                         |
+//| offset AGAIN on top of an already-server-time value, double-shifting                             |
+//| every timestamp on any non-UTC broker).                                                             |
 //|                                                                    |
 //| The historical CSV/SQLite deterministic-backtest provider           |
 //| NEWS_INTEGRATION_SPEC.md also requires ("Backtesting: store historical  |
@@ -34,19 +38,23 @@
 #define MTC_BOTSWANA_UTC_OFFSET_SECONDS (2 * 3600)
 
 //+------------------------------------------------------------------+
-//| Decodes a Calendar fixed-point long value to a double using the      |
-//| event's own 'digits' field, per MQL5's Calendar-value encoding —        |
-//| returns 0.0 for the (common) case of an event with no numeric value      |
-//| yet (e.g. a not-yet-released actual_value).                                |
+//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
+//| 4):** decodes a Calendar fixed-point long value to a double. The           |
+//| previous version divided by 10^digits ("the event's own 'digits'              |
+//| field") -- MetaQuotes specifies calendar numeric values are always                |
+//| scaled by a FIXED 1,000,000 factor, independent of the event's own                   |
+//| display-digits field (which only controls how many decimal places to                    |
+//| SHOW, not the underlying integer encoding). 'digits' is no longer used                      |
+//| for decoding at all; this function's own signature drops that parameter                       |
+//| accordingly.                                                                                       |
 //+------------------------------------------------------------------+
-double MTC_DecodeValue(const long raw, const uint digits)
+#define MTC_CALENDAR_VALUE_SCALE 1000000.0
+
+double MTC_DecodeValue(const long raw)
   {
    if(raw == LONG_MIN) // MQL5's documented "value not available" sentinel
       return 0.0;
-   double scale = MathPow(10.0, (double)digits);
-   if(scale <= 0.0)
-      return 0.0;
-   return (double)raw / scale;
+   return (double)raw / MTC_CALENDAR_VALUE_SCALE;
   }
 
 //+------------------------------------------------------------------+
@@ -66,15 +74,22 @@ int MTC_FetchEvents(const string currency_code, const int min_importance,
   {
    ArrayFree(events);
 
+   // CalendarValueHistory's own from/to bounds are TRADE-SERVER time, not
+   // UTC (see this file's own header comment) -- convert this function's
+   // own UTC contract to server time before the query.
+   int server_gmt_offset_seconds = (int)(TimeTradeServer() - TimeGMT());
+   datetime from_server = from_utc + server_gmt_offset_seconds;
+   datetime to_server = to_utc + server_gmt_offset_seconds;
+
    MqlCalendarValue values[];
-   int total = CalendarValueHistory(values, from_utc, to_utc, NULL, currency_code);
+   int total = CalendarValueHistory(values, from_server, to_server, NULL, currency_code);
    if(total < 0)
       return -1;
    if(total == 0)
       return 0;
 
-   int server_gmt_offset_seconds = (int)(TimeTradeServer() - TimeGMT());
    datetime now_utc = TimeGMT();
+   datetime now_server = TimeTradeServer();
 
    int count = 0;
    for(int i = 0; i < total; i++)
@@ -94,23 +109,37 @@ int MTC_FetchEvents(const string currency_code, const int min_importance,
             currency = country.currency;
         }
 
+      // values[i].time is SERVER time; scheduled_utc converts it back,
+      // scheduled_server_time keeps it as-is (no double conversion).
+      datetime scheduled_server_time = values[i].time;
+      datetime scheduled_utc = values[i].time - server_gmt_offset_seconds;
+
       int n = ArraySize(events);
       ArrayResize(events, n + 1);
       events[n] = NM_NewEvent();
-      events[n].event_id = IntegerToString((long)values[i].event_id);
+      // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
+      // 4): events[n].event_id now uses values[i].id -- the VALUE's own
+      // unique per-occurrence identifier -- not values[i].event_id, which
+      // is the reusable EVENT DEFINITION id shared by every recurring
+      // occurrence of the same event (e.g. every month's release of the
+      // same indicator). Using the reusable definition id as this row's
+      // own identity made every recurrence of a recurring event collide
+      // under the same exported id.
+      events[n].event_id = IntegerToString((long)values[i].id);
       events[n].event_name = ev.name;
       events[n].currency = currency;
       events[n].importance = (int)ev.importance;
-      events[n].scheduled_utc = values[i].time;
-      events[n].scheduled_server_time = values[i].time + server_gmt_offset_seconds;
-      events[n].scheduled_botswana_time = values[i].time + MTC_BOTSWANA_UTC_OFFSET_SECONDS;
-      events[n].previous = MTC_DecodeValue(values[i].prev_value, ev.digits);
-      events[n].forecast = MTC_DecodeValue(values[i].forecast_value, ev.digits);
-      events[n].actual = MTC_DecodeValue(values[i].actual_value, ev.digits);
+      events[n].scheduled_utc = scheduled_utc;
+      events[n].scheduled_server_time = scheduled_server_time;
+      events[n].scheduled_botswana_time = scheduled_utc + MTC_BOTSWANA_UTC_OFFSET_SECONDS;
+      events[n].previous = MTC_DecodeValue(values[i].prev_value);
+      events[n].forecast = MTC_DecodeValue(values[i].forecast_value);
+      events[n].actual = MTC_DecodeValue(values[i].actual_value);
       events[n].revision = (double)values[i].revision;
       events[n].source = "MT5_CALENDAR";
       events[n].retrieved_at = now_utc;
-      events[n].status = (values[i].time <= now_utc) ? NEWS_STATUS_RELEASED : NEWS_STATUS_SCHEDULED;
+      events[n].status = (values[i].time <= now_server) ? NEWS_STATUS_RELEASED
+                                                          : NEWS_STATUS_SCHEDULED;
       count++;
      }
    return count;

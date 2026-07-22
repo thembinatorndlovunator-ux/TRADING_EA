@@ -117,6 +117,17 @@ void OnStart()
    Check("NullNewsProvider reports exactly 0 events", null_count == 0);
    Check("NullNewsProvider leaves the events array empty", ArraySize(null_events) == 0);
 
+   //--- 11a. **Codex review finding, seventh round, P0 finding 4**: --------
+   //--- MTC_DecodeValue scales by a FIXED 1,000,000, never by 10^digits ------
+   //--- (MetaQuotes' own documented Calendar-value encoding, independent of --
+   //--- an event's display-digits field). ------------------------------------
+   Check("MTC_DecodeValue divides by the fixed 1,000,000 scale (not 10^digits)",
+         MathAbs(MTC_DecodeValue(1500000) - 1.5) < 0.000001);
+   Check("MTC_DecodeValue's documented 'value not available' sentinel (LONG_MIN) "
+         "still returns 0.0", MTC_DecodeValue(LONG_MIN) == 0.0);
+   Check("MTC_DecodeValue handles a negative raw value correctly",
+         MathAbs(MTC_DecodeValue(-2500000) - (-2.5)) < 0.000001);
+
    //--- 12. MT5CalendarProvider real-symbol smoke test (informational) ----
    string real_trigger;
    int fetch_result;
