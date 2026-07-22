@@ -1,0 +1,121 @@
+TASK-028 round-7 remediation -- full MetaEditor compile evidence
+Generated: 2026-07-22 (this session, after all round-7 P0+P1 findings resolved)
+MetaEditor: C:/Program Files/Deriv MT5 Terminal/MetaEditor64.exe
+Repo HEAD at generation time: 970cb3974d28ee1cbe741cdb67de95550d4dc4dd
+============================================================
+
+=== ThembaAdaptiveIntradayEA.mq5 ===
+Result: 0 errors, 0 warnings, 5103 ms elapsed, cpu='X64 Regular'
+
+=== Export_NewsCalendar.mq5 ===
+Result: 0 errors, 0 warnings, 565 ms elapsed, cpu='X64 Regular'
+
+=== Export_PatternDetectorResults.mq5 ===
+C:/TradingProjects/Themba_EA_Improvement_Lab/03_SOURCE_CODE/MQL5/Scripts/Export_PatternDetectorResults.mq5 : information: compiling C:/TradingProjects/Themba_EA_Improvement_Lab/03_SOURCE_CODE/MQL5/Scripts/Export_PatternDetectorResults.mq5
+C:/TradingProjects/Themba_EA_Improvement_Lab/03_SOURCE_CODE/MQL5/Scripts/Export_PatternDetectorResults.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+Result: 0 errors, 0 warnings, 864 ms elapsed, cpu='X64 Regular'
+
+=== Export_PredictedRegime.mq5 ===
+Result: 0 errors, 0 warnings, 793 ms elapsed, cpu='X64 Regular'
+
+=== Export_TradeHistory.mq5 ===
+Result: 0 errors, 0 warnings, 538 ms elapsed, cpu='X64 Regular'
+
+=== Test_AsyncFillCorrelator.mq5 ===
+Result: 0 errors, 0 warnings, 504 ms elapsed, cpu='X64 Regular'
+
+=== Test_CandlestickPatternEngine.mq5 ===
+Result: 0 errors, 0 warnings, 725 ms elapsed, cpu='X64 Regular'
+
+=== Test_ChartPatternEngine.mq5 ===
+Result: 0 errors, 0 warnings, 758 ms elapsed, cpu='X64 Regular'
+
+=== Test_ChartPatternStrategy.mq5 ===
+Result: 0 errors, 0 warnings, 911 ms elapsed, cpu='X64 Regular'
+
+=== Test_CooldownManager.mq5 ===
+Result: 0 errors, 0 warnings, 517 ms elapsed, cpu='X64 Regular'
+
+=== Test_DailyWeeklyLimits.mq5 ===
+Result: 0 errors, 0 warnings, 589 ms elapsed, cpu='X64 Regular'
+
+=== Test_DecisionJournal.mq5 ===
+Result: 0 errors, 0 warnings, 947 ms elapsed, cpu='X64 Regular'
+
+=== Test_ExitManager.mq5 ===
+Result: 0 errors, 0 warnings, 484 ms elapsed, cpu='X64 Regular'
+
+=== Test_ExitOrchestrator.mq5 ===
+Result: 0 errors, 0 warnings, 526 ms elapsed, cpu='X64 Regular'
+
+=== Test_FairEconomyNewsProvider.mq5 ===
+Result: 0 errors, 0 warnings, 830 ms elapsed, cpu='X64 Regular'
+
+=== Test_ICTSMCGeometry.mq5 ===
+Result: 0 errors, 0 warnings, 597 ms elapsed, cpu='X64 Regular'
+
+=== Test_IntentManager.mq5 ===
+Result: 0 errors, 0 warnings, 529 ms elapsed, cpu='X64 Regular'
+
+=== Test_IntradayCloseManager.mq5 ===
+Result: 0 errors, 0 warnings, 708 ms elapsed, cpu='X64 Regular'
+
+=== Test_IntradayModeRouter.mq5 ===
+Result: 0 errors, 0 warnings, 710 ms elapsed, cpu='X64 Regular'
+
+=== Test_MarketData.mq5 ===
+Result: 0 errors, 0 warnings, 508 ms elapsed, cpu='X64 Regular'
+
+=== Test_MarketRegimeEngine.mq5 ===
+Result: 0 errors, 0 warnings, 695 ms elapsed, cpu='X64 Regular'
+
+=== Test_MarketStructure.mq5 ===
+Result: 0 errors, 0 warnings, 590 ms elapsed, cpu='X64 Regular'
+
+=== Test_NewsManager.mq5 ===
+Result: 0 errors, 0 warnings, 639 ms elapsed, cpu='X64 Regular'
+
+=== Test_OrderManager.mq5 ===
+Result: 0 errors, 0 warnings, 839 ms elapsed, cpu='X64 Regular'
+
+=== Test_PositionStateTracker.mq5 ===
+Result: 0 errors, 0 warnings, 597 ms elapsed, cpu='X64 Regular'
+
+=== Test_PostExpansionRetestStrategy.mq5 ===
+Result: 0 errors, 0 warnings, 917 ms elapsed, cpu='X64 Regular'
+
+=== Test_RegimeGateComposer.mq5 ===
+Result: 0 errors, 0 warnings, 568 ms elapsed, cpu='X64 Regular'
+
+=== Test_RiskManager.mq5 ===
+Result: 0 errors, 0 warnings, 555 ms elapsed, cpu='X64 Regular'
+
+=== Test_SessionManager.mq5 ===
+Result: 0 errors, 0 warnings, 581 ms elapsed, cpu='X64 Regular'
+
+=== Test_SMCStrategy.mq5 ===
+Result: 0 errors, 0 warnings, 903 ms elapsed, cpu='X64 Regular'
+
+=== Test_SRBounceStrategy.mq5 ===
+Result: 0 errors, 0 warnings, 961 ms elapsed, cpu='X64 Regular'
+
+=== Test_StateManager.mq5 ===
+Result: 0 errors, 0 warnings, 616 ms elapsed, cpu='X64 Regular'
+
+=== Test_StrategyRouter.mq5 ===
+Result: 0 errors, 0 warnings, 715 ms elapsed, cpu='X64 Regular'
+
+=== Test_SupportResistance.mq5 ===
+Result: 0 errors, 0 warnings, 577 ms elapsed, cpu='X64 Regular'
+
+=== Test_SwingEngine.mq5 ===
+Result: 0 errors, 0 warnings, 605 ms elapsed, cpu='X64 Regular'
+
+=== Test_SymbolProfile_BrokerValidator.mq5 ===
+Result: 0 errors, 0 warnings, 521 ms elapsed, cpu='X64 Regular'
+
+=== Test_TradeHistoryAggregator.mq5 ===
+Result: 0 errors, 0 warnings, 649 ms elapsed, cpu='X64 Regular'
+
+=== Test_TrendFollowingStrategy.mq5 ===
+Result: 0 errors, 0 warnings, 841 ms elapsed, cpu='X64 Regular'
