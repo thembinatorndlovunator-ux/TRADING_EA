@@ -65,6 +65,45 @@ def _write_trades(path: Path, rows: list[dict] | None = None) -> None:
     ).to_csv(path, index=False)
 
 
+def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    'trade_id' was previously read via plain pandas type inference -- a
+    CSV containing IDs "001" and "1" loaded as integer values 1, 1 and
+    was rejected as a false duplicate."""
+
+    path = tmp_path / "trades.csv"
+    _write_trades(
+        path,
+        [
+            {
+                "trade_id": "001",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 102.0,
+                "stop_price": 98.0,
+                "profit": 40.0,
+            },
+            {
+                "trade_id": "1",
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T02:00:00Z",
+                "exit_time": "2026-07-21T03:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 99.0,
+                "stop_price": 98.0,
+                "profit": -20.0,
+            },
+        ],
+    )
+
+    summary = run(path)
+    assert summary["n_trades"] == 2
+
+
 def test_missing_column_raises(tmp_path):
     path = tmp_path / "trades.csv"
     pd.DataFrame({"trade_id": ["t1"]}).to_csv(path, index=False)

@@ -340,6 +340,25 @@ def test_caller_supplied_hour_of_day_is_recomputed_not_trusted(tmp_path):
     assert result_dow.iloc[0]["day_of_week"] == "Thursday"
 
 
+def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    'trade_id' was previously read via plain pandas type inference -- a
+    CSV containing IDs "001" and "1" loaded as integer values 1, 1 and
+    was rejected as a false duplicate."""
+
+    trades_csv = tmp_path / "trades.csv"
+    pd.DataFrame(
+        {
+            "trade_id": ["001", "1"],
+            "strategy": ["A", "A"],
+            "profit": [10.0, -5.0],
+        }
+    ).to_csv(trades_csv, index=False)
+
+    result = run(trades_csv, ["strategy"])
+    assert result["n_trades"].iloc[0] == 2
+
+
 def test_run_zero_rows_raises(tmp_path):
     trades_csv = tmp_path / "trades.csv"
     pd.DataFrame(columns=["trade_id", "profit"]).to_csv(trades_csv, index=False)

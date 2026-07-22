@@ -256,6 +256,41 @@ def test_empty_dataset_raises(tmp_path):
         )
 
 
+def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    'trade_id' was previously read via plain pandas type inference -- a
+    CSV containing IDs "001" and "1" loaded as integer values 1, 1 and
+    was rejected as a false duplicate."""
+
+    baseline_path = tmp_path / "baseline.csv"
+    rows = []
+    for trade_id in ["001", "1"] + [f"t{i}" for i in range(2, 10)]:
+        rows.append(
+            {
+                "trade_id": trade_id,
+                "symbol": "XAUUSD",
+                "is_long": "True",
+                "entry_time": "2026-07-21T00:00:00Z",
+                "exit_time": "2026-07-21T01:00:00Z",
+                "entry_price": 100.0,
+                "exit_price": 105.0,
+                "stop_price": 98.0,
+                "profit": 10.0,
+            }
+        )
+    pd.DataFrame(rows).to_csv(baseline_path, index=False)
+    candidate_path = tmp_path / "candidate.csv"
+    _write_trades(candidate_path, [105.0] * 10, [10.0] * 10)
+
+    summary = run(
+        baseline_path,
+        candidate_path,
+        period_start=DEFAULT_PERIOD_START,
+        period_end=DEFAULT_PERIOD_END,
+    )
+    assert summary["n_baseline_trades"] == 10
+
+
 def test_duplicate_trade_id_rejected(tmp_path):
     baseline_path = tmp_path / "baseline.csv"
     pd.DataFrame(

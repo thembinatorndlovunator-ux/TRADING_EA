@@ -57,6 +57,7 @@ from typing import Optional
 import pandas as pd
 
 from analysis.csv_io import (
+    TRADE_ID_DTYPE,
     CsvSchemaError,
     assert_chronological_order,
     assert_finite_columns,
@@ -391,7 +392,14 @@ def run(
     # file. read_csv_with_required_columns_and_hash reads the file exactly
     # ONCE and derives both the parsed DataFrame and the hash from that
     # same byte buffer, so the two can never desync.**
-    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): 'trade_id'
+    # was previously read via plain pandas type inference -- a CSV
+    # containing IDs "001"/"1" loaded as integer values 1, 1 and was
+    # rejected as a false duplicate (the same identifier-corruption class
+    # already fixed in the specialized signal/news joins).**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(
+        trades_csv, REQUIRED_COLUMNS, dtype=TRADE_ID_DTYPE
+    )
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)

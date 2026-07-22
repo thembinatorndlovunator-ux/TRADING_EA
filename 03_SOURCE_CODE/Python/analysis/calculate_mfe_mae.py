@@ -42,6 +42,7 @@ from typing import Optional
 import pandas as pd
 
 from analysis.csv_io import (
+    TRADE_ID_DTYPE,
     CsvSchemaError,
     assert_finite_columns,
     assert_high_low_geometry,
@@ -144,8 +145,12 @@ def run(
     # analyse_baseline.py but left open here. Reading once and hashing
     # from that same pass, then combining both files' hashes below,
     # closes the race structurally.**
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): 'trade_id'
+    # was previously read via plain pandas type inference -- see
+    # csv_io.TRADE_ID_DTYPE's own docstring for the exact counterexample
+    # this closes.**
     trades, trades_csv_hash = read_csv_with_required_columns_and_hash(
-        trades_csv, REQUIRED_TRADE_COLUMNS
+        trades_csv, REQUIRED_TRADE_COLUMNS, dtype=TRADE_ID_DTYPE
     )
     bars, bars_csv_hash = read_csv_with_required_columns_and_hash(bars_csv, REQUIRED_BAR_COLUMNS)
     # **Fixed, 2026-07-22 Codex review finding:** a header-only (zero-row)

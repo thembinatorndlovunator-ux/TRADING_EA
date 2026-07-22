@@ -126,6 +126,21 @@ def test_empty_trades_raises(tmp_path):
         run(path, train_days=3, test_days=2, step_days=2)
 
 
+def test_leading_zero_trade_id_not_collapsed_by_numeric_inference(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    'trade_id' was previously read via plain pandas type inference -- a
+    CSV containing IDs "001" and "1" loaded as integer values 1, 1 and
+    was rejected as a false duplicate."""
+
+    path = tmp_path / "trades.csv"
+    pd.DataFrame(
+        [_row("001", _BASE, 104.0, 10.0), _row("1", _BASE + pd.Timedelta(days=1), 99.0, -5.0)]
+    ).to_csv(path, index=False)
+
+    result = run(path, train_days=3, test_days=2, step_days=2)
+    assert result is not None
+
+
 def test_duplicate_trade_id_rejected(tmp_path):
     path = tmp_path / "trades.csv"
     pd.DataFrame(

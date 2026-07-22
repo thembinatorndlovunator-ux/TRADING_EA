@@ -27,6 +27,22 @@ class CsvSchemaError(ValueError):
     rule, not something a caller should filter out quietly."""
 
 
+# **Added, 2026-07-22 Codex review finding (sixth round): 'trade_id' was
+# already read as a durable, never-numerically-inferred string in the
+# specialized signal/news joins (see join_signal_to_outcome.py's own
+# IDENTITY_DTYPE), but every OTHER trades.csv consumer in this layer
+# (analyse_baseline.py, analyse_giveback.py, calculate_mfe_mae.py,
+# compare_releases.py, monte_carlo.py, performance_breakdown.py,
+# walk_forward.py) read it via plain pandas type inference -- a CSV
+# containing IDs "001" and "1" loaded as integer values 1, 1 and was
+# rejected as a false duplicate; a sufficiently large ticket-style ID
+# could lose precision under float64 inference. One shared constant, not
+# a call-site-specific dtype literal repeated seven times, so a future
+# trades.csv consumer inherits the same durable-ID discipline by
+# construction.**
+TRADE_ID_DTYPE = {"trade_id": str}
+
+
 # **Added, 2026-07-22 Codex review finding (sixth round): this helper
 # previously read an entire caller-controlled file into bytes, decoded
 # text, and a DataFrame with no size ceiling at all -- unlike

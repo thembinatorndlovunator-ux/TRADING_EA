@@ -51,6 +51,7 @@ from typing import Optional
 import pandas as pd
 
 from analysis.csv_io import (
+    TRADE_ID_DTYPE,
     CsvSchemaError,
     assert_chronological_order,
     assert_finite_columns,
@@ -283,7 +284,13 @@ def run(
     # ABA-mutation race round 5 already closed for
     # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
     # left open here.**
-    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): 'trade_id'
+    # was previously read via plain pandas type inference -- see
+    # csv_io.TRADE_ID_DTYPE's own docstring for the exact counterexample
+    # this closes.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(
+        trades_csv, REQUIRED_COLUMNS, dtype=TRADE_ID_DTYPE
+    )
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)

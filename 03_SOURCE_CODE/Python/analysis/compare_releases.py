@@ -79,6 +79,7 @@ import pandas as pd
 
 from analysis.analyse_baseline import REQUIRED_COLUMNS, compute_trade_summary
 from analysis.csv_io import (
+    TRADE_ID_DTYPE,
     CsvSchemaError,
     assert_chronological_order,
     assert_finite_columns,
@@ -119,7 +120,13 @@ def _load_trades_with_r_multiple(
     # join_trade_journal.py/join_news_events.py/analyse_baseline.py but
     # left open here. Returns the hash from this single read so every
     # downstream use (role-specific and combined) shares it.**
-    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(trades_csv, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-22 Codex review finding (sixth round): 'trade_id'
+    # was previously read via plain pandas type inference -- see
+    # csv_io.TRADE_ID_DTYPE's own docstring for the exact counterexample
+    # this closes.**
+    trades, trades_csv_hash = read_csv_with_required_columns_and_hash(
+        trades_csv, REQUIRED_COLUMNS, dtype=TRADE_ID_DTYPE
+    )
     if trades.empty:
         raise InsufficientSampleError(f"{trades_csv}: zero trade rows")
     assert_unique_ids(trades, "trade_id", trades_csv)
