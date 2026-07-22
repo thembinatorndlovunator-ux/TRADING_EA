@@ -5,7 +5,14 @@ import pytest
 
 from analysis.csv_io import CsvSchemaError
 from analysis.metrics import InsufficientSampleError
-from analysis.performance_breakdown import compute_breakdown, run
+from analysis.performance_breakdown import (
+    SESSION_TIME_REMAINING_HIGH,
+    SESSION_TIME_REMAINING_LOW,
+    SESSION_TIME_REMAINING_UNKNOWN,
+    compute_breakdown,
+    derive_session_state,
+    run,
+)
 
 
 def _fixture_df() -> pd.DataFrame:
@@ -25,6 +32,39 @@ def _fixture_df() -> pd.DataFrame:
             "profit": [50.0, -20.0, 10.0, 30.0],
         }
     )
+
+
+# --- derive_session_state (Codex review finding, 2026-07-22, sixth round) ----
+
+
+def test_derive_session_state_high_boundary_inclusive():
+    assert derive_session_state(0.5) == SESSION_TIME_REMAINING_HIGH
+    assert derive_session_state(1.0) == SESSION_TIME_REMAINING_HIGH
+
+
+def test_derive_session_state_low():
+    assert derive_session_state(0.49) == SESSION_TIME_REMAINING_LOW
+    assert derive_session_state(0.0) == SESSION_TIME_REMAINING_LOW
+
+
+def test_derive_session_state_none_is_unknown():
+    """Regression for a Codex review finding (2026-07-22, sixth round):
+    this mapping rule previously existed only as notebook 04's own
+    markdown prose, and the UNKNOWN case (no session today / broker
+    session table unreadable) was never exercised by any real code."""
+
+    assert derive_session_state(None) == SESSION_TIME_REMAINING_UNKNOWN
+
+
+def test_derive_session_state_rejects_out_of_range_or_non_finite():
+    with pytest.raises(ValueError):
+        derive_session_state(-0.1)
+    with pytest.raises(ValueError):
+        derive_session_state(1.1)
+    with pytest.raises(ValueError):
+        derive_session_state(float("nan"))
+    with pytest.raises(ValueError):
+        derive_session_state(float("inf"))
 
 
 def test_compute_breakdown_hand_computed_single_dimension():
