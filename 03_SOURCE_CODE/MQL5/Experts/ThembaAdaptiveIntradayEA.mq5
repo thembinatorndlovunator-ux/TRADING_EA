@@ -96,6 +96,15 @@ input int    InpLiquidityAvgBars           = 20;
 input int    InpHysteresisRequiredBars     = 2;
 input int    InpCooldownMinutes            = 90;     // TASK-034: three-loss-per-symbol cooldown
 
+// TASK-040 (seventh-round rewrite): TASK-002_PHASE2_SPECIFICATION.md section 1's own
+// canonical intraday-mode formula defaults.
+input int    InpModePersistenceBars        = 20;     // regime-persistence component window
+input double InpMinDayTradeSessionMinutes  = 90.0;    // session-time-remaining floor
+input int    InpModeHysteresisEvaluations  = 2;       // see IntradayModeRouter.mqh's own stated
+                                                        // M1-bar-vs-evaluation-cadence deviation
+input double InpMinDayTradeR               = 1.0;     // stage-4 post-hoc consistency check
+input double InpMaxScalpR                  = 2.0;     // stage-4 post-hoc consistency check
+
 // TASK-041 (exit-engine wiring, partial scope -- see ExitOrchestrator.mqh's own header):
 input double InpBreakEvenMinR              = 0.5;
 input double InpTrailBufferAtrMultiple     = 0.3;
@@ -136,6 +145,7 @@ CSymbolProfile          g_profile;
 string                  g_symbol;
 datetime                g_last_evaluated_bar_time = 0;
 SRegimeHysteresisState  g_hysteresis_state;
+SModeState              g_mode_state; // TASK-040 (seventh-round rewrite): canonical mode formula's own state
 ENUM_MARKET_FAMILY      g_market_family = MARKET_FAMILY_UNKNOWN;
 long                    g_signal_counter = 0; // TASK-036: in-process counter feeding signal_id
 
@@ -196,6 +206,7 @@ int OnInit()
      }
 
    MRE_InitHysteresisState(g_hysteresis_state);
+   IMR_InitModeState(g_mode_state);
    FEP_InvalidateCache(); // TASK-034: force a fresh FairEconomy fetch this session, not a stale one
 
    // TASK-040: classify market_family once at startup (this EA instance
@@ -456,23 +467,45 @@ double ComputeAvgTicksPerBar(const int bars)
   }
 
 //+------------------------------------------------------------------+
-//| TASK-040 — current completed bar's range vs. its own trailing         |
-//| average over 'window' bars (>1.0 means "wider than usual right now",     |
-//| the IntradayModeRouter's own scalp-favoring signal). Returns 1.0           |
-//| (neutral) if the average range cannot be computed (e.g. a degenerate         |
-//| all-zero-range window) rather than dividing by zero.                            |
+//| **Rewritten, 2026-07-22 (Codex review finding, seventh round, P0       |
+//| finding 6):** replaces the previous ComputeCurrentRangeRatio (a single-       |
+//| bar-vs-trailing-average proxy, no longer called anywhere) with a direct          |
+//| port of TASK-002 section 1's own component-3 definition: "today's session          |
+//| range so far divided by the InpRegimeTF ATR." Scans back from the most               |
+//| recent completed bar (index 0) until crossing today's server-day                        |
+//| boundary, tracking the running high/low over that span. Returns 0.0 if                     |
+//| no bar this session is available yet (e.g. right at a fresh day's open) or                   |
+//| current_atr is non-positive.                                                                     |
 //+------------------------------------------------------------------+
-double ComputeCurrentRangeRatio(const double &highs[], const double &lows[], const int window)
+double ComputeTodaySessionRangeAtrMultiple(const double &highs[], const double &lows[],
+                                            const double current_atr)
   {
-   double current_range = highs[0] - lows[0];
-   int n = MathMin(window, ArraySize(highs));
-   double sum = 0.0;
+   if(current_atr <= 0.0)
+      return 0.0;
+
+   datetime day_start = SN_CurrentDailyBoundary();
+   double today_high = -DBL_MAX;
+   double today_low = DBL_MAX;
+   bool any_bar_today = false;
+
+   int n = ArraySize(highs);
    for(int i = 0; i < n; i++)
-      sum += (highs[i] - lows[i]);
-   double avg_range = (n > 0) ? sum / (double)n : 0.0;
-   if(avg_range <= 0.0)
-      return 1.0;
-   return current_range / avg_range;
+     {
+      datetime bar_time;
+      if(!g_md.GetTime(i, bar_time))
+         break;
+      if(bar_time < day_start)
+         break; // bars are newest-first; once we cross the boundary, stop scanning
+
+      if(highs[i] > today_high) today_high = highs[i];
+      if(lows[i] < today_low) today_low = lows[i];
+      any_bar_today = true;
+     }
+
+   if(!any_bar_today)
+      return 0.0;
+
+   return (today_high - today_low) / current_atr;
   }
 
 //+------------------------------------------------------------------+
@@ -884,8 +917,9 @@ void ManageOpenPositions()
       if(!g_md.GetHigh(i, highs[i]) || !g_md.GetLow(i, lows[i]))
          return;
 
-   double session_remaining_ratio;
-   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio))
+   double session_remaining_ratio, session_remaining_minutes_unused;
+   if(!SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio,
+                                      session_remaining_minutes_unused))
       session_remaining_ratio = 0.0;
 
    SExitConfig cfg;
@@ -1186,28 +1220,52 @@ void EvaluateAndJournal()
    SConflictResult resolution;
    bool has_decision = CR_ResolveConflicts(routed, 5, 10.0, resolution);
 
-   //--- TASK-040: journal market_family (classified once at OnInit) and  --
-   //--- a first-pass intraday_mode classification every bar (journal-only, --
-   //--- not yet consumed by any strategy's own behavior — see               --
-   //--- IntradayModeRouter.mqh's own header for the stated scope boundary). --
-   double session_remaining_ratio;
-   bool session_ratio_known = SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio);
+   //--- TASK-040 (rewritten, seventh-round P0 finding 6): journal            --
+   //--- market_family and the CANONICAL TASK-002 section 1 intraday_mode ------
+   //--- formula (four normalized components, weighted average, 0.40/0.60 -----
+   //--- thresholds, neutral-band persistence, hysteresis) -- see                --
+   //--- IntradayModeRouter.mqh's own header for the stated M1-vs-M15-              --
+   //--- evaluation-cadence deviation. -----------------------------------------------
+   double session_remaining_ratio, session_remaining_minutes;
+   bool session_ratio_known = SN_GetSessionMinutesRemaining(g_symbol, session_remaining_ratio,
+                                                              session_remaining_minutes);
    if(!session_ratio_known)
+     {
       session_remaining_ratio = 0.0; // no session today (weekend/holiday) — treat as "none left"
                                       // for the MODE classifier only; session_state (below) keeps
                                       // this distinguished from a genuine low-ratio bar.
-   double range_ratio = ComputeCurrentRangeRatio(highs, lows, InpLiquidityAvgBars);
-   double spread_atr_ratio = (atr_values[0] > 0.0) ? current_spread / atr_values[0] : 0.0;
+      session_remaining_minutes = 0.0;
+     }
 
-   double day_trade_score;
-   ENUM_INTRADAY_MODE intraday_mode = IMR_ClassifyMode(
-      effective_regime, regime_read.E, regime_read.T_final, range_ratio, spread_atr_ratio,
-      session_remaining_ratio, news_blackout, has_decision, resolution.winner_score,
-      day_trade_score);
+   IMR_UpdateTrendAge(g_mode_state, effective_regime);
+   double range_atr_multiple = ComputeTodaySessionRangeAtrMultiple(highs, lows, atr_values[0]);
+
+   SModeComponent mc_regime_persistence, mc_atr_percentile, mc_range, mc_session;
+   mc_regime_persistence.available = true;
+   mc_regime_persistence.value = IMR_ComputeRegimePersistence(effective_regime,
+                                                                g_mode_state.trend_age_bars,
+                                                                InpModePersistenceBars);
+   mc_atr_percentile.available = true;
+   mc_atr_percentile.value = MathMax(0.0, MathMin(1.0, regime_read.E));
+   mc_range.available = (atr_values[0] > 0.0);
+   mc_range.value = IMR_ComputeRangeVsAverage(range_atr_multiple);
+   mc_session.available = session_ratio_known;
+   mc_session.value = IMR_ComputeSessionTimeRemaining(session_remaining_ratio,
+                                                        session_remaining_minutes,
+                                                        InpMinDayTradeSessionMinutes);
+
+   SModeWeights mode_weights = IMR_DefaultModeWeights();
+   SModeScoreResult mode_score = IMR_ComputeModeScore(mc_regime_persistence, mc_atr_percentile,
+                                                        mc_range, mc_session, mode_weights);
+   ENUM_INTRADAY_MODE intraday_mode = IMR_ApplyModeHysteresis(g_mode_state, effective_regime,
+                                                                mode_score,
+                                                                InpModeHysteresisEvaluations);
 
    AppendReason(gate_reasons, "market_family_" + IMR_MarketFamilyToString(g_market_family));
-   AppendReason(gate_reasons, StringFormat("intraday_mode_%s_score_%.4f",
-                                            IMR_IntradayModeToString(intraday_mode), day_trade_score));
+   AppendReason(gate_reasons, StringFormat(
+      "intraday_mode_%s_score_%s_components_%d", IMR_IntradayModeToString(intraday_mode),
+      mode_score.valid ? DoubleToString(mode_score.mode_score, 4) : "undefined",
+      mode_score.components_available));
 
    // TASK-036: news_state/session_state's exact canonical vocabulary,
    // matching analysis/performance_breakdown.py's own defined values --
@@ -1240,7 +1298,28 @@ void EvaluateAndJournal()
    decision.session_state = session_state;
    decision.ea_version = "1.01-task027-order-submission-optional";
 
+   // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding
+   // 6): TASK-002 section 1's stage-4 post-hoc mode-consistency check --
+   // this is what makes intraday_mode actually ROUTE a trading decision,
+   // not stay purely journal-only. A candidate whose own expected R is
+   // incompatible with the confirmed mode (or whose mode is NONE --
+   // gating override or undefined mode_score) is rejected outright, the
+   // bar resolving to no-trade exactly like "no eligible candidate."**
+   bool mode_consistent = false;
    if(has_decision)
+     {
+      double reward = MathAbs(resolution.winner.target_price - resolution.winner.entry_price);
+      double risk = MathAbs(resolution.winner.entry_price - resolution.winner.stop_price);
+      double expected_r = (risk > 0.0) ? (reward / risk) : 0.0;
+      mode_consistent = IMR_IsCandidateConsistentWithMode(intraday_mode, expected_r,
+                                                            InpMinDayTradeR, InpMaxScalpR);
+      if(!mode_consistent)
+         AppendReason(gate_reasons, StringFormat(
+            "mode_consistency_rejected_mode_%s_expected_r_%.4f",
+            IMR_IntradayModeToString(intraday_mode), expected_r));
+     }
+
+   if(has_decision && mode_consistent)
      {
       decision.direction = (resolution.winning_direction == CAND_LONG) ? "BUY" : "SELL";
       decision.strategy = EnumToString(resolution.winner.family);
@@ -1280,7 +1359,7 @@ void EvaluateAndJournal()
      {
       decision.direction = "NONE";
       decision.strategy = "NoTrade";
-      decision.setup = resolution.reason;
+      decision.setup = has_decision ? "mode_consistency_rejected" : resolution.reason;
       decision.reasons_passed_json = BuildJsonStringArray(gate_reasons);
      }
 

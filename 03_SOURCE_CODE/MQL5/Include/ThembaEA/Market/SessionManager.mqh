@@ -109,9 +109,17 @@ bool SN_IsPastIntradayBoundary(const int boundary_hour = 23,
 //| done", matching the mode-router's actual purpose for this input     |
 //| (can a Day-trade position still be reasonably held today).          |
 //+------------------------------------------------------------------+
-bool SN_GetSessionMinutesRemaining(const string symbol, double &remaining_ratio)
+//| **Extended, 2026-07-22 (Codex review finding, seventh round, P0        |
+//| finding 6): 'remaining_minutes_out' exposes the ABSOLUTE remaining        |
+//| minutes alongside the existing ratio -- IntradayModeRouter.mqh's own        |
+//| section-1 session-time-remaining component needs the absolute value           |
+//| for its own "clamp to 0.0 below InpMinDayTradeSessionMinutes" floor              |
+//| check, which the ratio alone cannot recover.**                                     |
+bool SN_GetSessionMinutesRemaining(const string symbol, double &remaining_ratio,
+                                    double &remaining_minutes_out)
   {
    remaining_ratio = 0.0;
+   remaining_minutes_out = 0.0;
 
    datetime now = TimeTradeServer();
    MqlDateTime dt;
@@ -161,5 +169,6 @@ bool SN_GetSessionMinutesRemaining(const string symbol, double &remaining_ratio)
    if(ratio > 1.0) ratio = 1.0;
 
    remaining_ratio = ratio;
+   remaining_minutes_out = remaining_minutes;
    return true;
   }

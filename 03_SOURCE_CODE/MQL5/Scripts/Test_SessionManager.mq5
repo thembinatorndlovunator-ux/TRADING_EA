@@ -93,12 +93,20 @@ void OnStart()
          SN_IsPastIntradayBoundary(now_dt.hour, now_dt.min));
 
    //--- 4. Session-time-remaining for a real symbol -------------------
-   double ratio;
-   bool session_ok = SN_GetSessionMinutesRemaining(InpTestSymbol, ratio);
+   double ratio, remaining_minutes;
+   bool session_ok = SN_GetSessionMinutesRemaining(InpTestSymbol, ratio, remaining_minutes);
    if(session_ok)
      {
       Check(StringFormat("session ratio for '%s' is within [0,1]", InpTestSymbol),
             ratio >= 0.0 && ratio <= 1.0);
+      // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding
+      // 6): the new remaining_minutes_out must be non-negative and
+      // consistent with the ratio (both derived from the same underlying
+      // remaining/total minutes, so ratio==0 <=> remaining_minutes==0).**
+      Check(StringFormat("session remaining_minutes for '%s' is non-negative", InpTestSymbol),
+            remaining_minutes >= 0.0);
+      Check("remaining_minutes and ratio agree on whether any time remains",
+            (remaining_minutes <= 0.0) == (ratio <= 0.0));
      }
    else
      {
