@@ -588,3 +588,43 @@ def test_directory_matching_pattern_is_reported_not_a_crash(tmp_path):
     assert len(result.valid_records) == 1
     assert result.valid_records[0].signal_id == "s1"
     assert any("not a regular file" in e.error for e in result.parse_errors)
+
+
+def test_max_retained_errors_limit_raises_for_excluded_non_file_candidates(tmp_path):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 13): the excluded-non-file-candidate and outward-resolving-path
+    exclusion branches each appended a ParseError and then 'continue'd
+    immediately, skipping straight back to the top of the loop -- bypassing
+    BOTH of this function's own budget checks entirely (neither is reached
+    by a path that 'continue's before them). Two matching directories
+    (each excluded as "not a regular file") with max_retained_errors=1
+    previously returned two retained errors instead of raising (this
+    test's own exact reported counterexample: 'retained_errors=2')."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    (tmp_path / "decisions_20260721.jsonl").mkdir()
+    (tmp_path / "decisions_20260722.jsonl").mkdir()
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_retained_errors=1)
+
+
+def test_max_retained_errors_limit_raises_for_outside_directory_exclusions(tmp_path):
+    """Same fix, exercised via the OTHER exclusion branch (a candidate
+    resolving outside the journal directory) -- both branches share the
+    identical bug and the identical fix, so both get their own regression
+    test rather than assuming one implies the other."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    parent_file_1 = tmp_path / "outside1.jsonl"
+    parent_file_2 = tmp_path / "outside2.jsonl"
+    parent_file_1.write_text(json.dumps(make_valid_record(signal_id="e1")) + "\n", encoding="utf-8")
+    parent_file_2.write_text(json.dumps(make_valid_record(signal_id="e2")) + "\n", encoding="utf-8")
+
+    subdir = tmp_path / "journal"
+    subdir.mkdir()
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(subdir, pattern="../*.jsonl", max_retained_errors=1)

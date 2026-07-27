@@ -572,6 +572,21 @@ def read_journal_directory(
                     error=f"excluded: resolves outside journal directory {directory}",
                 )
             )
+            # **Fixed, 2026-07-27 Codex review finding (ninth round, P1
+            # finding 13): this 'continue' skipped straight back to the top
+            # of the loop, bypassing BOTH of this function's own budget
+            # checks below (the in-loop per-validation-error check and the
+            # post-file re-check) -- neither is ever reached by a path that
+            # 'continue's here. Two excluded/non-file candidates with
+            # max_retained_errors=1 previously retained two errors instead
+            # of raising. The identical check now runs immediately after
+            # every error append, including this one.**
+            if len(all_parse_errors) + len(all_validation_errors) > max_retained_errors:
+                raise JournalReaderLimitError(
+                    f"{directory}: retained parse/validation error count exceeds "
+                    f"max_retained_errors budget of {max_retained_errors} -- refusing to "
+                    f"retain any more error records"
+                )
             continue
 
         # **Added, 2026-07-22 Codex review finding (sixth round):** a
@@ -590,6 +605,16 @@ def read_journal_directory(
                     error="excluded: matched pattern but is not a regular file",
                 )
             )
+            # **Fixed, 2026-07-27 Codex review finding (ninth round, P1
+            # finding 13): see the identical fix immediately above (the
+            # outward-resolving-path exclusion) -- this 'continue' bypassed
+            # the same two budget checks below.**
+            if len(all_parse_errors) + len(all_validation_errors) > max_retained_errors:
+                raise JournalReaderLimitError(
+                    f"{directory}: retained parse/validation error count exceeds "
+                    f"max_retained_errors budget of {max_retained_errors} -- refusing to "
+                    f"retain any more error records"
+                )
             continue
 
         # Source labelled relative to 'directory', not an absolute path
