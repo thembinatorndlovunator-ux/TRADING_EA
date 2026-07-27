@@ -239,32 +239,67 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    result.deal_ticket = trade.ResultDeal();
    result.fill_price  = trade.ResultPrice();
 
-   // Resolve the resulting position ticket by scanning this EA's own
-   // magic-scoped positions on this symbol — CTrade's ResultDeal() is a
-   // deal ticket, not a position ticket, and the two are not interchangeable.
-   // **Fixed, 2026-07-22 (Codex review finding, sixth round, TASK-028's own
-   // round-6 P0 finding 1): PositionGetTicket(i) returns POSITION_TICKET,
-   // which MT5 documents as NOT guaranteed stable across a server-side
-   // service re-open or (in netting mode) a reversal -- POSITION_IDENTIFIER
-   // is MT5's own documented stable-for-the-whole-lifetime key. Both are
-   // now captured: position_ticket for THIS session's immediate close/
-   // modify calls (which the MT5 API itself requires), position_id for
-   // durable journaling identity. PositionGetTicket(i) already selects
-   // this position for the PositionGetInteger/PositionGetString calls
-   // below, so reading POSITION_IDENTIFIER here is reading the SAME
-   // position these checks already matched.**
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 1):
+   // this previously scanned every OPEN position matching symbol+magic and
+   // took the FIRST one found -- a "take the first match" heuristic that is
+   // unsafe now that this EA requires a HEDGING-mode account (this same
+   // round's own fix), where MULTIPLE simultaneous positions can genuinely
+   // exist under the same symbol+magic (e.g. a still-closing prior position
+   // whose retry loop, per the seventh round's own P0 finding 8 fix, has not
+   // yet observed a broker-confirmed DONE). Scanning by symbol+magic alone
+   // could silently resolve to the WRONG position -- one this order did not
+   // even create.
+   //
+   // The deal that was JUST filled (result.deal_ticket, from
+   // CTrade::ResultDeal() above) is the causally correct source: its own
+   // DEAL_POSITION_ID is MT5's documented durable identity for the EXACT
+   // position that deal opened or added to -- no scanning or matching
+   // heuristic needed. HistoryDealSelect (not a broader HistorySelect range)
+   // is sufficient to bring this single, just-created deal's own properties
+   // into reach, since it is guaranteed to already be in this terminal's
+   // history the instant CTrade reports it filled.
+   //
+   // Only attempted for a SYNCHRONOUS fill (retcode DONE) -- a PLACED
+   // (accepted-for-processing, not yet filled) order has no deal/position
+   // yet at all; result.position_id/position_ticket correctly stay 0 in
+   // that case, exactly as before, so the caller's own existing async-fill
+   // correlation (AsyncFillCorrelator.mqh, keyed by order_ticket) resolves
+   // it later via OnTradeTransaction, which already reads DEAL_POSITION_ID
+   // from the real fill deal the same causally-correct way.
+   if(result.retcode == TRADE_RETCODE_DONE)
      {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0)
-         continue;
-      if(PositionGetInteger(POSITION_MAGIC) != magic)
-         continue;
-      if(PositionGetString(POSITION_SYMBOL) != symbol)
-         continue;
-      result.position_ticket = ticket;
-      result.position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-      break;
+      if(!HistoryDealSelect(result.deal_ticket))
+        {
+         result.rejection_reason = "fill_deal_not_found_in_history";
+         return false;
+        }
+      result.position_id = (ulong)HistoryDealGetInteger(result.deal_ticket, DEAL_POSITION_ID);
+      if(result.position_id == 0)
+        {
+         result.rejection_reason = "fill_deal_has_no_position_id";
+         return false;
+        }
+
+      // position_ticket (needed for THIS session's immediate close/modify
+      // calls, which the MT5 API itself requires) is now resolved by
+      // matching the EXACT position_id just read above -- unambiguous even
+      // if other positions happen to exist under the same symbol+magic,
+      // unlike the previous symbol+magic-only scan.
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0)
+            continue;
+         if((ulong)PositionGetInteger(POSITION_IDENTIFIER) != result.position_id)
+            continue;
+         result.position_ticket = ticket;
+         break;
+        }
+      if(result.position_ticket == 0)
+        {
+         result.rejection_reason = "filled_position_not_found_by_position_id";
+         return false;
+        }
      }
 
    result.success = true;

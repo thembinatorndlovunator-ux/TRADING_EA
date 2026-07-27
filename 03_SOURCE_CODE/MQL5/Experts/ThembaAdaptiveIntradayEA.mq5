@@ -192,17 +192,30 @@ int OnInit()
       return INIT_FAILED;
      }
 
-   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
-   // 3): TASK-002_PHASE2_SPECIFICATION.md requires this EA refuse to run
-   // on a hedging-mode account (its own no-add-on/no-concurrent-position
-   // rule and the single-position-per-symbol+magic risk model both assume
-   // netting; a hedging account can hold simultaneous opposing positions
-   // under the same symbol+magic, defeating that assumption entirely).**
-   if((ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE) ==
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 1):
+   // this guard was EXACTLY INVERTED -- TASK-002_PHASE2_SPECIFICATION.md
+   // section "Netting vs. hedging account-mode support" states plainly:
+   // "hedging-mode only, full stop, no promised future phase. The engine
+   // validates and requires a hedging-mode account at OnInit and refuses to
+   // run otherwise; netting-account support, if ever wanted, is a separate,
+   // fully-specified task." The seventh-round fix required netting and
+   // refused hedging -- the opposite of the canonical decision. Flipped.
+   // The one place this project's own logic previously assumed "at most one
+   // position per symbol+magic can ever exist" in a way that would have been
+   // unsafe under hedging (OM_OpenPosition's post-open lookup, which scanned
+   // symbol+magic and took the FIRST match) is also fixed this round to use
+   // the causally-correct DEAL_POSITION_ID from the fill's own deal instead
+   // -- see that function's own comment. Every OTHER position-scanning site
+   // in this codebase (ManageOpenPositions, ComputeOwnMagicOpenRiskCash,
+   // ICM_CloseAllOwnedPositions, the no-add-on gate) already iterates EVERY
+   // matching position or uses a specific ticket/position_id, never a "take
+   // the first" heuristic, so hedging mode does not silently break them.**
+   if((ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE) !=
       ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
      {
-      Print("ThembaEA: this account is in HEDGING margin mode -- this EA's risk model assumes "
-            "netting (one position per symbol+magic). Refusing to run.");
+      Print("ThembaEA: this account is NOT in HEDGING margin mode -- "
+            "TASK-002_PHASE2_SPECIFICATION.md requires a hedging-mode account, full stop. "
+            "Refusing to run.");
       return INIT_FAILED;
      }
 
