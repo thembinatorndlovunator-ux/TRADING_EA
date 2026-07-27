@@ -561,7 +561,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                          HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
                          HistoryDealGetDouble(trans.deal, DEAL_COMMISSION) +
                          HistoryDealGetDouble(trans.deal, DEAL_FEE);
-            CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(), InpCooldownMinutes);
+            // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0
+            // finding 6): CDM_RecordClosedTrade's own write success is now
+            // checked and logged on failure -- a lost write here could
+            // silently drop this closed trade from the 3-loss cooldown
+            // ledger, never blocking new entries after a genuine losing
+            // streak.**
+            if(!CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(),
+                                       InpCooldownMinutes))
+               PrintFormat("ThembaEA: CooldownManager failed to persist a closed-trade record "
+                           "for '%s' magic %I64d -- the 3-loss cooldown ledger may be missing "
+                           "this trade.", g_symbol, InpMagicNumber);
 
             // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1
             // finding 14): a closing deal does not always mean the
@@ -1513,7 +1523,18 @@ void ManageOpenPositions(const bool is_new_completed_bar)
          InpTimeStopUsesScalpMode, session_remaining_ratio, session_ratio_known, elapsed_minutes,
          cfg, state);
 
-      PST_Save(position_id, state);
+      // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding
+      // 6): PST_Save's own write success is now checked -- a lost write here
+      // means this position's own trailing/break-even/profit-lock history
+      // reverts to defaults on the next read, which could re-arm an
+      // already-armed mechanism; logging it is the practical remediation
+      // (this is exit-quality state, not a risk-cap gate, so it does not
+      // warrant blocking position management the way a lost intent/risk
+      // write would).**
+      if(!PST_Save(position_id, state))
+         PrintFormat("ThembaEA: PositionStateTracker failed to persist exit state for "
+                     "position_id=%I64u -- its trailing/break-even/profit-lock history may "
+                     "revert to defaults on the next read.", position_id);
 
       if(decision.should_close)
         {

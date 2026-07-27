@@ -21,6 +21,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "../Core/KeyEncoding.mqh"
+
 struct SPositionExitState
   {
    double   peak_r;
@@ -39,12 +41,18 @@ struct SPositionExitState
                                   // already-trailed one.
   };
 
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** previously concatenated the raw, unbounded server name directly           |
+//| into the key -- "bars_since_favorable_swing" is this module's own longest             |
+//| field name (27 characters); combined with a realistic server name this                    |
+//| already risked exceeding MT5's 63-character global-variable limit,                            |
+//| silently losing exit state. Now delegates to KeyEncoding.mqh's                                    |
+//| KE_PositionNamespace (fixed-width hash).**                                                            |
+//+------------------------------------------------------------------+
 string PST_Namespace(const ulong position_id)
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_PST_" + IntegerToString(login) + "_" + server + "_" +
-          IntegerToString((long)position_id);
+   return KE_PositionNamespace("ThembaEA_PST", position_id);
   }
 
 string PST_Key(const ulong position_id, const string field)
@@ -60,9 +68,16 @@ double PST_GetDouble(const ulong position_id, const string field, const double d
    return GlobalVariableGet(key);
   }
 
-void PST_SetDouble(const ulong position_id, const string field, const double value)
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** the write's own success is now returned (previously ignored by           |
+//| every caller). PST_Save below propagates a combined failure so a caller             |
+//| can at least log a lost exit-state write instead of silently trusting                 |
+//| one that did not happen.**                                                                |
+//+------------------------------------------------------------------+
+bool PST_SetDouble(const ulong position_id, const string field, const double value)
   {
-   GlobalVariableSet(PST_Key(position_id, field), value);
+   return KE_SetDoubleChecked(PST_Key(position_id, field), value);
   }
 
 //+------------------------------------------------------------------+
@@ -85,15 +100,26 @@ SPositionExitState PST_Load(const ulong position_id)
 //+------------------------------------------------------------------+
 //| Persists 'state' for 'position_id'. Call once per completed-bar        |
 //| evaluation after ExitOrchestrator.mqh has updated the in-memory state.     |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** now returns whether every field was actually persisted, so a           |
+//| caller can at least log a lost write (the review's own "assert every                |
+//| generated key/write" ask) rather than silently trust one that never                     |
+//| happened.**                                                                                  |
 //+------------------------------------------------------------------+
-void PST_Save(const ulong position_id, const SPositionExitState &state)
+bool PST_Save(const ulong position_id, const SPositionExitState &state)
   {
-   PST_SetDouble(position_id, "peak_r", state.peak_r);
-   PST_SetDouble(position_id, "bars_since_favorable_swing", (double)state.bars_since_favorable_swing);
-   PST_SetDouble(position_id, "break_even_armed", state.break_even_armed ? 1.0 : 0.0);
-   PST_SetDouble(position_id, "profit_lock_armed", state.profit_lock_armed ? 1.0 : 0.0);
-   PST_SetDouble(position_id, "last_swing_price", state.last_swing_price);
-   PST_SetDouble(position_id, "initial_stop_price", state.initial_stop_price);
+   bool all_ok = true;
+   all_ok = PST_SetDouble(position_id, "peak_r", state.peak_r) && all_ok;
+   all_ok = PST_SetDouble(position_id, "bars_since_favorable_swing",
+                           (double)state.bars_since_favorable_swing) && all_ok;
+   all_ok = PST_SetDouble(position_id, "break_even_armed",
+                           state.break_even_armed ? 1.0 : 0.0) && all_ok;
+   all_ok = PST_SetDouble(position_id, "profit_lock_armed",
+                           state.profit_lock_armed ? 1.0 : 0.0) && all_ok;
+   all_ok = PST_SetDouble(position_id, "last_swing_price", state.last_swing_price) && all_ok;
+   all_ok = PST_SetDouble(position_id, "initial_stop_price", state.initial_stop_price) && all_ok;
+   return all_ok;
   }
 
 //+------------------------------------------------------------------+

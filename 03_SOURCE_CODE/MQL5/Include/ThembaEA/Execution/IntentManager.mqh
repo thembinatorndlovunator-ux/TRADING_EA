@@ -30,12 +30,22 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "../Core/KeyEncoding.mqh"
+
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** previously concatenated the raw, unbounded server name AND               |
+//| symbol name directly into the key — an ordinary Deriv synthetic symbol           |
+//| name ("Volatility 100 Index") combined with a realistic server name                 |
+//| already exceeds MT5's 63-character global-variable name limit, so                       |
+//| GlobalVariableSet silently failed and order submission broke permanently                    |
+//| on exactly the symbols this project trades most. Now delegates to                               |
+//| KeyEncoding.mqh's KE_InstanceNamespace (fixed-width hash) — see that                                |
+//| module's own header.**                                                                                 |
+//+------------------------------------------------------------------+
 string IM_InstanceNamespace(const string symbol, const long magic)
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_IM_" + IntegerToString(login) + "_" + server + "_" + symbol + "_" +
-          IntegerToString(magic);
+   return KE_InstanceNamespace("ThembaEA_IM", symbol, magic);
   }
 
 string IM_Key(const string symbol, const long magic, const string field)
@@ -52,9 +62,17 @@ double IM_GetDouble(const string symbol, const long magic, const string field,
    return GlobalVariableGet(key);
   }
 
-void IM_SetDouble(const string symbol, const long magic, const string field, const double value)
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** the write's own success is now returned — every prior caller           |
+//| ignored it entirely (the review's own "the code ignores that return           |
+//| value" finding). Callers that need fail-closed behavior check this;                 |
+//| IM_BeginIntent below is the one that matters most (a failed intent write               |
+//| must not be silently treated as a successfully durable one).**                             |
+//+------------------------------------------------------------------+
+bool IM_SetDouble(const string symbol, const long magic, const string field, const double value)
   {
-   GlobalVariableSet(IM_Key(symbol, magic, field), value);
+   return KE_SetDoubleChecked(IM_Key(symbol, magic, field), value);
   }
 
 //+------------------------------------------------------------------+
@@ -161,10 +179,33 @@ bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
       return false; // an intent is already active — refuse a second one
 
    double intent_micro = (double)GetMicrosecondCount();
-   IM_SetDouble(symbol, magic, "is_long", is_long ? 1.0 : 0.0);
-   IM_SetDouble(symbol, magic, "volume", volume);
-   IM_SetDouble(symbol, magic, "timestamp", (double)now);
-   IM_SetDouble(symbol, magic, "intent_micro", intent_micro);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
+   // every field write's own success is now checked. If any fails, the
+   // 'active' flag (already CAS-set to 1.0 above) is rolled back to 0.0
+   // (best-effort) and this returns false -- proceeding to submit a real
+   // order whose intent record cannot be durably trusted would defeat the
+   // entire crash-recovery mechanism this module exists for.**
+   bool all_ok = true;
+   all_ok = IM_SetDouble(symbol, magic, "is_long", is_long ? 1.0 : 0.0) && all_ok;
+   all_ok = IM_SetDouble(symbol, magic, "volume", volume) && all_ok;
+   all_ok = IM_SetDouble(symbol, magic, "timestamp", (double)now) && all_ok;
+   all_ok = IM_SetDouble(symbol, magic, "intent_micro", intent_micro) && all_ok;
+
+   if(!all_ok)
+     {
+      GlobalVariableSet(active_key, 0.0); // best-effort rollback
+      PrintFormat("ThembaEA: IntentManager failed to persist intent fields for '%s' magic "
+                  "%I64d -- refusing to report a durable intent.", symbol, magic);
+      return false;
+     }
+
+   // Safety-critical: this record is what a restart's crash-recovery
+   // reconciliation depends on entirely (see IM_ReconcileOnRestart) -- per
+   // the review's own "no code calls GlobalVariablesFlush... sudden failure
+   // can lose unflushed terminal globals" finding, force it to disk now
+   // rather than trust MT5's own periodic flush cadence.
+   GlobalVariablesFlush();
+
    intent_id_out = IM_BuildIntentId(intent_micro);
    return true;
   }

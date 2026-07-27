@@ -16,12 +16,17 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "../Core/KeyEncoding.mqh"
+
+//+------------------------------------------------------------------+
+//| Bounded, collision-resistant key -- see KeyEncoding.mqh's own header      |
+//| (Codex review finding, eighth round, P0 finding 6: every persistence         |
+//| module in this codebase must build a length-bounded key, not concatenate       |
+//| the raw, unbounded server name).                                                  |
+//+------------------------------------------------------------------+
 string NSG_Key(const ulong position_id)
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_NSG_" + IntegerToString(login) + "_" + server + "_" +
-          IntegerToString((long)position_id);
+   return KE_PositionNamespace("ThembaEA_NSG", position_id);
   }
 
 //+------------------------------------------------------------------+
@@ -37,9 +42,9 @@ datetime NSG_GetFirstSeen(const ulong position_id)
    return (datetime)GlobalVariableGet(key);
   }
 
-void NSG_SetFirstSeen(const ulong position_id, const datetime t)
+bool NSG_SetFirstSeen(const ulong position_id, const datetime t)
   {
-   GlobalVariableSet(NSG_Key(position_id), (double)t);
+   return KE_SetDoubleChecked(NSG_Key(position_id), (double)t);
   }
 
 //+------------------------------------------------------------------+

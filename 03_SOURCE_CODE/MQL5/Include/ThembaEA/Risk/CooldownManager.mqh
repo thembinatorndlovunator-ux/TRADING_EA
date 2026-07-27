@@ -21,6 +21,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "../Core/KeyEncoding.mqh"
+
 //+------------------------------------------------------------------+
 //| PURE CORE — given exactly the last 3 closed-trade $ P/L values        |
 //| (order does not matter; this only asks "are all 3 losses AND is the     |
@@ -47,12 +49,19 @@ bool CDM_ShouldTriggerCooldown(const double &last_three_pnls[])
 //+------------------------------------------------------------------+
 //| LIVE WRAPPER — instance-scoped GlobalVariable persistence.            |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** previously concatenated the raw, unbounded server+symbol name           |
+//| directly into the key -- the review's own worked example                          |
+//| ("ThembaEA_CDM_12345678_Deriv-Demo_Volatility 100 Index_990001__          |
+//| cooldown_until", 76 characters) already exceeds MT5's 63-character              |
+//| global-variable name limit on an ordinary Deriv synthetic, silently                 |
+//| losing cooldown state. Now delegates to KeyEncoding.mqh's                                |
+//| KE_InstanceNamespace (fixed-width hash).**                                                    |
+//+------------------------------------------------------------------+
 string CDM_InstanceNamespace(const string symbol, const long magic)
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_CDM_" + IntegerToString(login) + "_" + server + "_" + symbol + "_" +
-          IntegerToString(magic);
+   return KE_InstanceNamespace("ThembaEA_CDM", symbol, magic);
   }
 
 string CDM_Key(const string symbol, const long magic, const string field)
@@ -69,9 +78,14 @@ double CDM_GetDouble(const string symbol, const long magic, const string field,
    return GlobalVariableGet(key);
   }
 
-void CDM_SetDouble(const string symbol, const long magic, const string field, const double value)
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** the write's own success is now returned (previously ignored by           |
+//| every caller).**                                                                          |
+//+------------------------------------------------------------------+
+bool CDM_SetDouble(const string symbol, const long magic, const string field, const double value)
   {
-   GlobalVariableSet(CDM_Key(symbol, magic, field), value);
+   return KE_SetDoubleChecked(CDM_Key(symbol, magic, field), value);
   }
 
 //+------------------------------------------------------------------+
@@ -82,16 +96,22 @@ void CDM_SetDouble(const string symbol, const long magic, const string field, co
 //| are currently on record. If triggered, sets cooldown_until to 'now' +        |
 //| 'cooldown_minutes'. Call this once per confirmed position-closing deal        |
 //| (see ThembaAdaptiveIntradayEA.mq5's OnTradeTransaction).                        |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** now returns whether every write this call attempted actually           |
+//| persisted, so a caller can at least log a lost cooldown-ledger write             |
+//| (the review's own "assert every generated key/write" ask).**                        |
 //+------------------------------------------------------------------+
-void CDM_RecordClosedTrade(const string symbol, const long magic, const double pnl,
+bool CDM_RecordClosedTrade(const string symbol, const long magic, const double pnl,
                             const datetime now, const int cooldown_minutes)
   {
    int    next_slot = (int)CDM_GetDouble(symbol, magic, "next_slot", 0.0);
    double count      = CDM_GetDouble(symbol, magic, "count", 0.0);
 
-   CDM_SetDouble(symbol, magic, "pnl_" + IntegerToString(next_slot), pnl);
-   CDM_SetDouble(symbol, magic, "next_slot", (double)((next_slot + 1) % 3));
-   CDM_SetDouble(symbol, magic, "count", MathMin(count + 1.0, 3.0));
+   bool all_ok = true;
+   all_ok = CDM_SetDouble(symbol, magic, "pnl_" + IntegerToString(next_slot), pnl) && all_ok;
+   all_ok = CDM_SetDouble(symbol, magic, "next_slot", (double)((next_slot + 1) % 3)) && all_ok;
+   all_ok = CDM_SetDouble(symbol, magic, "count", MathMin(count + 1.0, 3.0)) && all_ok;
 
    if(CDM_GetDouble(symbol, magic, "count", 0.0) >= 3.0)
      {
@@ -100,8 +120,10 @@ void CDM_RecordClosedTrade(const string symbol, const long magic, const double p
       pnls[1] = CDM_GetDouble(symbol, magic, "pnl_1", 0.0);
       pnls[2] = CDM_GetDouble(symbol, magic, "pnl_2", 0.0);
       if(CDM_ShouldTriggerCooldown(pnls))
-         CDM_SetDouble(symbol, magic, "cooldown_until", (double)(now + cooldown_minutes * 60));
+         all_ok = CDM_SetDouble(symbol, magic, "cooldown_until",
+                                 (double)(now + cooldown_minutes * 60)) && all_ok;
      }
+   return all_ok;
   }
 
 //+------------------------------------------------------------------+

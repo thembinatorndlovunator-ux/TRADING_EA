@@ -33,6 +33,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "KeyEncoding.mqh"
+
 // Current schema version implemented by this build of StateManager.
 // Bump this, and extend SM_EnsureAccountSchema()'s migration branch,
 // whenever a new account-wide field is introduced by a later task.
@@ -46,12 +48,21 @@
 //| Namespace: account_login + trade_server, per section 8.           |
 //| Deliberately excludes symbol/magic — this is the account-wide     |
 //| namespace, shared by every instance of this EA on this account.   |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** previously concatenated the raw, unbounded trade-server name              |
+//| (e.g. "Deriv-Demo", or a longer broker server string) directly into the             |
+//| key -- combined with every field name this module appends, some                        |
+//| genuinely exceeded MT5's 63-character global-variable name limit on a                      |
+//| real broker server, silently failing every GlobalVariableSet call past                        |
+//| it. Now delegates to KeyEncoding.mqh's KE_AccountNamespace, which hashes                          |
+//| the unbounded components into a fixed-width 16-character digest instead                              |
+//| of embedding them verbatim -- see that module's own header for why this                                  |
+//| is collision-resistant enough for this project's actual key count.**                                          |
 //+------------------------------------------------------------------+
 string SM_AccountNamespace()
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_AW_" + IntegerToString(login) + "_" + server;
+   return KE_AccountNamespace("ThembaEA_AW");
   }
 
 //+------------------------------------------------------------------+
@@ -80,9 +91,9 @@ void SM_EnsureAccountLockInitialized()
   {
    string lock_key = SM_AccountKey("lock");
    if(!GlobalVariableCheck(lock_key))
-      GlobalVariableSet(lock_key, 0.0); // unlocked sentinel
+      KE_SetDoubleChecked(lock_key, 0.0); // unlocked sentinel
    if(!GlobalVariableCheck(lock_key + "__since"))
-      GlobalVariableSet(lock_key + "__since", 0.0);
+      KE_SetDoubleChecked(lock_key + "__since", 0.0);
   }
 
 //+------------------------------------------------------------------+
@@ -119,7 +130,7 @@ bool SM_AcquireAccountLock(const int timeout_ms = 500)
       if(held_since > 0 && (TimeCurrent() - held_since) > SM_LOCK_STALE_SECONDS)
         {
          // Force-break an abandoned lock, then retry immediately.
-         GlobalVariableSet(lock_key, 0.0);
+         KE_SetDoubleChecked(lock_key, 0.0);
          continue;
         }
 
@@ -137,8 +148,8 @@ bool SM_AcquireAccountLock(const int timeout_ms = 500)
 void SM_ReleaseAccountLock()
   {
    string lock_key = SM_AccountKey("lock");
-   GlobalVariableSet(lock_key, 0.0);
-   GlobalVariableSet(lock_key + "__since", 0.0);
+   KE_SetDoubleChecked(lock_key, 0.0);
+   KE_SetDoubleChecked(lock_key + "__since", 0.0);
   }
 
 //+------------------------------------------------------------------+
@@ -149,7 +160,7 @@ void SM_ReleaseAccountLock()
 //+------------------------------------------------------------------+
 void SM_StampAccountLockHeld()
   {
-   GlobalVariableSet(SM_AccountKey("lock") + "__since", (double)TimeCurrent());
+   KE_SetDoubleChecked(SM_AccountKey("lock") + "__since", (double)TimeCurrent());
   }
 
 //+------------------------------------------------------------------+
@@ -163,10 +174,14 @@ bool SM_SetAccountDouble(const string field, const double value,
       return false;
    SM_StampAccountLockHeld();
 
-   GlobalVariableSet(SM_AccountKey(field), value);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
+   // the write's own success is now propagated -- this previously always
+   // returned true once the lock was acquired, ignoring whether
+   // GlobalVariableSet itself actually succeeded.**
+   bool write_ok = KE_SetDoubleChecked(SM_AccountKey(field), value);
 
    SM_ReleaseAccountLock();
-   return true;
+   return write_ok;
   }
 
 //+------------------------------------------------------------------+
@@ -211,11 +226,25 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
       return false;
    SM_StampAccountLockHeld();
 
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
+   // each write's own success is now checked and ANDed into the overall
+   // result -- previously this always returned true once the lock was
+   // acquired, regardless of whether any individual GlobalVariableSet call
+   // actually succeeded.**
+   bool all_ok = true;
    for(int i = 0; i < n; i++)
-      GlobalVariableSet(SM_AccountKey(fields[i]), values[i]);
+      all_ok = KE_SetDoubleChecked(SM_AccountKey(fields[i]), values[i]) && all_ok;
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
+   // "No code calls GlobalVariablesFlush... sudden failure can lose
+   // unflushed terminal globals" -- these are the daily/weekly loss-cap
+   // baseline writes section 8 explicitly requires to survive a restart, so
+   // they are forced to disk immediately rather than left to MT5's own
+   // periodic flush cadence.**
+   GlobalVariablesFlush();
 
    SM_ReleaseAccountLock();
-   return true;
+   return all_ok;
   }
 
 //+------------------------------------------------------------------+
@@ -244,11 +273,16 @@ bool SM_SetAccountDoubleIfGreater(const string field, const double candidate,
    string key    = SM_AccountKey(field);
    bool   exists = GlobalVariableCheck(key);
    double current = exists ? GlobalVariableGet(key) : 0.0;
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
+   // a write that was actually attempted now has its own success checked
+   // and returned -- previously this always returned true once the lock
+   // was acquired regardless of whether GlobalVariableSet succeeded.**
+   bool write_ok = true;
    if(!exists || candidate > current)
-      GlobalVariableSet(key, candidate);
+      write_ok = KE_SetDoubleChecked(key, candidate);
 
    SM_ReleaseAccountLock();
-   return true;
+   return write_ok;
   }
 
 //+------------------------------------------------------------------+
@@ -322,7 +356,7 @@ void SM_EnsureAccountSchema(const int lock_timeout_ms = 500)
    if(stored == 0.0)
      {
       // No pre-existing fields to preserve; just stamp the version.
-      GlobalVariableSet(SM_AccountKey("schema_version"), SM_SCHEMA_VERSION);
+      KE_SetDoubleChecked(SM_AccountKey("schema_version"), SM_SCHEMA_VERSION);
      }
    // else if(stored == 1.0 && SM_SCHEMA_VERSION == 2.0) { ... additive
    //    migration for a future schema bump goes here ... }

@@ -28,14 +28,16 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include "../Core/KeyEncoding.mqh"
 #include "../Execution/IntradayCloseManager.mqh"
 
+//+------------------------------------------------------------------+
+//| Bounded, collision-resistant key -- see KeyEncoding.mqh's own header      |
+//| (Codex review finding, eighth round, P0 finding 6).                              |
+//+------------------------------------------------------------------+
 string DWB_Key(const string symbol, const long magic)
   {
-   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string server = AccountInfoString(ACCOUNT_SERVER);
-   return "ThembaEA_DWB_" + IntegerToString(login) + "_" + server + "_" +
-          symbol + "_" + IntegerToString(magic) + "__pending";
+   return KE_InstanceNamespace("ThembaEA_DWB", symbol, magic) + "__pending";
   }
 
 bool DWB_IsClosurePending(const string symbol, const long magic)
@@ -46,9 +48,20 @@ bool DWB_IsClosurePending(const string symbol, const long magic)
    return GlobalVariableGet(key) != 0.0;
   }
 
-void DWB_SetClosurePending(const string symbol, const long magic, const bool pending)
+//+------------------------------------------------------------------+
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 6):** the write's own success is now checked; arming the record          |
+//| (pending=true) is flushed immediately -- this is the exact persisted            |
+//| flag section 8 requires to be durable BEFORE the close order submits,               |
+//| so it must survive a crash occurring the instant after this call                       |
+//| returns, not wait for MT5's own periodic flush cadence.**                                  |
+//+------------------------------------------------------------------+
+bool DWB_SetClosurePending(const string symbol, const long magic, const bool pending)
   {
-   GlobalVariableSet(DWB_Key(symbol, magic), pending ? 1.0 : 0.0);
+   bool ok = KE_SetDoubleChecked(DWB_Key(symbol, magic), pending ? 1.0 : 0.0);
+   if(pending)
+      GlobalVariablesFlush();
+   return ok;
   }
 
 //+------------------------------------------------------------------+
@@ -67,7 +80,15 @@ void DWB_SetClosurePending(const string symbol, const long magic, const bool pen
 bool DWB_AttemptClosure(const string symbol, const long magic, string &reasons[])
   {
    ArrayFree(reasons);
-   DWB_SetClosurePending(symbol, magic, true); // persisted BEFORE the close order submits
+   // Persisted BEFORE the close order submits, per section 8 -- proceeds to
+   // close/cancel regardless of this write's own outcome (closing real
+   // exposure now takes priority over the restart-recovery record of doing
+   // so), but a failure is still logged since it means a crash during this
+   // exact closure attempt would not be resumed correctly on restart.
+   if(!DWB_SetClosurePending(symbol, magic, true))
+      PrintFormat("ThembaEA: failed to persist closure_pending=true for '%s' magic %I64d before "
+                  "closing -- proceeding with the close anyway, but a crash during it would not "
+                  "be resumed correctly on restart.", symbol, magic);
 
    string position_reasons[];
    string order_reasons[];
