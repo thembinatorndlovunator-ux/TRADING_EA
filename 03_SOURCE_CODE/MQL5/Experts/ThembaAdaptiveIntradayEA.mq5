@@ -105,8 +105,17 @@ input int    InpNewsMinImportance          = 3;      // high-impact only, sectio
 input int    InpNewsBlackoutBeforeMinutes  = 15;
 input int    InpNewsBlackoutAfterMinutes   = 15;
 input int    InpNewsMaxExtensionMinutes    = 60;
-input double InpMaxSpreadAtrMultiple       = 3.0;    // shared: untradeable-spread gate AND
+// **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 2):
+// TASK-002_PHASE2_SPECIFICATION.md's own UNTRADEABLE_SPREAD_OR_LIQUIDITY
+// predicate default is 0.15, bounded [0.02, 1.0] -- this shipped at 3.0
+// (twenty times the approved default, and beyond the allowed upper bound
+// on its own), permitting a spread/ATR ratio far wider than the spec
+// allows before the gate ever triggers. Corrected the default; OnInit now
+// also rejects an out-of-range value at startup instead of silently
+// running with one (see below).**
+input double InpMaxSpreadAtrMultiple       = 0.15;   // shared: untradeable-spread gate AND
                                                        // news post-event spread-normalization check
+                                                       // (bounded [0.02, 1.0], enforced at OnInit)
 input double InpMinLiquidityTicksPerBar    = 5.0;
 input int    InpLiquidityAvgBars           = 20;
 input int    InpHysteresisRequiredBars     = 2;
@@ -189,6 +198,19 @@ int OnInit()
                   "InpRiskCapPercent=%.4f. Both must be positive and "
                   "InpRiskPercentTarget must not exceed InpRiskCapPercent. Refusing to run.",
                   InpRiskPercentTarget, InpRiskCapPercent);
+      return INIT_FAILED;
+     }
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 2):
+   // TASK-002_PHASE2_SPECIFICATION.md bounds InpMaxSpreadATRMultiple to
+   // [0.02, 1.0] -- an out-of-range operator value (or the previous default
+   // of 3.0, itself out of range) must be refused at startup, not silently
+   // widen the untradeable-spread gate and the news post-event spread-
+   // normalization check it shares.**
+   if(InpMaxSpreadAtrMultiple < 0.02 || InpMaxSpreadAtrMultiple > 1.0)
+     {
+      PrintFormat("ThembaEA: invalid InpMaxSpreadAtrMultiple=%.4f -- must be in [0.02, 1.0] per "
+                  "TASK-002_PHASE2_SPECIFICATION.md. Refusing to run.", InpMaxSpreadAtrMultiple);
       return INIT_FAILED;
      }
 
