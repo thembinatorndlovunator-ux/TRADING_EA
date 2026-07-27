@@ -119,9 +119,40 @@ void OnStart()
    Check("a subsequent win does not extend the already-set cooldown_until",
          cooldown_until_after == cooldown_until);
 
+   //--- 10. **Codex review finding, eighth round, P1 finding 13**: per------
+   //--- position P/L accumulator -- exercises the exact scenario the -------
+   //--- finding reported: three PARTIAL closing deals from ONE position -----
+   //--- must accumulate into ONE figure, not be recorded as three separate ---
+   //--- closed trades. --------------------------------------------------------
+   ulong fake_position_id = 990099003005001; // unmistakably-test-only
+   CDM_ClearAccumulatedPositionPnl(fake_position_id);
+   Check("fresh position accumulator starts at 0.0",
+         CDM_GetAccumulatedPositionPnl(fake_position_id) == 0.0);
+
+   Check("first partial closing deal accumulates",
+         CDM_AccumulatePositionPnl(fake_position_id, -8.0));
+   Check("accumulator reflects the first partial deal",
+         CDM_GetAccumulatedPositionPnl(fake_position_id) == -8.0);
+
+   Check("second partial closing deal accumulates on top of the first",
+         CDM_AccumulatePositionPnl(fake_position_id, -3.5));
+   Check("accumulator reflects BOTH partial deals summed",
+         MathAbs(CDM_GetAccumulatedPositionPnl(fake_position_id) - (-11.5)) < 0.0000001);
+
+   Check("third (final) partial closing deal accumulates too",
+         CDM_AccumulatePositionPnl(fake_position_id, -2.0));
+   double final_total = CDM_GetAccumulatedPositionPnl(fake_position_id);
+   Check("accumulator reflects all THREE partial deals summed as ONE figure",
+         MathAbs(final_total - (-13.5)) < 0.0000001);
+
+   CDM_ClearAccumulatedPositionPnl(fake_position_id);
+   Check("accumulator resets to 0.0 after clearing (position confirmed closed and recorded)",
+         CDM_GetAccumulatedPositionPnl(fake_position_id) == 0.0);
+
    //--- Cleanup: leave no residue ------------------------------------------
    CDM_ResetInstance(InpTestSymbol, InpTestMagic);
    CDM_ResetInstance(InpTestSymbol, other_magic);
+   CDM_ClearAccumulatedPositionPnl(fake_position_id);
    Check("instance is clear after cleanup",
          CDM_IsInCooldown(InpTestSymbol, InpTestMagic, now, cooldown_until) == false);
 

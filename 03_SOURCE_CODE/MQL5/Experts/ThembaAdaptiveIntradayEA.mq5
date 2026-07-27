@@ -142,17 +142,20 @@ input double InpTimeStopMinR               = 0.3;
 input double InpProfitLockTriggerPercent   = 70.0;
 input double InpProfitLockKeepPercent      = 50.0;
 input double InpProfitLockMinKeepPercent   = 30.0;
-input bool   InpTimeStopUsesScalpMode      = true; // TASK-041: stand-in policy applied to EVERY
-                                                     // position this EA manages -- which time-stop
+input bool   InpTimeStopUsesScalpMode      = true; // TASK-041, **fallback only as of the eighth-
+                                                     // round P1 finding 13 fix**: which time-stop
                                                      // duration ceiling (InpScalpMaxMinutes vs
-                                                     // remaining-session-time) applies. Until
-                                                     // intraday_mode (TASK-040) is captured
-                                                     // per-position at entry time and threaded
-                                                     // through to exit management end-to-end (a
-                                                     // further, explicitly named follow-up), the
-                                                     // operator sets this once per deployment,
-                                                     // matching how InpNewsProviderSource stood in
-                                                     // for market_family before TASK-040 shipped it.
+                                                     // remaining-session-time) applies. Each
+                                                     // position now persists its OWN confirmed
+                                                     // intraday_mode at entry time
+                                                     // (PositionStateTracker.mqh's own
+                                                     // entry_was_scalp_mode field, captured in
+                                                     // AttemptOrderSubmission) and ManageOpenPositions
+                                                     // reads THAT per-position value -- this global
+                                                     // input is only consulted for a position that
+                                                     // predates this fix (opened before entry_mode_
+                                                     // captured existed) or was opened by a mechanism
+                                                     // outside AttemptOrderSubmission.
 
 input bool   InpEnableOrderSubmission     = false; // MASTER SAFETY TOGGLE — see file header
 // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
@@ -487,6 +490,43 @@ bool PositionStillOpenById(const ulong position_id)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding    |
+//| 13):** sums the entry-side commission/fee for 'position_id' -- the           |
+//| cooldown P/L figure previously only summed CLOSING-deal costs               |
+//| (DEAL_PROFIT/SWAP/COMMISSION/FEE), omitting whatever commission/fee               |
+//| the OPENING deal(s) themselves charged. DEAL_PROFIT/DEAL_SWAP are                    |
+//| deliberately excluded here (an opening deal has neither a realized              |
+//| profit nor an accrued swap yet) -- only DEAL_COMMISSION/DEAL_FEE, the                 |
+//| genuine entry-side transaction costs, are allocated. Bounded to a               |
+//| trailing 2-day HistorySelect window (this project's own positions are             |
+//| always closed same-day by the mandatory intraday boundary, so 2 days is                |
+//| comfortably more than any real position's lifetime, matching                              |
+//| DailyWeeklyLimits.mqh's own bounded-window convention elsewhere).                             |
+//+------------------------------------------------------------------+
+double GetPositionEntryCosts(const ulong position_id)
+  {
+   datetime from = TimeTradeServer() - 2 * 86400;
+   datetime to   = TimeTradeServer() + 60;
+   if(!HistorySelect(from, to))
+      return 0.0;
+
+   double costs = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID) != position_id)
+         continue;
+      if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_IN)
+         continue;
+      costs += HistoryDealGetDouble(ticket, DEAL_COMMISSION) + HistoryDealGetDouble(ticket, DEAL_FEE);
+     }
+   return costs;
+  }
+
+//+------------------------------------------------------------------+
 //| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
 //| 5):** shared durable-intent reconciliation, called once from OnInit          |
 //| (restart) and again every tick from OnTick while an intent remains              |
@@ -623,21 +663,33 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // understated its own true net loss/gain, which could change
             // whether CDM_ShouldTriggerCooldown's own "all 3 losses AND
             // sum negative" test fires.**
-            double pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
-                         HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
-                         HistoryDealGetDouble(trans.deal, DEAL_COMMISSION) +
-                         HistoryDealGetDouble(trans.deal, DEAL_FEE);
-            // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0
-            // finding 6): CDM_RecordClosedTrade's own write success is now
-            // checked and logged on failure -- a lost write here could
-            // silently drop this closed trade from the 3-loss cooldown
-            // ledger, never blocking new entries after a genuine losing
-            // streak.**
-            if(!CDM_RecordClosedTrade(g_symbol, InpMagicNumber, pnl, TimeCurrent(),
-                                       InpCooldownMinutes))
-               PrintFormat("ThembaEA: CooldownManager failed to persist a closed-trade record "
-                           "for '%s' magic %I64d -- the 3-loss cooldown ledger may be missing "
-                           "this trade.", g_symbol, InpMagicNumber);
+            double closing_deal_pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
+                                       HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
+                                       HistoryDealGetDouble(trans.deal, DEAL_COMMISSION) +
+                                       HistoryDealGetDouble(trans.deal, DEAL_FEE);
+            ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+
+            // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1
+            // finding 13): every OUT/OUT_BY/INOUT deal was previously
+            // recorded as its OWN separate closed trade for the 3-loss
+            // cooldown, even when the position remained open afterward (a
+            // broker-side partial close of this EA's own "close the full
+            // position" request). Three partial losing fills from ONE
+            // position could therefore count as three consecutive losses.
+            // Each closing deal's own P/L is now ACCUMULATED per position_id
+            // (CDM_AccumulatePositionPnl) and only recorded as ONE closed
+            // trade once the position is CONFIRMED fully gone below --
+            // matching the exact same "only clear/finalize once confirmed"
+            // discipline already used for PositionStateTracker/
+            // NoStopGraceManager's own per-position state.**
+            if(closed_position_id != 0)
+              {
+               if(!CDM_AccumulatePositionPnl(closed_position_id, closing_deal_pnl))
+                  PrintFormat("ThembaEA: CooldownManager failed to accumulate a partial "
+                              "closing deal's P/L for position_id=%I64u -- the eventual "
+                              "cooldown P/L figure for this position may be understated.",
+                              closed_position_id);
+              }
 
             // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1
             // finding 14): a closing deal does not always mean the
@@ -651,16 +703,54 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // flags) while a remainder is still open would silently
             // discard that history for the position's own remaining
             // life. Only clear it once the position is CONFIRMED gone.**
-            ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
             if(closed_position_id != 0 && !PositionStillOpenById(closed_position_id))
               {
+               // **Added, 2026-07-22 (Codex review finding, eighth round, P1
+               // finding 13): the accumulated per-position P/L (every
+               // partial closing deal summed) PLUS this position's own
+               // entry-side commission/fee (previously omitted entirely --
+               // the review's own "amount includes close-side costs only,
+               // not allocated entry-side costs" finding) is what actually
+               // gets recorded as ONE closed trade for the cooldown, only
+               // now that the position is confirmed fully gone.**
+               double total_pnl = CDM_GetAccumulatedPositionPnl(closed_position_id) +
+                                   GetPositionEntryCosts(closed_position_id);
+               if(!CDM_RecordClosedTrade(g_symbol, InpMagicNumber, total_pnl, TimeCurrent(),
+                                          InpCooldownMinutes))
+                  PrintFormat("ThembaEA: CooldownManager failed to persist a closed-trade "
+                              "record for '%s' magic %I64d -- the 3-loss cooldown ledger may "
+                              "be missing this trade.", g_symbol, InpMagicNumber);
+               CDM_ClearAccumulatedPositionPnl(closed_position_id);
+
                PST_Clear(closed_position_id);
                // **Added, 2026-07-22 (Codex review finding, eighth round, P0
                // finding 3): stop tracking a confirmed-closed position's own
                // no-SL grace-period timer too -- see NoStopGraceManager.mqh's
                // own "clear once confirmed gone" contract.**
                NSG_Clear(closed_position_id);
+               // **Added, 2026-07-22 (Codex review finding, eighth round, P1
+               // finding 13): also clears the close-in-flight mark -- see
+               // CloseInFlightTracker.mqh's own header.**
+               CIFT_ClearCloseInFlight(closed_position_id);
               }
+
+            // **Stated, 2026-07-22 (Codex review finding, eighth round, P1
+            // finding 13): DEAL_ENTRY_INOUT is a "reversal" -- one deal that
+            // both closes the existing position AND opens a NEW opposite-
+            // direction position under a different position_id. This EA now
+            // REQUIRES a hedging-mode account (round 8's own P0 finding 1) --
+            // and a reversal is structurally a NETTING-account concept (a
+            // hedging account cannot net an opposing trade into an existing
+            // position; an opposing order simply opens a SEPARATE coexisting
+            // position instead). DEAL_ENTRY_INOUT should therefore be
+            // unreachable in practice under this EA's own enforced account
+            // mode; if a broker nonetheless ever reports one, the closed leg
+            // above is still handled correctly (this position's own exposure
+            // did end here), and the new leg needs no special initialization
+            // -- PositionStateTracker.mqh's own PST_Load already defaults
+            // every field safely (peak_r=0, nothing armed) for any
+            // position_id it has never seen written, which is the exact
+            // correct starting state for a genuinely new position.**
            }
          return;
         }
@@ -1492,7 +1582,26 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       return;
      }
    if(open_result.position_id != 0)
+     {
       IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
+
+      // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 13): captures THIS position's own confirmed intraday_mode at the
+      // exact moment it was opened, persisted via PositionStateTracker.mqh
+      // -- ManageOpenPositions' own exit wrapper now reads this per-
+      // position value instead of applying one CURRENT, global
+      // InpTimeStopUsesScalpMode input to every position's time-stop for
+      // its whole lifetime (mode can and does change between bars after a
+      // position opens). decision.intraday_mode is already the real,
+      // confirmed value EvaluateAndJournal computed for this exact bar.**
+      SPositionExitState entry_state = PST_Load(open_result.position_id);
+      entry_state.entry_mode_captured = true;
+      entry_state.entry_was_scalp_mode = (decision.intraday_mode == "SCALP");
+      if(!PST_Save(open_result.position_id, entry_state))
+         PrintFormat("ThembaEA: failed to persist entry-time intraday_mode for "
+                     "position_id=%I64u -- its own time-stop will fall back to the global "
+                     "InpTimeStopUsesScalpMode input instead.", open_result.position_id);
+     }
 
    // Success — reflect the ACTUAL submitted stop back into the journal
    // record (a floor widening in step 4 may have moved it from the
@@ -1680,10 +1789,23 @@ void ManageOpenPositions(const bool is_new_completed_bar)
       if(state.initial_stop_price == 0.0)
          state.initial_stop_price = current_stop; // seed once, before any trailing occurs
 
+      // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 13): uses THIS position's own persisted entry-time intraday_mode
+      // (captured once, in AttemptOrderSubmission, at the moment it was
+      // opened) instead of applying one CURRENT, global
+      // InpTimeStopUsesScalpMode input uniformly to every position for its
+      // whole lifetime. Falls back to the global input only when no
+      // entry-time capture exists for this position (e.g. one opened
+      // before this fix shipped, or by a mechanism outside
+      // AttemptOrderSubmission), matching the input's own original
+      // "operator sets this once per deployment" stand-in role.**
+      bool uses_scalp_mode = state.entry_mode_captured ? state.entry_was_scalp_mode
+                                                          : InpTimeStopUsesScalpMode;
+
       SExitDecision decision = EO_EvaluatePosition(
          is_long, entry_price, state.initial_stop_price, current_stop, current_price, target_price,
          atr_current, highs, lows, InpSwingDepth, InpMaxLookback, is_new_completed_bar,
-         InpTimeStopUsesScalpMode, session_remaining_ratio, session_ratio_known, elapsed_minutes,
+         uses_scalp_mode, session_remaining_ratio, session_ratio_known, elapsed_minutes,
          cfg, state);
 
       // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding

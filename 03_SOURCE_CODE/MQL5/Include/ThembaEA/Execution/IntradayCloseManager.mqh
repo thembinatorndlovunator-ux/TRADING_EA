@@ -22,6 +22,7 @@
 #include <Trade\Trade.mqh>
 #include "../Core/KeyEncoding.mqh"
 #include "../Market/SessionManager.mqh"
+#include "CloseInFlightTracker.mqh"
 
 //--- In-memory (not persisted) once-per-day guard: suppresses redundant
 //--- close attempts on every tick after a FULLY successful close, but
@@ -79,8 +80,29 @@ bool ICM_CloseAllOwnedPositions(const long magic, string &reasons[])
          continue; // not this EA's own position — never touched
 
       string symbol = PositionGetString(POSITION_SYMBOL);
+
+      // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 13): a close already accepted-for-processing (PLACED) for this
+      // EXACT position on a prior tick is not resubmitted -- MetaQuotes
+      // documents that OnTradeTransaction's arrival order is not
+      // guaranteed, so resubmitting before the first request's terminal
+      // outcome arrives can produce close-order-exists/rate-limit/volume
+      // errors at the broker. Still reported as not-yet-closed (all_ok
+      // stays false) so this bar's caller keeps retrying overall -- just
+      // without re-submitting THIS specific position again.**
+      ulong position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(CIFT_IsCloseInFlight(position_id))
+        {
+         ICM_AppendReason(reasons, StringFormat(
+            "intraday_close_already_in_flight_ticket_%I64u_symbol_%s", ticket, symbol));
+         all_ok = false;
+         continue;
+        }
+
       bool ok = trade.PositionClose(ticket);
       uint retcode = trade.ResultRetcode();
+      if(retcode == TRADE_RETCODE_PLACED)
+         CIFT_MarkCloseInFlight(position_id);
 
       // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding
       // 8): TRADE_RETCODE_PLACED is "accepted for processing", not a

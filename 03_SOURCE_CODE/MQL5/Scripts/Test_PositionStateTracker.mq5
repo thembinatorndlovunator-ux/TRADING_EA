@@ -45,6 +45,9 @@ void OnStart()
    Check("fresh state: profit_lock_armed defaults to false", fresh.profit_lock_armed == false);
    Check("fresh state: last_swing_price defaults to 0.0", fresh.last_swing_price == 0.0);
    Check("fresh state: initial_stop_price defaults to 0.0", fresh.initial_stop_price == 0.0);
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding 13)**
+   Check("fresh state: entry_mode_captured defaults to false", fresh.entry_mode_captured == false);
+   Check("fresh state: entry_was_scalp_mode defaults to false", fresh.entry_was_scalp_mode == false);
 
    //--- 2. Round-trip save/load -------------------------------------------
    SPositionExitState s;
@@ -54,6 +57,8 @@ void OnStart()
    s.profit_lock_armed = false;
    s.last_swing_price = 1.23456;
    s.initial_stop_price = 1.20000;
+   s.entry_mode_captured = true;
+   s.entry_was_scalp_mode = true;
    PST_Save(fake_position_id, s);
 
    SPositionExitState loaded = PST_Load(fake_position_id);
@@ -63,6 +68,8 @@ void OnStart()
    Check("round-trip: profit_lock_armed", loaded.profit_lock_armed == false);
    Check("round-trip: last_swing_price", MathAbs(loaded.last_swing_price - 1.23456) < 0.000001);
    Check("round-trip: initial_stop_price", MathAbs(loaded.initial_stop_price - 1.20000) < 0.000001);
+   Check("round-trip: entry_mode_captured", loaded.entry_mode_captured == true);
+   Check("round-trip: entry_was_scalp_mode", loaded.entry_was_scalp_mode == true);
 
    //--- 3. A different position_id is a completely separate namespace -----
    ulong other_position_id = fake_position_id + 1;
@@ -79,6 +86,8 @@ void OnStart()
    Check("cleared state: profit_lock_armed reset to false", cleared.profit_lock_armed == false);
    Check("cleared state: last_swing_price reset to 0.0", cleared.last_swing_price == 0.0);
    Check("cleared state: initial_stop_price reset to 0.0", cleared.initial_stop_price == 0.0);
+   Check("cleared state: entry_mode_captured reset to false", cleared.entry_mode_captured == false);
+   Check("cleared state: entry_was_scalp_mode reset to false", cleared.entry_was_scalp_mode == false);
 
    //--- Cleanup -------------------------------------------------------------
    PST_Clear(fake_position_id);

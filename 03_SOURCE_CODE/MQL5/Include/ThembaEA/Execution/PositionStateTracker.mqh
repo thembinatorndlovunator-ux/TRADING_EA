@@ -39,6 +39,17 @@ struct SPositionExitState
                                   // R must stay pegged to this ORIGINAL
                                   // risk distance, never a shrinking
                                   // already-trailed one.
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 13):** this position's own intraday_mode AT ENTRY TIME (SCALP vs.
+   // DAY_TRADE), captured ONCE the same way initial_stop_price is --
+   // previously the exit wrapper applied one CURRENT, global
+   // InpTimeStopUsesScalpMode input to every position's time-stop
+   // regardless of which mode was actually confirmed when that specific
+   // position was opened (or how long ago -- mode can and does change
+   // between bars). entry_mode_captured distinguishes "never captured yet"
+   // from "captured false" (a plain bool has no such sentinel of its own).
+   bool     entry_mode_captured;
+   bool     entry_was_scalp_mode;
   };
 
 //+------------------------------------------------------------------+
@@ -94,6 +105,8 @@ SPositionExitState PST_Load(const ulong position_id)
    s.profit_lock_armed = PST_GetDouble(position_id, "profit_lock_armed", 0.0) != 0.0;
    s.last_swing_price = PST_GetDouble(position_id, "last_swing_price", 0.0);
    s.initial_stop_price = PST_GetDouble(position_id, "initial_stop_price", 0.0);
+   s.entry_mode_captured = PST_GetDouble(position_id, "entry_mode_captured", 0.0) != 0.0;
+   s.entry_was_scalp_mode = PST_GetDouble(position_id, "entry_was_scalp_mode", 0.0) != 0.0;
    return s;
   }
 
@@ -119,6 +132,10 @@ bool PST_Save(const ulong position_id, const SPositionExitState &state)
                            state.profit_lock_armed ? 1.0 : 0.0) && all_ok;
    all_ok = PST_SetDouble(position_id, "last_swing_price", state.last_swing_price) && all_ok;
    all_ok = PST_SetDouble(position_id, "initial_stop_price", state.initial_stop_price) && all_ok;
+   all_ok = PST_SetDouble(position_id, "entry_mode_captured",
+                           state.entry_mode_captured ? 1.0 : 0.0) && all_ok;
+   all_ok = PST_SetDouble(position_id, "entry_was_scalp_mode",
+                           state.entry_was_scalp_mode ? 1.0 : 0.0) && all_ok;
    return all_ok;
   }
 
@@ -136,4 +153,6 @@ void PST_Clear(const ulong position_id)
    PST_SetDouble(position_id, "profit_lock_armed", 0.0);
    PST_SetDouble(position_id, "last_swing_price", 0.0);
    PST_SetDouble(position_id, "initial_stop_price", 0.0);
+   PST_SetDouble(position_id, "entry_mode_captured", 0.0);
+   PST_SetDouble(position_id, "entry_was_scalp_mode", 0.0);
   }

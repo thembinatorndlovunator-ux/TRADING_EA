@@ -26,6 +26,7 @@
 #include <Trade\Trade.mqh>
 #include "../Market/SymbolProfile.mqh"
 #include "../Risk/RiskManager.mqh"
+#include "CloseInFlightTracker.mqh"
 
 //+------------------------------------------------------------------+
 //| Position-sizing result: volume plus enough detail for a caller to   |
@@ -356,10 +357,26 @@ bool OM_ClosePosition(const ulong position_ticket, const long magic, string &rej
       return false;
      }
 
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 13): a close already accepted-for-processing (PLACED) for this EXACT
+   // position on a prior call is not resubmitted -- see
+   // CloseInFlightTracker.mqh's own header for why (MetaQuotes documents
+   // OnTradeTransaction's arrival order is not guaranteed, so resubmitting
+   // before the first request's terminal outcome arrives can produce
+   // close-order-exists/rate-limit/volume errors at the broker).**
+   ulong position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+   if(CIFT_IsCloseInFlight(position_id))
+     {
+      rejection_reason = "position_close_already_in_flight";
+      return false;
+     }
+
    CTrade trade;
    trade.SetExpertMagicNumber(magic);
    bool ok = trade.PositionClose(position_ticket);
    uint retcode = trade.ResultRetcode();
+   if(retcode == TRADE_RETCODE_PLACED)
+      CIFT_MarkCloseInFlight(position_id);
 
    // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
    // TRADE_RETCODE_PLACED means "accepted for processing", not "closed" --

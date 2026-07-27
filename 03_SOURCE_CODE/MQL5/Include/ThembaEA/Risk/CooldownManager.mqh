@@ -89,6 +89,53 @@ bool CDM_SetDouble(const string symbol, const long magic, const string field, co
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding    |
+//| 13):** per-POSITION (not symbol+magic) accumulator for a single             |
+//| position's own P/L across however many separate CLOSING deals it takes         |
+//| to fully close it -- a broker-side partial close of this EA's own "close          |
+//| the full position" request leaves a smaller remainder open under the SAME             |
+//| position_id, and the caller (OnTradeTransaction) must accumulate each                     |
+//| partial closing deal's own P/L here rather than recording each one as a                      |
+//| SEPARATE closed trade for the 3-loss cooldown -- three partial losing                            |
+//| fills from ONE position must count as one closed trade, not three.                                  |
+//+------------------------------------------------------------------+
+string CDM_PositionPnlKey(const ulong position_id)
+  {
+   return KE_PositionNamespace("ThembaEA_CDM_POS", position_id) + "__cumulative_pnl";
+  }
+
+double CDM_GetAccumulatedPositionPnl(const ulong position_id)
+  {
+   string key = CDM_PositionPnlKey(position_id);
+   if(!GlobalVariableCheck(key))
+      return 0.0;
+   return GlobalVariableGet(key);
+  }
+
+//+------------------------------------------------------------------+
+//| Adds 'delta_pnl' (one closing deal's own P/L) to position_id's running    |
+//| total. Call on EVERY closing deal for this position, whether or not it        |
+//| is the one that finally leaves the position fully closed.                        |
+//+------------------------------------------------------------------+
+bool CDM_AccumulatePositionPnl(const ulong position_id, const double delta_pnl)
+  {
+   double total = CDM_GetAccumulatedPositionPnl(position_id) + delta_pnl;
+   return KE_SetDoubleChecked(CDM_PositionPnlKey(position_id), total);
+  }
+
+//+------------------------------------------------------------------+
+//| Clears the accumulator -- call once the position is CONFIRMED gone AND    |
+//| its accumulated total has already been recorded via                            |
+//| CDM_RecordClosedTrade, so a later, unrelated position that happens to             |
+//| reuse this same position_id value (MT5 identifiers are not infinite)                  |
+//| never inherits a stale running total.                                                    |
+//+------------------------------------------------------------------+
+void CDM_ClearAccumulatedPositionPnl(const ulong position_id)
+  {
+   KE_SetDoubleChecked(CDM_PositionPnlKey(position_id), 0.0);
+  }
+
+//+------------------------------------------------------------------+
 //| Records one CLOSED trade's $ P/L (profit + swap + commission — the    |
 //| caller's responsibility to sum those, this function just stores the      |
 //| final net figure) into the 3-slot ring buffer for 'symbol'+'magic',        |
