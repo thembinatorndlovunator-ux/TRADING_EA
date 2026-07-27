@@ -92,11 +92,27 @@ int MTC_FetchEvents(const string currency_code, const int min_importance,
    datetime now_server = TimeTradeServer();
 
    int count = 0;
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding
+   // 7): tracks every CalendarEventById definition-lookup failure. The
+   // previous behavior silently skipped each failed value, so if EVERY
+   // value's lookup failed, 'count' stayed 0 and this function returned 0
+   // ("no events") indistinguishably from a genuine "nothing scheduled"
+   // result -- the caller could not tell "verified no news" from "the
+   // calendar provider is broken." A single failure is enough to fail this
+   // whole fetch closed (see the check after the loop below) -- for a
+   // mandatory macro-news safety gate, "a partial set of failed
+   // definitions can also silently omit the very release that should
+   // block trading" (the review's own words) is not an acceptable residual
+   // risk to leave unaddressed.**
+   int failed_lookups = 0;
    for(int i = 0; i < total; i++)
      {
       MqlCalendarEvent ev;
       if(!CalendarEventById(values[i].event_id, ev))
+        {
+         failed_lookups++;
          continue; // event definition unavailable — skip rather than guess
+        }
 
       if((int)ev.importance < min_importance)
          continue;
@@ -142,6 +158,16 @@ int MTC_FetchEvents(const string currency_code, const int min_importance,
                                                           : NEWS_STATUS_SCHEDULED;
       count++;
      }
+
+   if(failed_lookups > 0)
+     {
+      PrintFormat("MT5CalendarProvider: %d of %d calendar value(s) had an unresolvable "
+                  "CalendarEventById definition -- treating this fetch as a provider failure "
+                  "(fail-closed), not a partial result, since a missed definition could be "
+                  "exactly the release that should have blocked trading.", failed_lookups, total);
+      return -1;
+     }
+
    return count;
   }
 

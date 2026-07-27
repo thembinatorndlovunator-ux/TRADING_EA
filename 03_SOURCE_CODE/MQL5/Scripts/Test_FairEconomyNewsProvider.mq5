@@ -141,6 +141,41 @@ void OnStart()
    Check("a real, well-formed feed sample looks like a JSON array",
          FEP_LooksLikeJsonArray(sample) == true);
 
+   //--- 8b. **Codex review finding, eighth round, P0 finding 7**: -----------
+   //--- FEP_LooksLikeJsonArray's own shape check must reject "[garbage]" -----
+   //--- (bracketed but not object-shaped content) even though its outermost ---
+   //--- '[' / ']' pair alone previously passed the seventh-round guard. -------
+   Check("'[garbage]' (bracketed, non-object content) does NOT look like a JSON array",
+         FEP_LooksLikeJsonArray("[garbage]") == false);
+   Check("'[{}]' (a single empty object) DOES look like a JSON array (the object-count-vs-"
+         "parsed-count check in FEP_FetchLive, not this shape check, is what rejects it)",
+         FEP_LooksLikeJsonArray("[{}]") == true);
+
+   //--- 8c. **Codex review finding, eighth round, P0 finding 7**: the -------
+   //--- raw-object-count-vs-parsed-count mismatch FEP_FetchLive now checks ---
+   //--- for -- demonstrated directly against the two underlying pure            --
+   //--- functions it composes, since FEP_FetchLive itself requires a live -------
+   //--- network round-trip (see test 9 below). ------------------------------------
+   string empty_object_array = "[{}]";
+   string objs_a[];
+   int raw_count_a = FEP_SplitObjects(empty_object_array, objs_a);
+   SNewsEvent parsed_a[];
+   int parsed_count_a = FEP_ParseFeedJson(empty_object_array, parsed_a);
+   Check("'[{}]' contains exactly 1 raw object", raw_count_a == 1);
+   Check("'[{}]' parses to 0 usable events (no 'date' field) -- exactly the "
+         "raw>0-but-parsed==0 mismatch FEP_FetchLive now fails closed on",
+         parsed_count_a == 0);
+
+   string schema_drift_array =
+      "[{\"foo\":\"bar\"},{\"foo\":\"baz\"}]"; // objects present, but no "date" field at all
+   string objs_b[];
+   int raw_count_b = FEP_SplitObjects(schema_drift_array, objs_b);
+   SNewsEvent parsed_b[];
+   int parsed_count_b = FEP_ParseFeedJson(schema_drift_array, parsed_b);
+   Check("a schema-drift array contains 2 raw objects", raw_count_b == 2);
+   Check("a schema-drift array (no parseable 'date' field on any object) parses to 0 usable "
+         "events -- the same raw>0-but-parsed==0 mismatch", parsed_count_b == 0);
+
    //--- 9. LIVE fetch — expected to fail (URL not yet allowed in this ------
    //--- terminal), exercising the fail-closed path for real -----------------
    FEP_InvalidateCache();

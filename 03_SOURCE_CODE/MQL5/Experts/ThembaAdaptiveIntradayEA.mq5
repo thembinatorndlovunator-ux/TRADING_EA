@@ -331,12 +331,28 @@ int OnInit()
    // case, where NullNewsProvider semantics are the CORRECT behavior, not
    // a bypass). Refuse to run rather than silently let an operator disable
    // a mandatory control by selecting NONE on a metal/forex symbol.**
+   //
+   // **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding
+   // 7): this guard previously only fired when the SYMBOL_PATH-based
+   // classifier POSITIVELY returned METAL or FOREX -- a real metal/forex
+   // symbol under a broker path this classifier's own keyword list does not
+   // recognize comes back MARKET_FAMILY_UNKNOWN instead, silently slipping
+   // past this check and reaching NEWS_PROVIDER_NONE's unconditional "no
+   // blackout" behavior on a symbol that may genuinely need the mandatory
+   // filter. MARKET_FAMILY_SYNTHETIC_INDEX is the ONLY family this
+   // classifier positively confirms NONE is safe for (per its own
+   // recognized synthetic-index keyword list); UNKNOWN must be treated with
+   // the same suspicion as a confirmed metal/forex symbol -- fail closed
+   // (refuse to run) rather than assume the classifier's own blind spot
+   // means "safe to skip the mandatory filter."**
    if(InpNewsProviderSource == NEWS_PROVIDER_NONE &&
-      (g_market_family == MARKET_FAMILY_METAL || g_market_family == MARKET_FAMILY_FOREX))
+      g_market_family != MARKET_FAMILY_SYNTHETIC_INDEX)
      {
       PrintFormat("ThembaEA: InpNewsProviderSource=NEWS_PROVIDER_NONE is not permitted on a "
-                  "%s symbol ('%s') -- the macro news-blackout filter is mandatory for metals/"
-                  "forex, not an operator preference. Select MT5_CALENDAR or FAIR_ECONOMY. "
+                  "%s symbol ('%s') -- the macro news-blackout filter is mandatory for every "
+                  "market family this classifier does not POSITIVELY confirm is a synthetic "
+                  "index (an UNKNOWN classification may still be a real metal/forex symbol under "
+                  "an unrecognized broker path). Select MT5_CALENDAR or FAIR_ECONOMY. "
                   "Refusing to run.", IMR_MarketFamilyToString(g_market_family), g_symbol);
       return INIT_FAILED;
      }

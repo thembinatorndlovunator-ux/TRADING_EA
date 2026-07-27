@@ -283,6 +283,17 @@ datetime   g_fep_last_fetch_time = 0;
 //| rejects input that could not possibly be a valid (even empty, "[]") feed               |
 //| response, closing the specific fail-open gap the review reported without                 |
 //| attempting to validate every field this module does not otherwise need.                    |
+//|                                                                    |
+//| **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding      |
+//| 7):** checking only the outermost '[' and ']' let inputs like "[garbage]"           |
+//| pass this shape check (it parses to 0 events, exactly like a genuinely                  |
+//| empty "[]" week, so FEP_EnsureCache could not tell them apart). The                          |
+//| INNER content (between the outer brackets) must now be either purely                            |
+//| whitespace (a genuine empty array) or itself start with '{' and end with                            |
+//| '}' -- the shape any real flat-object-array feed response has. This still                               |
+//| does not validate individual object FIELDS (that is FEP_FetchLive's own                                     |
+//| new raw-object-vs-parsed-count check, below, for the "[{}]" and schema-                                         |
+//| drift-object cases this shape check alone cannot catch).**                                                          |
 //+------------------------------------------------------------------+
 bool FEP_LooksLikeJsonArray(const string json_text)
   {
@@ -294,6 +305,17 @@ bool FEP_LooksLikeJsonArray(const string json_text)
    if(StringGetCharacter(trimmed, 0) != '[')
       return false;
    if(StringGetCharacter(trimmed, StringLen(trimmed) - 1) != ']')
+      return false;
+
+   string inner = StringSubstr(trimmed, 1, StringLen(trimmed) - 2);
+   StringTrimLeft(inner);
+   StringTrimRight(inner);
+   if(inner == "")
+      return true; // "[]" (whitespace-tolerant) -- a genuine empty array
+
+   if(StringGetCharacter(inner, 0) != '{')
+      return false; // e.g. "[garbage]" -- not object-shaped content
+   if(StringGetCharacter(inner, StringLen(inner) - 1) != '}')
       return false;
    return true;
   }
@@ -308,6 +330,15 @@ bool FEP_LooksLikeJsonArray(const string json_text)
 //| reporting "no blackout" instead of "provider unavailable"). Caller must                  |
 //| treat -1 as "provider unavailable," matching MTC_FetchEvents's own -1                      |
 //| convention.                                                                                     |
+//|                                                                    |
+//| **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding      |
+//| 7):** also fails closed when the response contains at least one                     |
+//| brace-delimited object (per FEP_SplitObjects) but NONE of them parsed                    |
+//| into a usable event -- e.g. "[{}]" or an array of schema-drift objects                       |
+//| missing a parseable "date" field. Only a response with ZERO objects at                          |
+//| all (the true "[]" case) is a legitimate verified-empty calendar; a                                 |
+//| non-empty-but-entirely-unparseable response means the feed's schema has                                 |
+//| drifted or the content is malformed, not that this week has no events.**                                    |
 //+------------------------------------------------------------------+
 int FEP_FetchLive(SNewsEvent &events_out[])
   {
@@ -337,7 +368,20 @@ int FEP_FetchLive(SNewsEvent &events_out[])
       return -1;
      }
 
-   return FEP_ParseFeedJson(json_text, events_out);
+   string raw_objects[];
+   int raw_object_count = FEP_SplitObjects(json_text, raw_objects);
+   int parsed_count = FEP_ParseFeedJson(json_text, events_out);
+
+   if(raw_object_count > 0 && parsed_count == 0)
+     {
+      PrintFormat("FairEconomyNewsProvider: response from '%s' contains %d object(s) but NONE "
+                  "parsed into a usable event (schema drift or malformed content) -- treating as "
+                  "a provider failure, NOT a verified-empty calendar; the caller applies the "
+                  "fail-closed policy.", FEP_FEED_URL, raw_object_count);
+      return -1;
+     }
+
+   return parsed_count;
   }
 
 //+------------------------------------------------------------------+
