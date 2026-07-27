@@ -89,6 +89,66 @@ def test_read_equity_ticks_csv_rejects_missing_column(tmp_path):
         read_equity_ticks_csv(path)
 
 
+def test_read_equity_ticks_csv_rejects_mixed_run_ids(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 18): EquityTickRecorder.mq5 deliberately appends run_id/
+    account_login/broker_server so repeated runs are distinguishable, but
+    this reader previously only checked those columns EXIST, never that
+    they identify a SINGLE run -- sorting the whole file by timestamp and
+    computing one curve silently stitched together unrelated equity
+    series. The review's own reproduced counterexample: a two-run probe
+    (here, run A ending near its own peak, run B starting from a much
+    lower balance) previously produced an artificial ~90% "drawdown" at
+    the seam between the two independent curves. Must now raise
+    CsvSchemaError instead."""
+
+    path = tmp_path / "equity_ticks.csv"
+    df = pd.DataFrame(
+        {
+            "timestamp_utc": [
+                "2026-07-21T10:00:00Z",
+                "2026-07-21T11:00:00Z",
+                "2026-07-22T09:00:00Z",
+                "2026-07-22T10:00:00Z",
+            ],
+            "run_id": [1, 1, 2, 2],  # run 2 is a DIFFERENT run appended to the same file
+            "account_login": [12345, 12345, 12345, 12345],
+            "broker_server": ["Deriv-Demo", "Deriv-Demo", "Deriv-Demo", "Deriv-Demo"],
+            "equity": [
+                10000.0,
+                10500.0,
+                1000.0,
+                1050.0,
+            ],  # run 2 starts near-zero relative to run 1's peak
+            "balance": [10000.0, 10500.0, 1000.0, 1050.0],
+        }
+    )
+    df.to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError, match="distinct.*run_id.*account_login.*broker_server"):
+        read_equity_ticks_csv(path)
+
+
+def test_read_equity_ticks_csv_rejects_mixed_accounts(tmp_path):
+    """Same finding as test_read_equity_ticks_csv_rejects_mixed_run_ids --
+    a different account_login (or broker_server) sharing the same file
+    must also be rejected, not just a different run_id."""
+
+    path = tmp_path / "equity_ticks.csv"
+    df = pd.DataFrame(
+        {
+            "timestamp_utc": ["2026-07-21T10:00:00Z", "2026-07-21T11:00:00Z"],
+            "run_id": [1, 1],
+            "account_login": [12345, 67890],  # different account
+            "broker_server": ["Deriv-Demo", "Deriv-Demo"],
+            "equity": [10000.0, 1000.0],
+            "balance": [10000.0, 1000.0],
+        }
+    )
+    df.to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError):
+        read_equity_ticks_csv(path)
+
+
 # --- compute_daily_equity_peak_giveback --------------------------------------
 #
 # Hand-traced against compute_balance_peak_giveback's own formula
@@ -117,7 +177,9 @@ def test_read_equity_ticks_csv_rejects_missing_column(tmp_path):
 
 def test_compute_daily_equity_peak_giveback_hand_traced():
     timestamps = pd.to_datetime(TIMESTAMPS, utc=True)
-    result = compute_daily_equity_peak_giveback(timestamps, EQUITY, arm_percent=1.0, floor_percent=0.5)
+    result = compute_daily_equity_peak_giveback(
+        timestamps, EQUITY, arm_percent=1.0, floor_percent=0.5
+    )
 
     assert len(result.days) == 2
     day1, day2 = result.days

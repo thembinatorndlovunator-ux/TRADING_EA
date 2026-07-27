@@ -99,13 +99,46 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
     but this does not trust that blindly; a caller-supplied file could be
     hand-edited or concatenated out of order). Raises CsvSchemaError for
     structural problems (missing columns, zero rows, a null/non-finite
-    equity or balance value)."""
+    equity or balance value).
+
+    **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+    18):** EquityTickRecorder.mq5 deliberately appends run_id/
+    account_login/broker_server so repeated runs (or repeated EA
+    attachments across different accounts/broker servers, all appending to
+    the SAME file) are distinguishable -- but this reader previously only
+    checked those columns EXIST, never that they identify a single,
+    consistent run. Sorting the whole file by timestamp and computing one
+    curve over it silently STITCHES TOGETHER unrelated equity series at
+    whatever timestamp boundary happens to separate them -- the review's
+    own reproduced counterexample: a two-run/two-account probe produced an
+    artificial 90% maximum drawdown at the seam between two otherwise
+    independent curves (e.g. run A ending near its own peak, run B
+    starting from a much lower account balance, reads as a single
+    catastrophic drawdown that never actually happened to either account).
+    Every row must now share the exact same (run_id, account_login,
+    broker_server) tuple -- a caller with a multi-run file must split it
+    (e.g. filter to one run_id) before calling this function, per this
+    project's own fail-closed-over-silently-permissive discipline used
+    throughout this review round.
+    """
 
     df, file_hash = read_csv_with_required_columns_and_hash(path, REQUIRED_COLUMNS)
     if df.empty:
         raise CsvSchemaError(f"{path}: zero rows")
 
     df = df.copy()
+    identity_cols = ["run_id", "account_login", "broker_server"]
+    distinct_identities = df[identity_cols].drop_duplicates()
+    if len(distinct_identities) > 1:
+        raise CsvSchemaError(
+            f"{path}: contains {len(distinct_identities)} distinct (run_id, account_login, "
+            f"broker_server) combinations -- {distinct_identities.to_dict(orient='records')} -- "
+            f"this function requires exactly ONE per file; merging unrelated runs/accounts into "
+            f"a single equity curve produces an artificial, meaningless drawdown/giveback figure "
+            f"at the seam between them. Filter the input to a single run before calling this "
+            f"function."
+        )
+
     df["timestamp_utc"] = parse_utc_series(df["timestamp_utc"])
     for col in ("equity", "balance"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -199,7 +232,9 @@ def compute_equity_curve_metrics(
     return EquityCurveMetricsResult(
         n_ticks=len(equity_curve),
         max_drawdown=compute_max_drawdown(equity_curve),
-        account_peak_giveback=compute_balance_peak_giveback(equity_curve, arm_percent, floor_percent),
+        account_peak_giveback=compute_balance_peak_giveback(
+            equity_curve, arm_percent, floor_percent
+        ),
         daily_peak_giveback=compute_daily_equity_peak_giveback(
             timestamps, equity_curve, arm_percent, floor_percent
         ),

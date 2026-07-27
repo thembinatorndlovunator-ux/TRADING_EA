@@ -61,6 +61,29 @@ string Iso8601Utc(const datetime server_time)
                         dt.sec);
   }
 
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding    |
+//| 18):** broker_server (ACCOUNT_SERVER, a broker-controlled string this          |
+//| EA does not control) was previously written into the CSV row via plain            |
+//| StringFormat concatenation, with no quoting -- a server name containing               |
+//| a literal comma, double-quote, or newline (not something this project                    |
+//| can rule out from a third-party broker) would silently shift every                          |
+//| later field on that row, corrupting the CSV structure rather than just                          |
+//| the one field. Standard RFC 4180 CSV quoting: a field containing a                                  |
+//| comma/quote/newline is wrapped in double quotes, with any embedded                                     |
+//| quote doubled; a field needing none of that is returned unchanged                                        |
+//| (matching every other row's own unquoted plain-numeric fields).**                                            |
+//+------------------------------------------------------------------+
+string CsvQuoteField(const string value)
+  {
+   if(StringFind(value, ",") < 0 && StringFind(value, "\"") < 0 &&
+      StringFind(value, "\n") < 0 && StringFind(value, "\r") < 0)
+      return value;
+   string escaped = value;
+   StringReplace(escaped, "\"", "\"\"");
+   return "\"" + escaped + "\"";
+  }
+
 int OnInit()
   {
    if(InpSampleIntervalMs <= 0)
@@ -122,7 +145,7 @@ void OnTimer()
    string server = AccountInfoString(ACCOUNT_SERVER);
 
    string line = StringFormat("%s,%I64d,%I64d,%s,%.2f,%.2f\r\n", Iso8601Utc(TimeTradeServer()),
-                               (long)g_run_id, login, server, equity, balance);
+                               (long)g_run_id, login, CsvQuoteField(server), equity, balance);
    FileWriteString(g_file_handle, line);
    FileFlush(g_file_handle);
   }
