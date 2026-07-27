@@ -73,6 +73,7 @@
 #include "../Include/ThembaEA/Risk/DailyWeeklyBreachManager.mqh"
 #include "../Include/ThembaEA/Risk/RiskReservationManager.mqh"
 #include "../Include/ThembaEA/Journal/DecisionJournal.mqh"
+#include "../Include/ThembaEA/Journal/ExecutionEventJournal.mqh"
 #include "../Include/ThembaEA/Execution/IntradayCloseManager.mqh"
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
 #include "../Include/ThembaEA/Execution/IntentManager.mqh"
@@ -542,6 +543,37 @@ int OnInit()
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 9):  |
+//| finds the DEAL_ENTRY_IN deal ticket tied to 'order_ticket', for a          |
+//| TRADE_TRANSACTION_HISTORY_ADD resolution where the specific fill deal        |
+//| is not otherwise in scope (unlike the DEAL_ADD handler, which already          |
+//| has trans.deal directly). Bounded to a trailing 2-day HistorySelect            |
+//| window, matching GetPositionEntryCosts' own convention elsewhere in               |
+//| this file (this project's own positions are always closed same-day).                |
+//| Returns 0 (left null in the journal, never fabricated) if no matching                   |
+//| deal is found within that window.                                                          |
+//+------------------------------------------------------------------+
+ulong FindFillDealForOrder(const ulong order_ticket)
+  {
+   datetime from = TimeTradeServer() - 2 * 86400;
+   datetime to   = TimeTradeServer() + 60;
+   if(!HistorySelect(from, to))
+      return 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+      if((ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER) != order_ticket)
+         continue;
+      if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+         return deal_ticket;
+     }
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
 //| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
 //| 2): this used to APPEND a synthetic STradeDecision journal row for an       |
 //| async fill/cancellation outcome. The review found that record was            |
@@ -550,19 +582,26 @@ int OnInit()
 //| for each), direction="NONE" combined with a real order_id confusing the          |
 //| outcome join's direction/is_long check, and the reused signal_id                    |
 //| colliding with the original decision's own journal-uniqueness                          |
-//| expectations. Rather than patch each individual defect (the review's own                 |
-//| own suggestion is a genuinely separate submission/order/fill EVENT                          |
-//| schema, distinct from STradeDecision, which is real, larger design work                        |
-//| this fix does not attempt to invent under review pressure), this now                             |
-//| logs the resolution for operator visibility ONLY -- it does not write a                            |
-//| journal row claiming to be a trade decision. The safety-critical half of                             |
-//| async correlation (never submitting a duplicate order) does not depend                                 |
-//| on any journal write at all -- it is IntentManager.mqh's own durable                                     |
-//| intent flag, cleared here on definitive resolution. A real, schema-                                        |
-//| correct async event record remains a genuine, named follow-up.**              |
+//| expectations. Rather than patch each individual defect, this logged the                 |
+//| resolution for operator visibility ONLY (Print, no journal row) and                        |
+//| named a real, schema-correct async event record as a genuine follow-up.**                     |
+//|                                                                    |
+//| **Extended, 2026-07-27 (Codex review finding, ninth round, P1 finding   |
+//| 9): that follow-up. Every resolution now ALSO appends a schema-correct       |
+//| SExecutionEvent row via ExecutionEventJournal.mqh -- a genuinely             |
+//| separate, append-only journal keyed by signal_id/intent_id/order_id/           |
+//| deal_id, distinct from STradeDecision, so an async fill/cancel outcome            |
+//| is real machine-readable evidence, not just an Experts-log line. This               |
+//| also closes the review's crash-window complaint: this event does not                  |
+//| depend on the original PLACED decision's own DJ_AppendDecision call                       |
+//| having succeeded (or having run at all) -- it is independently useful                        |
+//| evidence that a fill/cancellation happened, keyed by whatever IDs are                            |
+//| known at this call site.**                                                                           |
 //+------------------------------------------------------------------+
-void LogAsyncFillResolution(const string original_signal_id, const bool filled,
-                             const ulong resolved_position_id, const string outcome_note)
+void LogAsyncFillResolution(const string original_signal_id, const string intent_id,
+                             const bool filled, const ulong resolved_position_id,
+                             const ulong order_ticket, const ulong deal_ticket,
+                             const string event_type, const string outcome_note)
   {
    if(filled)
       PrintFormat("ThembaEA: async fill resolved for signal_id=%s -- position_id=%I64u (%s).",
@@ -570,6 +609,30 @@ void LogAsyncFillResolution(const string original_signal_id, const bool filled,
    else
       PrintFormat("ThembaEA: async order resolved WITHOUT filling for signal_id=%s (%s).",
                   original_signal_id, outcome_note);
+
+   SExecutionEvent evt = EEJ_NewEvent();
+   datetime event_time_utc = DJ_ServerTimeToUtc(TimeTradeServer());
+   evt.event_id = EEJ_BuildEventId(event_time_utc, GetMicrosecondCount());
+   evt.event_type = event_type;
+   evt.signal_id = original_signal_id;
+   evt.intent_id = intent_id;
+   if(resolved_position_id != 0)
+      evt.order_id = IntegerToString((long)resolved_position_id);
+   evt.order_ticket = order_ticket;
+   if(deal_ticket != 0)
+      evt.deal_id = IntegerToString((long)deal_ticket);
+   evt.timestamp = event_time_utc;
+   evt.symbol = g_symbol;
+   evt.filled = filled;
+   evt.outcome_note = outcome_note;
+
+   string event_error;
+   if(!EEJ_AppendEvent(evt, event_error))
+      PrintFormat("ThembaEA: CRITICAL -- failed to append execution-event journal row for "
+                  "signal_id=%s event_type=%s (%s). The async resolution above still took full "
+                  "effect (durable intent/reservation/correlator state are unaffected by this "
+                  "journal write's own success) -- only this row's own machine-readable evidence "
+                  "is missing.", original_signal_id, event_type, event_error);
   }
 
 //+------------------------------------------------------------------+
@@ -978,6 +1041,12 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
          if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
            {
             ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+            // Captured before any IM_ClearIntent below -- IM_GetIntentId reads
+            // the persisted timestamp/intent_micro fields, which IM_ClearIntent
+            // does not wipe (it only zeroes the "active" flag), so this is
+            // correct whether read before or after the clear; captured first
+            // here purely for clarity of intent (no pun intended).
+            string resolved_intent_id = IM_GetIntentId(g_symbol, InpMagicNumber);
 
             // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0
             // finding 4): the FIRST DEAL_ENTRY_IN deal on a PLACED order
@@ -991,7 +1060,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // active orders list (OrderSelect fails) -- a real remainder
             // keeps both the correlator entry and the durable intent alive
             // for the next deal on this same order ticket.**
-            if(OrderSelect(trans.order))
+            bool live_remainder = OrderSelect(trans.order);
+            if(live_remainder)
               {
                PrintFormat("ThembaEA: async fill for order #%I64u (position_id=%I64u) still has a "
                            "live order remainder -- correlator entry and durable intent left ACTIVE "
@@ -1012,7 +1082,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                // exact risk against the cap.
                RRM_ReleaseReservation(g_symbol, InpMagicNumber);
               }
-            LogAsyncFillResolution(pending_signal_id, true, resolved_position_id,
+            LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, resolved_position_id,
+                                    trans.order, trans.deal,
+                                    live_remainder ? "ASYNC_FILL_LIVE_REMAINDER"
+                                                    : "ASYNC_FILL_CONFIRMED",
                                     "async_fill_confirmed");
            }
         }
@@ -1038,6 +1111,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
          // the final-state-only signal.**
          ulong order_position_id = (ulong)HistoryOrderGetInteger(trans.order, ORDER_POSITION_ID);
          bool  any_volume_filled = (state == ORDER_STATE_FILLED) || (order_position_id != 0);
+         string resolved_intent_id = IM_GetIntentId(g_symbol, InpMagicNumber);
 
          if(!any_volume_filled)
            {
@@ -1046,7 +1120,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // No exposure was ever created -- release this submission's own
             // risk reservation (Codex round-9 P0 finding 1).
             RRM_ReleaseReservation(g_symbol, InpMagicNumber);
-            LogAsyncFillResolution(pending_signal_id, false, 0,
+            LogAsyncFillResolution(pending_signal_id, resolved_intent_id, false, 0, trans.order, 0,
+                                    "ASYNC_NEVER_FILLED",
                                     StringFormat("async_order_never_filled_state_%s",
                                                   EnumToString(state)));
            }
@@ -1061,7 +1136,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             AFC_RemovePending(pending_index);
             IM_ClearIntent(g_symbol, InpMagicNumber);
             RRM_ReleaseReservation(g_symbol, InpMagicNumber);
-            LogAsyncFillResolution(pending_signal_id, true, order_position_id,
+            ulong fill_deal_ticket = FindFillDealForOrder(trans.order);
+            LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, order_position_id,
+                                    trans.order, fill_deal_ticket,
+                                    "ASYNC_PARTIAL_FILL_THEN_CANCELLED",
                                     StringFormat("async_order_partial_fill_then_%s",
                                                   EnumToString(state)));
            }
@@ -1997,6 +2075,32 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
                      "intent is left ACTIVE -- no new entry will be attempted for '%s' magic %I64d "
                      "until this is reconciled.",
                      open_result.retcode, open_result.rejection_reason, g_symbol, InpMagicNumber);
+         // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding
+         // 9): this is exactly the review's own crash-window scenario -- a
+         // broker-confirmed real fill whose own details this process could
+         // not resolve. Written here, immediately, rather than waiting for
+         // EvaluateAndJournal's later DJ_AppendDecision call (which this
+         // rejected decision will never reach with a populated order_id
+         // anyway) -- independent, durable evidence that a fill happened,
+         // even though position_id/volume/price are genuinely unknown here.
+         SExecutionEvent unresolved_evt = EEJ_NewEvent();
+         datetime unresolved_time = DJ_ServerTimeToUtc(TimeTradeServer());
+         unresolved_evt.event_id = EEJ_BuildEventId(unresolved_time, GetMicrosecondCount());
+         unresolved_evt.event_type = "SYNC_FILL_UNRESOLVED";
+         unresolved_evt.signal_id = decision.signal_id;
+         unresolved_evt.intent_id = intent_id;
+         unresolved_evt.order_ticket = open_result.order_ticket;
+         if(open_result.deal_ticket != 0)
+            unresolved_evt.deal_id = IntegerToString((long)open_result.deal_ticket);
+         unresolved_evt.timestamp = unresolved_time;
+         unresolved_evt.symbol = g_symbol;
+         unresolved_evt.filled = true;
+         unresolved_evt.outcome_note = "sync_fill_confirmed_by_retcode_but_details_unresolved_" +
+                                        open_result.rejection_reason;
+         string unresolved_evt_error;
+         if(!EEJ_AppendEvent(unresolved_evt, unresolved_evt_error))
+            PrintFormat("ThembaEA: CRITICAL -- failed to append execution-event journal row for "
+                        "the unresolved fill above (%s).", unresolved_evt_error);
          return;
         }
 
@@ -2034,6 +2138,35 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1 -- real
                                                           // exposure now exists and is counted by
                                                           // ComputeOwnMagicOpenRiskCash() itself.
+
+      // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 9):
+      // written here, immediately upon synchronous fill confirmation --
+      // before EvaluateAndJournal's own later DJ_AppendDecision call, so a
+      // crash in between still leaves this independent, durable evidence
+      // that the fill happened (the review's own crash-window complaint).**
+      SExecutionEvent sync_evt = EEJ_NewEvent();
+      datetime sync_evt_time = DJ_ServerTimeToUtc(TimeTradeServer());
+      sync_evt.event_id = EEJ_BuildEventId(sync_evt_time, GetMicrosecondCount());
+      sync_evt.event_type = open_result.has_live_remainder ? "SYNC_FILL_LIVE_REMAINDER" : "SYNC_FILL";
+      sync_evt.signal_id = decision.signal_id;
+      sync_evt.intent_id = intent_id;
+      sync_evt.order_id = IntegerToString((long)open_result.position_id);
+      sync_evt.order_ticket = open_result.order_ticket;
+      if(open_result.deal_ticket != 0)
+         sync_evt.deal_id = IntegerToString((long)open_result.deal_ticket);
+      sync_evt.timestamp = sync_evt_time;
+      sync_evt.symbol = g_symbol;
+      sync_evt.filled = true;
+      sync_evt.volume = open_result.filled_volume;
+      sync_evt.has_volume = true;
+      sync_evt.price = open_result.fill_price;
+      sync_evt.has_price = (open_result.fill_price > 0.0);
+      sync_evt.outcome_note = open_result.has_live_remainder
+                               ? "sync_partial_fill_live_remainder" : "sync_fill_confirmed";
+      string sync_evt_error;
+      if(!EEJ_AppendEvent(sync_evt, sync_evt_error))
+         PrintFormat("ThembaEA: CRITICAL -- failed to append execution-event journal row for "
+                     "position_id=%I64u (%s).", open_result.position_id, sync_evt_error);
 
       // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
       // 13): captures THIS position's own confirmed intraday_mode at the
@@ -2102,9 +2235,9 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // (journal deal_id must be among a matched position's fill deal_ids)
    // would then reject EVERY ordinary, legitimately-filled position as a
    // conflict. order_id (position_id) remains the correct, sole join key;
-   // a real per-fill deal_id contract (open vs. close, or a proper event
-   // schema per the review's own suggestion) is a genuine follow-up, not
-   // silently faked here.**
+   // the OPENING deal_id IS now recorded, but in the separate execution-
+   // event journal below (ExecutionEventJournal.mqh, Codex review finding,
+   // ninth round, P1 finding 9's own "proper event schema"), not here.**
    if(open_result.position_id != 0)
       decision.order_id = IntegerToString((long)open_result.position_id);
 
@@ -2141,18 +2274,17 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // correlation so OnTradeTransaction can resolve it once the async fill
    // (or cancellation/expiry) actually arrives.
    //
-   // **Corrected, 2026-07-22 (Codex review finding, eighth round, P1 finding
-   // 11): this comment previously claimed OnTradeTransaction "can append a
-   // follow-up record" -- false since round 7's own P0 finding 2 fix
-   // (LogAsyncFillResolution logs the resolution via Print ONLY; it does
-   // NOT write a journal row, per that function's own header, which
-   // explicitly states "a real, schema-correct async event record remains
-   // a genuine, named follow-up"). This record's null order_id/deal_id is
-   // therefore NOT explained by any later journal write today -- only by
-   // this Print-logged resolution and IntentManager.mqh's own durable
-   // intent record, which is the safety-critical half (never a duplicate
-   // order) that does not depend on journaling at all. Corrected to state
-   // this honestly rather than repeat the stale claim.**
+   // **Corrected, 2026-07-27 (Codex review finding, ninth round, P1 finding
+   // 9): this comment previously (and, at the time, correctly) stated that
+   // no later journal write explained this record's null order_id/deal_id
+   // -- LogAsyncFillResolution logged the resolution via Print only. It now
+   // ALSO appends a schema-correct SExecutionEvent row (ExecutionEventJournal.mqh)
+   // once OnTradeTransaction resolves this pending order, keyed by
+   // decision.signal_id/the durable intent_id/the eventual order_id/deal_id
+   // -- this STradeDecision row's own order_id/deal_id remain null (by
+   // design, per DecisionJournal.mqh's own append-only contract), but real
+   // machine-readable evidence of the eventual fill/cancellation now exists
+   // in that separate journal.**
    if(open_result.position_id == 0 && open_result.order_ticket != 0)
       AFC_AddPending(open_result.order_ticket, decision.signal_id);
   }
