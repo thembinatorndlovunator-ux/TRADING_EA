@@ -286,7 +286,23 @@ bool DJ_AppendDecision(const STradeDecision &d, string &error_reason)
 
    FileSeek(handle, 0, SEEK_END);
    string line = DJ_SerializeDecision(d);
-   FileWriteString(handle, line + "\r\n");
+   string payload = line + "\r\n";
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 11): FileWriteString's own return (characters actually written) was
+   // previously ignored, and this function unconditionally returned true
+   // afterward -- a short or failed write (disk full, handle invalidated
+   // mid-call) was silently reported as a successful journal append. The
+   // written count is now checked against the payload's own length before
+   // FileClose (GetLastError must be read before FileClose, which can
+   // reset it) and a mismatch is treated as a genuine failure.**
+   uint written = FileWriteString(handle, payload);
+   int write_error = (written != (uint)StringLen(payload)) ? GetLastError() : 0;
    FileClose(handle);
+   if(written != (uint)StringLen(payload))
+     {
+      error_reason = StringFormat("file_write_incomplete_wrote_%u_of_%d_chars_error_%d",
+                                   written, StringLen(payload), write_error);
+      return false;
+     }
    return true;
   }

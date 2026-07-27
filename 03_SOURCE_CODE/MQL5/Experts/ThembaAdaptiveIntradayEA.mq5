@@ -1498,6 +1498,23 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // record (a floor widening in step 4 may have moved it from the
    // strategy's originally proposed stop).
    decision.stop = final_stop;
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding 11):
+   // decision.entry previously stayed at the strategy's originally PROPOSED
+   // entry price (set back at candidate-resolution time) even once a real
+   // synchronous fill's actual price is known -- so entry, the stop
+   // DISTANCE derived from it, and any downstream analysis reading this
+   // journal row all described a hypothetical order, not the real fill.
+   // Only overwritten for a resolved synchronous fill (open_result.
+   // fill_price > 0.0, i.e. DONE/DONE_PARTIAL) -- a PLACED order has no
+   // real fill price yet, so the proposed entry remains the best available
+   // value until OnTradeTransaction's own async resolution (see that
+   // handler's own comment for the current, honest limitation on updating
+   // this same field for an async fill).**
+   if(open_result.fill_price > 0.0)
+     {
+      decision.entry = open_result.fill_price;
+      decision.has_entry = true;
+     }
    // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 8):
    // risk_percent now scales with the ACTUAL filled volume, not the
    // originally requested sizing.volume -- for an ordinary full DONE fill
@@ -1562,9 +1579,21 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // TASK-036 Specification item 4: an accepted-but-not-yet-resolved
    // position (retcode PLACED, position_id still 0) cannot be journaled
    // with a real order_id/deal_id yet -- register it for later
-   // correlation so OnTradeTransaction can append a follow-up record once
-   // the async fill (or cancellation/expiry) actually arrives, rather
-   // than leaving this record's null order_id/deal_id unexplained forever.
+   // correlation so OnTradeTransaction can resolve it once the async fill
+   // (or cancellation/expiry) actually arrives.
+   //
+   // **Corrected, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 11): this comment previously claimed OnTradeTransaction "can append a
+   // follow-up record" -- false since round 7's own P0 finding 2 fix
+   // (LogAsyncFillResolution logs the resolution via Print ONLY; it does
+   // NOT write a journal row, per that function's own header, which
+   // explicitly states "a real, schema-correct async event record remains
+   // a genuine, named follow-up"). This record's null order_id/deal_id is
+   // therefore NOT explained by any later journal write today -- only by
+   // this Print-logged resolution and IntentManager.mqh's own durable
+   // intent record, which is the safety-critical half (never a duplicate
+   // order) that does not depend on journaling at all. Corrected to state
+   // this honestly rather than repeat the stale claim.**
    if(open_result.position_id == 0 && open_result.order_ticket != 0)
       AFC_AddPending(open_result.order_ticket, decision.signal_id);
   }

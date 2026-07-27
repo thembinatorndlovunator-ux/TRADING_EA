@@ -282,13 +282,27 @@ No file under `01_BASELINE/` may be modified.
       `AsyncFillCorrelator.mqh` tracks pending `PLACED` submissions by
       order ticket; a later `DEAL_ENTRY_IN` deal matching a pending
       ticket, or an order moving to history in any non-`FILLED` state,
-      appends a correlated follow-up journal record (`strategy=
-      "AsyncFillCorrelation"`) rather than an in-place JSONL rewrite —
-      see that module's own header for why. `Test_AsyncFillCorrelator.mq5`
-      covers the pending-store logic (add/find/remove, multiple
-      coexisting records); the actual async broker behavior itself
-      remains part of this project's batched runtime-verification
-      backlog (this sandbox cannot attach to a live/demo terminal).
+      resolves the pending record and clears `IntentManager.mqh`'s own
+      durable intent flag (the safety-critical half — never a duplicate
+      order — which does not depend on any journal write).
+      **Corrected, 2026-07-22 (Codex review finding, eighth round, P1
+      finding 11): this bullet previously claimed the resolution "appends
+      a correlated follow-up journal record (`strategy=
+      "AsyncFillCorrelation"`)" — that behavior was REMOVED by round 7's
+      own P0 finding 2 fix (the review found that synthetic row
+      schema-invalid on multiple axes: empty market_family/intraday_mode/
+      regime, a confusing `direction="NONE"` paired with a real
+      `order_id`, and a reused `signal_id` colliding with the original
+      decision's own uniqueness expectations). The resolution today is
+      logged via `Print` only (`LogAsyncFillResolution`), NOT written as a
+      journal row — a real, schema-correct async event record remains a
+      genuine, named follow-up, not implemented here. This bullet was
+      stale and is corrected to state the actual current behavior.**
+      `Test_AsyncFillCorrelator.mq5` covers the pending-store logic
+      (add/find/remove, multiple coexisting records); the actual async
+      broker behavior itself remains part of this project's batched
+      runtime-verification backlog (this sandbox cannot attach to a
+      live/demo terminal).
 - [x] score_breakdown_json populated with real per-component score
       values — `r_component`/`regime_component`/`eligibility_multiplier`,
       exactly what `SS_ComputeBaseScore`/`StrategyRouter.mqh` actually
