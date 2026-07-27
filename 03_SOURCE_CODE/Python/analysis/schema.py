@@ -3,17 +3,18 @@
 Field-for-field match to the repo-root ``TRADE_DECISION_SCHEMA.json`` and to
 ``03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/DecisionJournal.mqh``'s
 ``STradeDecision``/``DJ_SerializeDecision`` (the MQL5 side that actually
-writes these lines) -- **with one stated, deliberate exception, corrected
-2026-07-22 (Codex review finding, fourth round): this docstring previously
-claimed an unqualified field-for-field match, but `order_id`/`deal_id`
-below exist ONLY here and in the JSON schema's Python-side consumers --
-neither `TRADE_DECISION_SCHEMA.json` nor `DecisionJournal.mqh`'s
-`STradeDecision` has been extended with either field yet. This is the
-Python-schema half of TASK-036's durable-join work, added ahead of the
-MQL5-side population it depends on (see that task's own scope note) so
-`analysis/join_signal_to_outcome.py` could be built and tested now rather
-than perpetually deferred -- not an oversight.** This module owns
-validation only -- it does not read files (see
+writes these lines).
+
+**Corrected, 2026-07-22 (Codex review finding, eighth round, P1 finding 19):**
+this docstring previously claimed `order_id`/`deal_id` existed ONLY here and
+in the JSON schema, ahead of any MQL5-side population -- stale since TASK-036
+shipped: `DecisionJournal.mqh`'s `STradeDecision` struct has carried both
+fields for several rounds now (`order_id` = `SOrderOpenResult.position_id`,
+`deal_id` = `SOrderOpenResult.deal_ticket`, both nullable per that struct's
+own field comments), `TRADE_DECISION_SCHEMA.json` documents both as
+`"string|null"`, and the live EA (`ThembaAdaptiveIntradayEA.mq5`'s
+`AttemptOrderSubmission`) populates `order_id` on every synchronous fill. This
+module owns validation only -- it does not read files (see
 ``data_collection/journal_reader.py``) and does not compute any statistic.
 
 Deliberately strict, per the reproducibility contract in
@@ -76,7 +77,18 @@ class TradeDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
-    signal_id: str
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 19): signal_id/strategy/setup/session_state/ea_version/git_commit
+    # below were all plain `str` (no min_length), so a blank value for any
+    # of them was silently accepted -- inconsistent with 'symbol', which
+    # already required min_length=1 as a real identity field. Every one of
+    # these is likewise a real identity/provenance field this project's
+    # own journal-uniqueness/join/audit-trail guarantees depend on (a
+    # blank signal_id in particular defeats the whole point of it being a
+    # durable join key); blank is now rejected at this schema boundary for
+    # all of them, matching 'symbol''s own established precedent, rather
+    # than relying on an assumed prior producer never emitting one.**
+    signal_id: str = Field(min_length=1)
     timestamp_utc: datetime
     symbol: str = Field(min_length=1)
     market_family: Literal["METAL", "FOREX", "SYNTHETIC_INDEX", "UNKNOWN"]
@@ -95,8 +107,8 @@ class TradeDecision(BaseModel):
     regime: str
     regime_confidence: StrictFloat = Field(ge=0.0, le=100.0)
     direction: Literal["BUY", "SELL", "NONE"]
-    strategy: str
-    setup: str
+    strategy: str = Field(min_length=1)
+    setup: str = Field(min_length=1)
     candlestick_pattern: Optional[str] = None
     chart_pattern: Optional[str] = None
     score: StrictFloat = Field(ge=0.0, le=100.0)
@@ -123,11 +135,11 @@ class TradeDecision(BaseModel):
     # real, honest third value ("BANANA"-style genuinely invalid input
     # remains rejected -- see test_unknown_news_state_rejected).**
     news_state: Literal["CLEAR", "BLACKOUT", "UNKNOWN"]
-    session_state: str
+    session_state: str = Field(min_length=1)
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_rejected: list[str] = Field(default_factory=list)
-    ea_version: str
-    git_commit: str
+    ea_version: str = Field(min_length=1)
+    git_commit: str = Field(min_length=1)
     # **Added, 2026-07-22 Codex review finding (third round): the durable
     # journal-decision-to-trade-outcome join (analysis/join_signal_to_outcome.py,
     # new) needs a stable key. Both optional/nullable since the live EA does

@@ -144,16 +144,20 @@ def test_to_dataframe_nonempty():
     assert df.iloc[0]["symbol"] == "XAUUSD"
 
 
-def test_find_duplicate_signal_ids_excludes_empty_signal_ids():
-    from analysis.schema import validate_record
+def test_blank_signal_id_rejected_at_schema_boundary_not_reachable_here():
+    """Regression for a Codex review finding (2026-07-27, eighth round, P1
+    finding 19 fallout): this module's docstring and
+    find_duplicate_signal_ids previously assumed every real journal record
+    has signal_id == "" (a stale claim -- TASK-036's BuildSignalId has
+    populated a real, unique signal_id since before this session). Schema.py
+    now enforces this at its own boundary (min_length=1), so a blank
+    signal_id can never reach find_duplicate_signal_ids in the first place;
+    this asserts that boundary rather than the (now provably unreachable)
+    exclusion behavior the removed test used to check."""
+    from analysis.schema import SchemaValidationError, validate_record
 
-    records = [
-        validate_record(make_valid_record(signal_id="")),
-        validate_record(make_valid_record(signal_id="")),
-    ]
-    df = to_dataframe(records)
-    duplicates = find_duplicate_signal_ids(df)
-    assert duplicates.empty  # both have signal_id=="" -> excluded per design
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(signal_id=""))
 
 
 def test_find_duplicate_signal_ids_flags_real_duplicates():

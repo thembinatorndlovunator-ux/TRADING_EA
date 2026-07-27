@@ -128,34 +128,33 @@ def _derive_time_dimensions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# The only two 'news_state' values this project's own live producer emits
-# (ThembaAdaptiveIntradayEA.mq5's ResolveNewsBlackout, TASK-034) and
+# The canonical 'news_state' values this project's own live producer emits
+# (ThembaAdaptiveIntradayEA.mq5's ResolveNewsBlackout/
+# JournalDataFailureDecision, TASK-034/round-8 P1 finding 12) and
 # cross-checks against 'in_news_blackout' -- see join_news_events.py's
-# docstring and notebook 04's fifth-round fix. analysis/schema.py now
-# enforces this as a real Literal["CLEAR", "BLACKOUT"] constraint at the
-# journal-ingestion boundary (Codex review finding, seventh round, P1
-# finding 17 -- closing "news_state has no defined vocabulary" for any
-# record that actually passed through schema validation).
+# docstring and notebook 04's fifth-round fix. analysis/schema.py enforces
+# this as a real Literal["CLEAR", "BLACKOUT", "UNKNOWN"] constraint at the
+# journal-ingestion boundary.
 #
-# **This function's own tolerance for any OTHER value is still
-# deliberate, not stale, even after that schema fix:** performance_
-# breakdown.py's own 'trades_csv' input is the unified joined-schema CSV,
-# which this module does NOT itself schema-validate (REQUIRED_COLUMNS
-# above is deliberately minimal) -- a caller can hand-construct or
-# otherwise bypass schema.py's own validation entirely. Rejecting an
-# out-of-vocabulary news_state here (rather than merely not cross-
-# checking it) would incorrectly assume every caller's input already went
-# through the schema; a legacy value, a future vocabulary's value, or
-# arbitrary caller-supplied text is still tolerated as its own, non-
-# cross-checked group, per this module's own "grouping is never lossy"
-# design. What IS a genuine, fixable bug (closed below): a near-miss of
-# one of the two REAL canonical values (whitespace or case variation,
-# e.g. "CLEAR " or "clear") previously fell through this same "not
-# cross-checked" tolerance and silently escaped the consistency check
-# entirely, rather than being recognized as the value it obviously
-# represents.**
+# **Corrected, 2026-07-22 Codex review finding (eighth round, P1 finding
+# 19): this comment previously argued at length that tolerating an
+# ARBITRARY out-of-vocabulary news_state (e.g. "BANANA") was deliberate,
+# on the theory that this module cannot assume 'trades_csv' already
+# passed schema.py's own validation. The review rejected that reasoning
+# directly: "do not rely on an assumed prior pipeline" cuts the OTHER
+# way -- precisely BECAUSE this module cannot assume a prior schema check
+# ran, it must validate the vocabulary itself, at this ingestion boundary,
+# rather than silently accept and GROUP a typo'd or malformed value as if
+# it were a meaningful analysis category. _assert_news_state_consistency
+# below now rejects an out-of-vocabulary news_state outright (not merely
+# skip cross-checking it), whenever the column is present at all -- see
+# that function's own updated docstring.**
 _NEWS_STATE_CLEAR = "CLEAR"
 _NEWS_STATE_BLACKOUT = "BLACKOUT"
+_NEWS_STATE_UNKNOWN = "UNKNOWN"
+_NEWS_STATE_CANONICAL_VALUES = frozenset(
+    {_NEWS_STATE_CLEAR, _NEWS_STATE_BLACKOUT, _NEWS_STATE_UNKNOWN}
+)
 
 # **Added, 2026-07-22 Codex review finding (sixth round): the
 # session_state bucket mapping (fixed, fourth/fifth round, in notebook
@@ -236,10 +235,34 @@ def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>
     tolerance alongside genuinely unrelated/legacy values, even though it
     obviously represents one of the two values this check already knows
     about. Compared after whitespace/case normalization now, so only a
-    GENUINELY different token (a legacy value, a future vocabulary's
-    value) still falls through untouched -- see this module's own
-    disclosure above for why that remaining tolerance is deliberate.**
+    GENUINELY different token is distinguishable from the real values.**
+
+    **Extended, 2026-07-22 Codex review finding (eighth round, P1 finding
+    19): 'news_state' is now validated against the canonical vocabulary
+    (CLEAR/BLACKOUT/UNKNOWN, after the same whitespace/case normalization)
+    UNCONDITIONALLY whenever the column is present at all -- not merely
+    when 'in_news_blackout' is also present for cross-checking. A
+    genuinely out-of-vocabulary value ("BANANA") now raises CsvSchemaError
+    instead of silently becoming its own report group -- see this
+    function's own module-level comment for why the previous "tolerate
+    anything, this module cannot assume a prior schema check ran"
+    reasoning was rejected: that argument is exactly why THIS boundary
+    must validate, not a reason to skip validating.**
     """
+
+    if "news_state" in df.columns:
+        normalized = df["news_state"].apply(_normalize_news_state)
+        # Blank/absent (NaN/None) is this project's established "no claim"
+        # convention, not a value to validate against the vocabulary --
+        # only a genuinely present, non-canonical STRING is rejected.
+        out_of_vocab_mask = normalized.notna() & ~normalized.isin(_NEWS_STATE_CANONICAL_VALUES)
+        bad_values = df.loc[out_of_vocab_mask, "news_state"]
+        if not bad_values.empty:
+            raise CsvSchemaError(
+                f"{path}: {len(bad_values)} row(s) have an out-of-vocabulary 'news_state' value "
+                f"(canonical values are {sorted(_NEWS_STATE_CANONICAL_VALUES)}): "
+                f"{sorted(bad_values.unique().tolist())} at rows {bad_values.index.tolist()}"
+            )
 
     if "in_news_blackout" in df.columns:
         # **Fixed, 2026-07-22 Codex review finding (fifth round):** a

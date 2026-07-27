@@ -5,18 +5,23 @@ JSON object per line (``DJ_AppendDecision``'s ``FileWriteString(line +
 "\\r\\n")``), files named ``decisions_YYYYMMDD.jsonl``
 (``DJ_JournalFilePath``), one file per UTC day.
 
-**Known, confirmed cross-layer gap (not a bug in this module -- see
-``analysis/schema.py``'s own docstring for the full explanation):**
-``ThembaAdaptiveIntradayEA.mq5`` never sets ``signal_id``, so every real
-journal record currently has ``signal_id == ""``. Duplicate-detection on
-``signal_id`` alone would therefore flag every single row as a "duplicate"
-of every other, which is useless. This module additionally offers
-duplicate detection on ``(timestamp_utc, symbol)`` as the practical interim
-key -- two decisions for the same symbol at the same completed-bar
-timestamp should never both exist (``OnTick``'s own once-per-completed-bar
-guard, TASK-025, should prevent this on the MQL5 side; if this module ever
-finds one, that is a genuine finding worth investigating, not a schema
-quirk to filter out).
+**Corrected, 2026-07-27 (Codex round-8 P1 finding 19 fallout):** this
+docstring previously claimed ``ThembaAdaptiveIntradayEA.mq5`` never sets
+``signal_id`` and that every real journal record has ``signal_id == ""``.
+That has not been true since TASK-036's ``BuildSignalId`` (symbol + magic
++ ``TimeCurrent()`` + microsecond count + a monotonic in-process counter)
+started populating a real, unique ``signal_id`` on every decision, and
+``analysis/schema.py``'s ``TradeDecision.signal_id`` now rejects a blank
+value outright -- so a schema-validated record (every record this module's
+own ``read_journal_directory`` hands to ``find_duplicate_signal_ids``) can
+never carry ``signal_id == ""`` in the first place. Duplicate detection on
+``signal_id`` is therefore this module's primary, always-meaningful check.
+``(timestamp_utc, symbol)`` duplicate detection is kept as an independent,
+orthogonal invariant, not an "interim" substitute: two decisions for the
+same symbol at the same completed-bar timestamp should never both exist
+(``OnTick``'s own once-per-completed-bar guard, TASK-025, should prevent
+this on the MQL5 side; if this module ever finds one, that is a genuine
+finding worth investigating, not a schema quirk to filter out).
 
 **Encoding, fixed 2026-07-22 (TASK-036):** ``DJ_AppendDecision`` previously
 opened its file with MQL5's ``FILE_ANSI`` flag using the terminal's default
@@ -690,22 +695,19 @@ def to_dataframe(records: list[TradeDecision]) -> pd.DataFrame:
 
 
 def find_duplicate_signal_ids(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows sharing a NON-EMPTY signal_id with at least one other row.
-    Empty signal_ids are excluded from this check entirely (see module
-    docstring: every real row currently has signal_id == "", which would
-    otherwise trivially flag the whole dataset)."""
+    """Rows sharing a signal_id with at least one other row. ``signal_id``
+    is schema-guaranteed non-blank (see module docstring), so unlike the
+    old version of this function, blank values are not special-cased."""
 
     if df.empty or "signal_id" not in df.columns:
         return df.iloc[0:0]
-    non_empty = df[df["signal_id"] != ""]
-    dup_mask = non_empty.duplicated(subset=["signal_id"], keep=False)
-    return non_empty[dup_mask]
+    dup_mask = df.duplicated(subset=["signal_id"], keep=False)
+    return df[dup_mask]
 
 
 def find_duplicate_timestamp_symbol(df: pd.DataFrame) -> pd.DataFrame:
     """Rows sharing (timestamp_utc, symbol) with at least one other row --
-    the practical interim duplicate key while signal_id remains unpopulated
-    (see module docstring)."""
+    an invariant independent of signal_id (see module docstring)."""
 
     if df.empty:
         return df

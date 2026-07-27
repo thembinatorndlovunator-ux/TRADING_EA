@@ -332,6 +332,84 @@ def test_classify_rejects_zero_trend_slope_atr_divisor():
         )
 
 
+def test_classify_rejects_zero_trend_threshold():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 19): trend_threshold=0.0 previously reached a raw division by
+    zero (confidence = 1.0 - t_final / trend_threshold) instead of a clean
+    domain error -- must now raise ValueError before that division is ever
+    attempted."""
+
+    kwargs = dict(COMMON_KWARGS)
+    kwargs["trend_threshold"] = 0.0
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **kwargs,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_negative_trend_slope_atr_divisor():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 19): a negative trend_slope_atr_divisor previously returned a
+    "valid" read even though MarketRegimeEngine.mqh's own
+    MRE_ClampTrendSlopeAtrDivisor documents the canonical domain as
+    strictly positive and bounded ([0.05, 5.0]) -- must now raise
+    ValueError instead of silently producing a result from an
+    out-of-domain input."""
+
+    kwargs = dict(COMMON_KWARGS)
+    kwargs["trend_slope_atr_divisor"] = -0.5
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **kwargs,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_out_of_domain_swing_agreement():
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=50.0,
+            **COMMON_KWARGS,
+            swing_agreement=1.5,  # outside [0, 1]
+            direction_agree=False,
+        )
+
+
+def test_classify_rejects_out_of_domain_adx():
+    with pytest.raises(ValueError):
+        classify(
+            TREND_CLOSES,
+            [0.0, 1.0, 1.0],
+            2.0,
+            ema_now=105.0,
+            ema_prior=100.0,
+            adx_now=150.0,  # outside [0, 100]
+            **COMMON_KWARGS,
+            swing_agreement=0.0,
+            direction_agree=False,
+        )
+
+
 def test_classify_rejects_non_finite_closes():
     bad_closes = [104.0, float("nan"), 102.0, 101.0, 100.0]
     with pytest.raises(ValueError):

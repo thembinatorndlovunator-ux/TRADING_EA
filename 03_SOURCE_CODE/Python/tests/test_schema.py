@@ -221,3 +221,20 @@ def test_plain_int_score_still_accepted():
 
     record = validate_record(make_valid_record(score=50))
     assert record.score == 50.0
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["signal_id", "strategy", "setup", "session_state", "ea_version", "git_commit"],
+)
+def test_blank_identity_provenance_field_rejected(field):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 19): signal_id/strategy/setup/session_state/ea_version/
+    git_commit were all plain `str` (no min_length), so a blank value for
+    any of them was silently accepted -- inconsistent with 'symbol', which
+    already required min_length=1. Every one of these is a real identity/
+    provenance field this project's own journal-uniqueness/join/audit-trail
+    guarantees depend on."""
+
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(**{field: ""}))

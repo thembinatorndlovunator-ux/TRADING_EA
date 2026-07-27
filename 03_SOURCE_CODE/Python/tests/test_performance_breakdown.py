@@ -87,18 +87,27 @@ def _session_mode_news_fixture_df() -> pd.DataFrame:
     # outcome breakdown section (Codex review finding, 2026-07-22, fourth
     # round) -- hand-computable: OPEN=[10,10,-5,10] (n=4, win_rate=0.75,
     # expectancy=6.25), CLOSING_SOON=[-5,-5,-5,10] (n=4, win_rate=0.25,
-    # expectancy=-1.25); NFP_NEARBY==in_news_blackout True=[-5,-5,-5]
-    # (n=3, win_rate=0.0, expectancy=-5.0), NONE==in_news_blackout
+    # expectancy=-1.25); BLACKOUT==in_news_blackout True=[-5,-5,-5]
+    # (n=3, win_rate=0.0, expectancy=-5.0), CLEAR==in_news_blackout
     # False=[10,10,-5,10,10] (n=5, win_rate=0.8, expectancy=7.0).
+    #
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 19): the two news_state values here were previously the ad hoc
+    # "NFP_NEARBY"/"NONE" -- out-of-vocabulary strings this project's own
+    # canonical producer (CLEAR/BLACKOUT/UNKNOWN) never actually emits.
+    # This fixture's own numbers are unchanged; only the news_state
+    # LABELS are now the real canonical ones, since compute_breakdown now
+    # rejects an out-of-vocabulary news_state outright (see
+    # test_compute_breakdown_rejects_out_of_vocabulary_news_state below).**
     rows = [
-        (10.0, "OPEN", "SCALP", "NONE", False),
-        (10.0, "OPEN", "SCALP", "NONE", False),
-        (-5.0, "OPEN", "DAY_TRADE", "NONE", False),
-        (10.0, "OPEN", "DAY_TRADE", "NONE", False),
-        (-5.0, "CLOSING_SOON", "SCALP", "NFP_NEARBY", True),
-        (-5.0, "CLOSING_SOON", "SCALP", "NFP_NEARBY", True),
-        (-5.0, "CLOSING_SOON", "DAY_TRADE", "NFP_NEARBY", True),
-        (10.0, "CLOSING_SOON", "DAY_TRADE", "NONE", False),
+        (10.0, "OPEN", "SCALP", "CLEAR", False),
+        (10.0, "OPEN", "SCALP", "CLEAR", False),
+        (-5.0, "OPEN", "DAY_TRADE", "CLEAR", False),
+        (10.0, "OPEN", "DAY_TRADE", "CLEAR", False),
+        (-5.0, "CLOSING_SOON", "SCALP", "BLACKOUT", True),
+        (-5.0, "CLOSING_SOON", "SCALP", "BLACKOUT", True),
+        (-5.0, "CLOSING_SOON", "DAY_TRADE", "BLACKOUT", True),
+        (10.0, "CLOSING_SOON", "DAY_TRADE", "CLEAR", False),
     ]
     df = pd.DataFrame(
         rows, columns=["profit", "session_state", "intraday_mode", "news_state", "in_news_blackout"]
@@ -134,10 +143,10 @@ def test_compute_breakdown_intraday_mode_hand_computed():
 
 def test_compute_breakdown_news_state_and_in_news_blackout_hand_computed():
     by_news = compute_breakdown(_session_mode_news_fixture_df(), ["news_state"])
-    nfp_row = by_news[by_news["news_state"] == "NFP_NEARBY"].iloc[0]
-    assert nfp_row["n_trades"] == 3
-    assert nfp_row["win_rate"] == pytest.approx(0.0)
-    assert nfp_row["expectancy_dollars"] == pytest.approx(-5.0)
+    blackout_news_row = by_news[by_news["news_state"] == "BLACKOUT"].iloc[0]
+    assert blackout_news_row["n_trades"] == 3
+    assert blackout_news_row["win_rate"] == pytest.approx(0.0)
+    assert blackout_news_row["expectancy_dollars"] == pytest.approx(-5.0)
 
     by_blackout = compute_breakdown(_session_mode_news_fixture_df(), ["in_news_blackout"])
     blackout_row = by_blackout[by_blackout["in_news_blackout"] == True].iloc[0]  # noqa: E712
@@ -228,10 +237,16 @@ def test_compute_breakdown_rejects_whitespace_or_case_near_miss_of_canonical_new
         compute_breakdown(df_wrong_case, ["news_state"])
 
 
-def test_compute_breakdown_unrelated_news_state_values_not_cross_checked():
-    """news_state values outside the CLEAR/BLACKOUT vocabulary this
-    project's own pipeline actually produces are not cross-checked --
-    no full vocabulary is defined yet (see the module's own note)."""
+def test_compute_breakdown_rejects_out_of_vocabulary_news_state():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 19): an out-of-vocabulary news_state ("BANANA"/a legacy value)
+    was previously tolerated and became its own valid report GROUP -- this
+    module's own prior comment argued that was deliberate (it cannot
+    assume 'trades_csv' already passed schema.py's own validation), but
+    the review rejected that reasoning directly: precisely BECAUSE no
+    prior validation can be assumed, THIS boundary must validate the
+    vocabulary itself. Must now raise CsvSchemaError, matching
+    schema.py's own Literal["CLEAR", "BLACKOUT", "UNKNOWN"] vocabulary."""
 
     df = pd.DataFrame(
         {
@@ -241,8 +256,26 @@ def test_compute_breakdown_unrelated_news_state_values_not_cross_checked():
             "in_news_blackout": [True],
         }
     )
+    with pytest.raises(CsvSchemaError):
+        compute_breakdown(df, ["news_state"])
+
+
+def test_compute_breakdown_accepts_unknown_news_state():
+    """The 'UNKNOWN' news_state (JournalDataFailureDecision's own honest
+    "not evaluated this bar" value, round 8 P1 finding 12) is a genuine
+    canonical value, not an out-of-vocabulary one -- must be accepted and
+    grouped normally, never rejected alongside "BANANA"-style values."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2"],
+            "profit": [10.0, -5.0],
+            "news_state": ["UNKNOWN", "UNKNOWN"],
+        }
+    )
     result = compute_breakdown(df, ["news_state"])
     assert len(result) == 1
+    assert result.iloc[0]["news_state"] == "UNKNOWN"
 
 
 def test_compute_breakdown_multi_dimension_hand_computed():

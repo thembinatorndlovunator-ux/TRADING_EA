@@ -151,8 +151,39 @@ def classify(
     for name, value in scalar_inputs.items():
         if not math.isfinite(value):
             raise ValueError(f"classify: {name} must be finite, got {value!r}")
-    if trend_slope_atr_divisor == 0.0:
-        raise ValueError("classify: trend_slope_atr_divisor must not be zero")
+
+    # **Extended, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 19): the seventh-round fix above only rejected non-finite/exactly-zero
+    # inputs -- trend_threshold=0 still reached a raw division by zero
+    # below (confidence = 1.0 - t_final / trend_threshold), and a NEGATIVE
+    # trend_slope_atr_divisor previously returned a "valid" read even
+    # though MarketRegimeEngine.mqh's own MRE_ClampTrendSlopeAtrDivisor
+    # documents the canonical domain as strictly positive and bounded
+    # ([0.05, 5.0], per that file's own clamper -- this Python port
+    # validates against the SAME bounds the MQL5 source clamps to, rather
+    # than silently clamping itself, per this project's own "visible
+    # failures, never silently coerced" reproducibility contract: a caller
+    # supplying an out-of-domain value at this PUBLIC ingestion boundary
+    # has a real, reportable bug upstream, not something to paper over).
+    # Every other threshold/agreement/ADX domain MarketRegimeEngine.mqh's
+    # own clampers document is validated here too.**
+    domain_bounds = {
+        "trend_threshold": (0.3, 0.9),
+        "expansion_threshold": (0.55, 0.95),
+        "compression_threshold": (0.05, 0.45),
+        "min_efficiency": (0.05, 0.6),
+        "trend_slope_atr_divisor": (0.05, 5.0),
+        "swing_agreement": (0.0, 1.0),
+        "adx_now": (0.0, 100.0),
+    }
+    for name, (lo, hi) in domain_bounds.items():
+        value = scalar_inputs[name]
+        if not (lo <= value <= hi):
+            raise ValueError(
+                f"classify: {name}={value!r} is outside its canonical domain [{lo}, {hi}] "
+                f"(see MarketRegimeEngine.mqh's own MRE_Clamp* functions)"
+            )
+
     if any(not math.isfinite(c) for c in closes):
         raise ValueError("classify: 'closes' contains a non-finite value")
     if any(not math.isfinite(v) for v in atr_percentile_values):
