@@ -1406,7 +1406,18 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // record (a floor widening in step 4 may have moved it from the
    // strategy's originally proposed stop).
    decision.stop = final_stop;
-   decision.risk_percent = 100.0 * sizing.risk_cash_actual / equity;
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 8):
+   // risk_percent now scales with the ACTUAL filled volume, not the
+   // originally requested sizing.volume -- for an ordinary full DONE fill
+   // these are equal (no behavior change), but for a TRADE_RETCODE_DONE_
+   // PARTIAL fill only part of the requested volume is genuinely at risk,
+   // and journaling the pre-fill sized risk would overstate real exposure.
+   // risk_cash scales linearly with volume, so this is a straight ratio of
+   // OrderManager's own already-resolved filled_volume to the requested one.
+   double actual_risk_cash = sizing.risk_cash_actual;
+   if(sizing.volume > 0.0)
+      actual_risk_cash = sizing.risk_cash_actual * (open_result.filled_volume / sizing.volume);
+   decision.risk_percent = 100.0 * actual_risk_cash / equity;
    // TASK-036: order_id is the DURABLE position_id (POSITION_IDENTIFIER),
    // never position_ticket -- see OrderManager.mqh's own SOrderOpenResult
    // comment for why. "" (JSON null) if the position could not be resolved
@@ -1429,14 +1440,29 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    if(open_result.position_id != 0)
       decision.order_id = IntegerToString((long)open_result.position_id);
 
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 8):
+   // logs/journals the ACTUAL filled volume (open_result.filled_volume),
+   // not the originally requested sizing.volume -- for a normal DONE fill
+   // these match; for a DONE_PARTIAL fill this reports what genuinely
+   // exists at the broker, with an explicit "order_partial_fill" reason tag
+   // so the journal itself records that less than the requested volume
+   // filled, rather than silently reporting the requested figure as if it
+   // were the real outcome.**
+   if(open_result.retcode == TRADE_RETCODE_DONE_PARTIAL)
+      AppendReason(passed, StringFormat(
+         "order_partial_fill_volume_%.2f_of_requested_%.2f", open_result.filled_volume,
+         sizing.volume)); // this order is NOT a rejection (opened==true, real exposure
+                           // exists) -- appended to 'passed', never 'rejected', which stays
+                           // reserved for reasons that actually blocked submission.
    AppendReason(passed, StringFormat(
       "order_submitted_ticket_%I64u_position_id_%I64u_volume_%.2f_fill_%.5f",
-      open_result.position_ticket, open_result.position_id, sizing.volume,
+      open_result.position_ticket, open_result.position_id, open_result.filled_volume,
       open_result.fill_price));
-   PrintFormat("ThembaEA: *** ORDER SUBMITTED *** %s %s volume=%.2f ticket=%I64u "
-               "position_id=%I64u fill=%.5f stop=%.5f risk_pct=%.4f", decision.direction,
-               g_symbol, sizing.volume, open_result.position_ticket, open_result.position_id,
-               open_result.fill_price, final_stop, decision.risk_percent);
+   PrintFormat("ThembaEA: *** ORDER SUBMITTED *** %s %s volume=%.2f (requested %.2f) ticket=%I64u "
+               "position_id=%I64u fill=%.5f stop=%.5f risk_pct=%.4f%s", decision.direction,
+               g_symbol, open_result.filled_volume, sizing.volume, open_result.position_ticket,
+               open_result.position_id, open_result.fill_price, final_stop, decision.risk_percent,
+               (open_result.retcode == TRADE_RETCODE_DONE_PARTIAL) ? " *** PARTIAL FILL ***" : "");
 
    decision.reasons_passed_json = BuildJsonStringArray(passed);
    decision.reasons_rejected_json = BuildJsonStringArray(rejected);

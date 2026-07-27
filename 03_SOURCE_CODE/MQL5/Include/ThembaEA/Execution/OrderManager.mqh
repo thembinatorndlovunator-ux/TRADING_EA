@@ -176,6 +176,15 @@ struct SOrderOpenResult
                             // never position_ticket, as the journal's own 'order_id'
                             // once TASK-036 wires journaling to this struct.
    double fill_price;     // 0.0 on failure
+   double filled_volume;  // **Added, 2026-07-22 (Codex review finding, eighth round, P0
+                            // finding 8):** the ACTUAL volume filled (CTrade::ResultVolume()) --
+                            // equals the requested volume for a normal TRADE_RETCODE_DONE fill,
+                            // but is LESS than requested for TRADE_RETCODE_DONE_PARTIAL (MetaQuotes
+                            // code 10010, "only part of the request was completed"). 0.0 on failure
+                            // or an unresolved PLACED (not-yet-filled) order. A caller MUST size
+                            // any post-fill risk/journal figure off THIS field, never the originally
+                            // requested 'volume' passed into this function, once retcode indicates
+                            // a partial fill.
    uint   retcode;
    string rejection_reason; // "" iff success
   };
@@ -205,6 +214,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    result.position_ticket = 0;
    result.position_id = 0;
    result.fill_price = 0.0;
+   result.filled_volume = 0.0;
    result.retcode = 0;
    result.rejection_reason = "";
 
@@ -229,7 +239,20 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
                       : trade.Sell(volume, symbol, price, sl_price, tp_price, comment);
    result.retcode = trade.ResultRetcode();
 
-   if(!ok || (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED))
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 8):
+   // TRADE_RETCODE_DONE_PARTIAL (MetaQuotes code 10010, "only part of the
+   // request was completed") is now accepted alongside DONE and PLACED --
+   // it previously fell into this failure branch, so the caller cleared its
+   // durable intent and journaled an outright rejection even though PART OF
+   // THE REQUESTED POSITION ACTUALLY EXISTS at the broker. That live
+   // exposure was never correlated to the decision that created it and
+   // never received the post-fill hard-risk check section 8 requires for
+   // every real position. A partial fill is real, live exposure, not a
+   // failure -- it is resolved by the SAME causally-correct DEAL_POSITION_ID
+   // path as a full DONE fill below, just with a smaller ACTUAL filled
+   // volume (result.filled_volume) than what was originally requested.**
+   if(!ok || (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED &&
+              result.retcode != TRADE_RETCODE_DONE_PARTIAL))
      {
       result.rejection_reason = StringFormat("order_open_failed_retcode_%u", result.retcode);
       return false;
@@ -259,14 +282,19 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    // into reach, since it is guaranteed to already be in this terminal's
    // history the instant CTrade reports it filled.
    //
-   // Only attempted for a SYNCHRONOUS fill (retcode DONE) -- a PLACED
-   // (accepted-for-processing, not yet filled) order has no deal/position
-   // yet at all; result.position_id/position_ticket correctly stay 0 in
-   // that case, exactly as before, so the caller's own existing async-fill
-   // correlation (AsyncFillCorrelator.mqh, keyed by order_ticket) resolves
-   // it later via OnTradeTransaction, which already reads DEAL_POSITION_ID
-   // from the real fill deal the same causally-correct way.
-   if(result.retcode == TRADE_RETCODE_DONE)
+   // **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding
+   // 8): now also runs for TRADE_RETCODE_DONE_PARTIAL, not just DONE -- a
+   // partial fill has a real deal/position exactly like a full fill does,
+   // just with a smaller ACTUAL filled volume (captured below via
+   // CTrade::ResultVolume(), never the originally requested 'volume').**
+   // Only attempted for a SYNCHRONOUS fill (DONE or DONE_PARTIAL) -- a
+   // PLACED (accepted-for-processing, not yet filled) order has no
+   // deal/position yet at all; result.position_id/position_ticket correctly
+   // stay 0 in that case, exactly as before, so the caller's own existing
+   // async-fill correlation (AsyncFillCorrelator.mqh, keyed by order_ticket)
+   // resolves it later via OnTradeTransaction, which already reads
+   // DEAL_POSITION_ID from the real fill deal the same causally-correct way.
+   if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL)
      {
       if(!HistoryDealSelect(result.deal_ticket))
         {
@@ -279,6 +307,7 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
          result.rejection_reason = "fill_deal_has_no_position_id";
          return false;
         }
+      result.filled_volume = HistoryDealGetDouble(result.deal_ticket, DEAL_VOLUME);
 
       // position_ticket (needed for THIS session's immediate close/modify
       // calls, which the MT5 API itself requires) is now resolved by

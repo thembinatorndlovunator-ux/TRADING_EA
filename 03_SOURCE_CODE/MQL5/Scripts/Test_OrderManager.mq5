@@ -225,6 +225,16 @@ void OnStart()
             open_result.position_id != 0);
       Check("exactly one owned position exists after opening",
             CountOwnedPositions(InpTestMagic) == 1);
+      // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding
+      // 8): a full (non-partial) fill's filled_volume must equal the
+      // requested volume -- TRADE_RETCODE_DONE_PARTIAL (where filled_volume
+      // would be LESS than requested) needs a broker that only has partial
+      // liquidity to exercise for real, which this test environment cannot
+      // force deterministically; compile-verified only, matching this
+      // project's established precedent for broker-fill-state-dependent
+      // paths.**
+      Check("a full (non-partial) fill's filled_volume equals the requested volume",
+            MathAbs(open_result.filled_volume - real.volume_min) < 0.0000001);
 
       //--- 9. TASK-041: OM_ModifyStop moves this same live position's SL --
       double point = SymbolInfoDouble(InpTestSymbol, SYMBOL_POINT);
