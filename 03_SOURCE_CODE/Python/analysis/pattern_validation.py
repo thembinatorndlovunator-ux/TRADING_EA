@@ -1383,10 +1383,18 @@ def detect_all_patterns(
     return pd.DataFrame(rows)
 
 
-def compare_to_mql5_export(python_results: pd.DataFrame, mql5_export_csv: Path) -> pd.DataFrame:
+def compare_to_mql5_export(
+    python_results: pd.DataFrame,
+    mql5_export_csv: Path,
+    *,
+    python_identity: pd.DataFrame,
+    price_tolerance: float = 1e-6,
+) -> pd.DataFrame:
     """Joins this module's own detect_all_patterns() output against a
-    real MQL5-exported detector-results CSV (columns: k, <same pattern
-    names as booleans>) and reports every row where they disagree.
+    real MQL5-exported detector-results CSV (columns: k, symbol,
+    timestamp, open, high, low, close, atr, <same pattern names as
+    booleans> -- see Export_PatternDetectorResults.mq5) and reports every
+    row where they disagree.
 
     **Fixed, 2026-07-21 Codex review finding:** previously used an INNER
     merge, which silently drops any 'k' present in only one side --
@@ -1399,17 +1407,52 @@ def compare_to_mql5_export(python_results: pd.DataFrame, mql5_export_csv: Path) 
     CsvSchemaError -- not a silent comparison -- if either side has a key
     the other lacks, or if either side has a duplicate key.
 
-    **Not yet exercisable against real data** -- no MQL5 module in this
-    project currently exports pattern results to a file. Also raises
-    CsvSchemaError if the export is missing the 'k' column or any pattern
-    column present in 'python_results'.
+    **Extended, 2026-07-22 Codex review finding (eighth round, P1 finding
+    17):** exact 'k' coverage alone proves only that two tables have the
+    same ROW NUMBERS, not that they classified the SAME BARS --
+    Export_PatternDetectorResults.mq5 now includes symbol/timestamp/OHLC/
+    ATR provenance specifically so this could be checked, but this
+    function previously derived its comparison columns only from
+    detect_all_patterns()'s own output (k + booleans) and ignored every
+    provenance field entirely. The review's own reproduced counterexample:
+    a probe with the wrong symbol, a 1999 timestamp, and entirely
+    different OHLC/ATR, but matching boolean flags, returned ZERO
+    disagreements. 'python_identity' is now a REQUIRED DataFrame (a 'k'
+    column matching python_results' own 'k' values, plus whichever of
+    symbol/timestamp/open/high/low/close/atr the caller has available --
+    at minimum open/high/low/close, the bar's own defining numeric
+    identity, which raises CsvSchemaError if entirely missing) checked
+    against the SAME-named columns in the MQL5 export for every 'k' both
+    sides share: an identity mismatch (a non-numeric column differing at
+    all, or a numeric one differing by more than 'price_tolerance') now
+    raises CsvSchemaError immediately, BEFORE any pattern-column
+    comparison is even attempted -- two tables that never actually
+    analyzed the same underlying chart segment can no longer silently
+    "agree" on booleans alone.
     """
 
     pattern_columns = [c for c in python_results.columns if c != "k"]
     if python_results["k"].duplicated().any():
         raise CsvSchemaError("compare_to_mql5_export: python_results has duplicate 'k' values")
 
-    mql5_results = read_csv_with_required_columns(mql5_export_csv, {"k", *pattern_columns})
+    identity_columns = [c for c in python_identity.columns if c != "k"]
+    if not {"open", "high", "low", "close"}.issubset(identity_columns):
+        raise CsvSchemaError(
+            "compare_to_mql5_export: python_identity must include at minimum "
+            "open/high/low/close -- a bar's own defining numeric identity -- to prove both "
+            "sides actually analyzed the same underlying chart segment"
+        )
+    if python_identity["k"].duplicated().any():
+        raise CsvSchemaError("compare_to_mql5_export: python_identity has duplicate 'k' values")
+    if set(python_identity["k"]) != set(python_results["k"]):
+        raise CsvSchemaError(
+            "compare_to_mql5_export: python_identity's 'k' values do not exactly match "
+            "python_results' own 'k' values -- both must describe the same rows"
+        )
+
+    mql5_results = read_csv_with_required_columns(
+        mql5_export_csv, {"k", *pattern_columns, *identity_columns}
+    )
     assert_unique_ids(mql5_results, "k", mql5_export_csv)
 
     merged = python_results.merge(
@@ -1423,6 +1466,31 @@ def compare_to_mql5_export(python_results: pd.DataFrame, mql5_export_csv: Path) 
             f"compare_to_mql5_export: key coverage mismatch -- "
             f"{len(left_only)} k value(s) only in python_results ({sorted(left_only['k'].tolist())}), "
             f"{len(right_only)} k value(s) only in {mql5_export_csv} ({sorted(right_only['k'].tolist())})"
+        )
+
+    # Identity check FIRST, before any pattern-column comparison -- proves
+    # both sides analyzed the same underlying bars, not just the same row
+    # numbers. Joined separately (python_identity carries only identity
+    # columns, never the pattern booleans) so its own column names never
+    # collide with python_results' pattern columns during the merge above.
+    identity_merged = python_identity.merge(
+        mql5_results[["k", *identity_columns]], on="k", suffixes=("_python", "_mql5")
+    )
+    identity_mismatches: list[str] = []
+    for col in identity_columns:
+        py_col = identity_merged[f"{col}_python"]
+        mql_col = identity_merged[f"{col}_mql5"]
+        if pd.api.types.is_numeric_dtype(py_col) and pd.api.types.is_numeric_dtype(mql_col):
+            mismatch = (py_col - mql_col).abs() > price_tolerance
+        else:
+            mismatch = py_col.astype(str) != mql_col.astype(str)
+        if mismatch.any():
+            bad_ks = sorted(identity_merged.loc[mismatch, "k"].tolist())
+            identity_mismatches.append(f"'{col}' differs at k={bad_ks}")
+    if identity_mismatches:
+        raise CsvSchemaError(
+            f"compare_to_mql5_export: {mql5_export_csv} does not describe the same underlying "
+            f"bars as python_identity -- " + "; ".join(identity_mismatches)
         )
 
     both = merged[merged["_merge"] == "both"]

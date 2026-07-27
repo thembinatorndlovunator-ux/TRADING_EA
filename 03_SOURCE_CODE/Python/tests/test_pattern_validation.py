@@ -1249,18 +1249,91 @@ def test_run_writes_provenance_sidecar(tmp_path):
     assert payload["summary"]["n_bars"] == 2
 
 
+def _identity_df(k_values, opens, highs, lows, closes):
+    return pd.DataFrame({"k": k_values, "open": opens, "high": highs, "low": lows, "close": closes})
+
+
 def test_compare_to_mql5_export_reports_disagreements(tmp_path):
     python_results = pd.DataFrame(
         {"k": [0, 1], "bullish_engulfing": [True, False], "bearish_engulfing": [False, False]}
     )
+    python_identity = _identity_df(
+        [0, 1], [100.0, 101.0], [102.0, 103.0], [99.0, 100.0], [101.0, 102.0]
+    )
     mql5_export = tmp_path / "mql5_export.csv"
     pd.DataFrame(
-        {"k": [0, 1], "bullish_engulfing": [False, False], "bearish_engulfing": [False, False]}
+        {
+            "k": [0, 1],
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.0, 102.0],
+            "bullish_engulfing": [False, False],
+            "bearish_engulfing": [False, False],
+        }
     ).to_csv(mql5_export, index=False)
 
-    disagreements = compare_to_mql5_export(python_results, mql5_export)
+    disagreements = compare_to_mql5_export(
+        python_results, mql5_export, python_identity=python_identity
+    )
     assert len(disagreements) == 1
     assert disagreements.iloc[0]["k"] == 0
+
+
+def test_compare_to_mql5_export_requires_ohlc_identity_columns():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 17): python_identity must include at minimum open/high/low/
+    close -- a bar's own defining numeric identity -- or this check cannot
+    prove anything about which bars were actually analyzed."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    incomplete_identity = pd.DataFrame({"k": [0], "open": [100.0]})  # missing high/low/close
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(
+            python_results, Path("unused.csv"), python_identity=incomplete_identity
+        )
+
+
+def test_compare_to_mql5_export_rejects_mismatched_underlying_bars(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 17): the review's own reproduced counterexample -- a probe with
+    the wrong symbol, a 1999 timestamp, and entirely different OHLC/ATR,
+    but matching boolean flags, previously returned ZERO disagreements
+    (exact 'k' coverage proves only the same ROW NUMBERS, not the same
+    BARS). This reproduces that exact scenario: identical pattern booleans,
+    completely different symbol/timestamp/OHLC/ATR -- must now raise
+    CsvSchemaError rather than silently reporting a clean comparison."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = pd.DataFrame(
+        {
+            "k": [0],
+            "symbol": ["XAUUSD"],
+            "timestamp": ["2026-07-22T12:00:00Z"],
+            "open": [2400.0],
+            "high": [2410.0],
+            "low": [2395.0],
+            "close": [2405.0],
+            "atr": [5.0],
+        }
+    )
+    mql5_export = tmp_path / "mql5_export.csv"
+    pd.DataFrame(
+        {
+            "k": [0],
+            "symbol": ["EURUSD"],  # wrong symbol
+            "timestamp": ["1999-01-01T00:00:00Z"],  # wrong (1999) timestamp
+            "open": [1.05],  # entirely different OHLC
+            "high": [1.06],
+            "low": [1.04],
+            "close": [1.055],
+            "atr": [0.002],  # entirely different ATR
+            "bullish_engulfing": [True],  # matching boolean flag
+        }
+    ).to_csv(mql5_export, index=False)
+
+    with pytest.raises(CsvSchemaError, match="does not describe the same underlying bars"):
+        compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
 
 
 def test_cli_main_success(tmp_path, capsys):
@@ -1292,25 +1365,48 @@ def test_compare_to_mql5_export_rejects_non_overlapping_keys(tmp_path):
     possible false "pass" for two datasets that were never compared."""
 
     python_results = pd.DataFrame({"k": [1], "bullish_engulfing": [True]})
+    python_identity = _identity_df([1], [100.0], [101.0], [99.0], [100.5])
     mql5_export = tmp_path / "mql5_export.csv"
-    pd.DataFrame({"k": [0], "bullish_engulfing": [True]}).to_csv(mql5_export, index=False)
+    pd.DataFrame(
+        {
+            "k": [0],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "bullish_engulfing": [True],
+        }
+    ).to_csv(mql5_export, index=False)
 
     with pytest.raises(CsvSchemaError):
-        compare_to_mql5_export(python_results, mql5_export)
+        compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
 
 
 def test_compare_to_mql5_export_rejects_duplicate_python_key():
     python_results = pd.DataFrame({"k": [0, 0], "bullish_engulfing": [True, False]})
+    python_identity = _identity_df(
+        [0, 0], [100.0, 100.0], [101.0, 101.0], [99.0, 99.0], [100.5, 100.5]
+    )
     with pytest.raises(CsvSchemaError):
-        compare_to_mql5_export(python_results, Path("unused.csv"))
+        compare_to_mql5_export(python_results, Path("unused.csv"), python_identity=python_identity)
 
 
 def test_compare_to_mql5_export_rejects_duplicate_mql5_key(tmp_path):
     python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df([0], [100.0], [101.0], [99.0], [100.5])
     mql5_export = tmp_path / "mql5_export.csv"
-    pd.DataFrame({"k": [0, 0], "bullish_engulfing": [True, False]}).to_csv(mql5_export, index=False)
+    pd.DataFrame(
+        {
+            "k": [0, 0],
+            "open": [100.0, 100.0],
+            "high": [101.0, 101.0],
+            "low": [99.0, 99.0],
+            "close": [100.5, 100.5],
+            "bullish_engulfing": [True, False],
+        }
+    ).to_csv(mql5_export, index=False)
     with pytest.raises(CsvSchemaError):
-        compare_to_mql5_export(python_results, mql5_export)
+        compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
 
 
 def test_run_rejects_non_finite_ohlc(tmp_path):
