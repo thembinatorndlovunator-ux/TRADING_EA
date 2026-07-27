@@ -53,7 +53,17 @@ established per-round discipline exactly.
   `Result: N errors, N warnings` line for every one. All 39 compile
   clean. See `09_HANDOVERS/compile_evidence/README.md` for the retention
   convention this establishes going forward (this round's own P1 finding
-  19).
+  19). **Both counts above are wrong, corrected 2026-07-27 (Codex round-8
+  P1 finding 21): Git at the evidence commit actually held 39 `.mq5`
+  programs (2 Experts + 37 Test/Export scripts), and the referenced
+  evidence file's own per-file listing omitted `EquityTickRecorder.mq5`
+  (the second Expert) entirely despite its total line correctly saying 39
+  -- every `journal record` written by a binary attributed to that
+  evidence would have claimed the wrong source commit besides. See
+  `09_HANDOVERS/compile_evidence/README.md`'s own round-8 entry and
+  `TASK-028_round8_full_compile_evidence_2026-07-27.txt` for accurate,
+  complete, current-round evidence (41 targets, individual SHA-256 hashes,
+  full raw logs, not just `Result:` lines).**
 - **Python:** the full `pytest` suite passes at every commit below;
   by the final P1 fix (finding 17) it stood at **694 passed, 0 failed**.
   `ruff`/`ruff format`/`mypy` were not re-run as a final gate this round

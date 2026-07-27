@@ -50,8 +50,18 @@
 // version above (single source of truth referenced from both journal-writing
 // call sites below, instead of the previous two independently-hardcoded
 // literals that had already drifted out of sync with each other).**
-#define THEMBA_EA_VERSION_STRING "1.02-task028-round7"
-#define THEMBA_EA_GIT_COMMIT     "b362c07a1bab"
+// **Updated, 2026-07-27 (Codex round-8 P1 finding 21): the retained
+// round-7 compile evidence attributed its build to commit 970cb39, seven
+// commits behind the actual tip at compile time -- every journal record
+// written by that binary claimed the wrong source commit. This value is
+// updated immediately before generating this round's own compile evidence
+// (09_HANDOVERS/compile_evidence/), matching this project's own stated
+// convention above: it names the commit this exact tree state (this
+// macro-update commit's own parent, containing every round-8 fix) was
+// compiled from, not the macro-update commit itself, which changes only
+// this string literal and no behavior.**
+#define THEMBA_EA_VERSION_STRING "1.02-task028-round8"
+#define THEMBA_EA_GIT_COMMIT     "990f32c17327"
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
 #include "../Include/ThembaEA/Risk/BrokerValidator.mqh"
