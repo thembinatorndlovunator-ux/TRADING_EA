@@ -188,6 +188,34 @@ struct SOrderOpenResult
                             // a partial fill.
    uint   retcode;
    string rejection_reason; // "" iff success
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 4):
+   // true iff the broker retcode itself was DONE/DONE_PARTIAL (a REAL fill
+   // genuinely happened) but this function could not resolve the fill's own
+   // deal/position details (HistoryDealSelect failed, the deal had no
+   // DEAL_POSITION_ID yet, or the resulting position could not be found by
+   // that ID) -- 'success' is deliberately left false for this case (this
+   // function itself could not hand the caller a usable position_id/ticket),
+   // but a caller MUST NOT treat this identically to a genuine order
+   // rejection: real, live exposure exists at the broker regardless of
+   // whether this process could resolve it. See OM_OpenPosition's own
+   // updated comment for the full defect this closes and the required
+   // caller behavior.
+   bool   exposure_unresolved;
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 4):
+   // true iff retcode == TRADE_RETCODE_DONE_PARTIAL AND the SAME order
+   // ticket is still found in the ACTIVE (working) orders list immediately
+   // after this call -- meaning the broker's own filling-mode configuration
+   // for this symbol left an unfilled REMAINDER still working, not fully
+   // terminal. This is possible under ORDER_FILLING_RETURN (a market order
+   // can behave like a resting limit order for its unfilled remainder);
+   // BrokerValidator.mqh does not yet force a specific filling mode (see
+   // that module's own P0 finding 7 fix), so this cannot be ruled out
+   // structurally yet. false for an ordinary DONE fill or a DONE_PARTIAL
+   // under FOK/IOC (which never leaves a remainder). A caller MUST treat
+   // true here like the async PLACED case (durable intent left ACTIVE,
+   // AsyncFillCorrelator.mqh tracks order_ticket for the remainder's own
+   // later terminal outcome), never as fully resolved.
+   bool   has_live_remainder;
   };
 
 //+------------------------------------------------------------------+
@@ -218,6 +246,8 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    result.filled_volume = 0.0;
    result.retcode = 0;
    result.rejection_reason = "";
+   result.exposure_unresolved = false;
+   result.has_live_remainder = false;
 
    if(volume <= 0.0)
      {
@@ -297,15 +327,33 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
    // DEAL_POSITION_ID from the real fill deal the same causally-correct way.
    if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL)
      {
+      // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding
+      // 4): each of the three branches below previously `return false`
+      // identically to an outright order rejection, even though the broker
+      // retcode just checked (DONE/DONE_PARTIAL) proves a REAL FILL
+      // happened -- the caller then cleared its durable intent and
+      // journaled a rejection while live, unaccounted-for exposure existed
+      // at the broker. 'result.exposure_unresolved' is now set true on each
+      // of these paths (still returns false -- this function itself could
+      // not hand back a usable position_id/ticket -- but the caller MUST
+      // check this flag, per this struct's own updated comment, and treat
+      // it like the async PLACED case: leave the durable intent ACTIVE
+      // rather than clearing it, so a later reconciliation pass (OnInit's
+      // IM_ReconcileOnRestart, or a subsequent OnTradeTransaction call once
+      // the terminal's own history catches up) gets a chance to resolve
+      // this same fill instead of the intent being discarded while real
+      // exposure remains live and uncorrelated.**
       if(!HistoryDealSelect(result.deal_ticket))
         {
          result.rejection_reason = "fill_deal_not_found_in_history";
+         result.exposure_unresolved = true;
          return false;
         }
       result.position_id = (ulong)HistoryDealGetInteger(result.deal_ticket, DEAL_POSITION_ID);
       if(result.position_id == 0)
         {
          result.rejection_reason = "fill_deal_has_no_position_id";
+         result.exposure_unresolved = true;
          return false;
         }
       result.filled_volume = HistoryDealGetDouble(result.deal_ticket, DEAL_VOLUME);
@@ -328,8 +376,17 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
       if(result.position_ticket == 0)
         {
          result.rejection_reason = "filled_position_not_found_by_position_id";
+         result.exposure_unresolved = true;
          return false;
         }
+
+      // See SOrderOpenResult's own has_live_remainder comment: under
+      // ORDER_FILLING_RETURN, a DONE_PARTIAL market order's own unfilled
+      // remainder can still be working as an active order. OrderSelect
+      // finding this exact ticket in the ACTIVE orders list (not just
+      // history) means it has not fully terminated yet.
+      if(result.retcode == TRADE_RETCODE_DONE_PARTIAL && OrderSelect(result.order_ticket))
+         result.has_live_remainder = true;
      }
 
    result.success = true;

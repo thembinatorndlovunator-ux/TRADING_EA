@@ -871,18 +871,40 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
          if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
            {
             ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
-            AFC_RemovePending(pending_index);
-            // Definitive terminal resolution -- safe to clear the durable
-            // intent now (see AttemptOrderSubmission's own step 7 comment
-            // for why it was deliberately left active until this point).
-            IM_ClearIntent(g_symbol, InpMagicNumber);
-            // **Added, 2026-07-27 (Codex round-9 P0 finding 1):** the
-            // reservation this fill's own submission made is released here
-            // too -- real exposure now exists and is counted by
-            // ComputeOwnMagicOpenRiskCash() itself, so continuing to hold
-            // the reservation on top of that would double-count this
-            // exact risk against the cap.
-            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+
+            // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0
+            // finding 4): the FIRST DEAL_ENTRY_IN deal on a PLACED order
+            // previously removed the correlator record and cleared the
+            // intent unconditionally -- but under ORDER_FILLING_RETURN, a
+            // partial fill can leave the SAME order ticket still working
+            // for its unfilled remainder. Clearing everything on the FIRST
+            // partial deal left any LATER deal on that same order with no
+            // pending record to correlate against. Only treat this as
+            // definitively terminal when the order is no longer in the
+            // active orders list (OrderSelect fails) -- a real remainder
+            // keeps both the correlator entry and the durable intent alive
+            // for the next deal on this same order ticket.**
+            if(OrderSelect(trans.order))
+              {
+               PrintFormat("ThembaEA: async fill for order #%I64u (position_id=%I64u) still has a "
+                           "live order remainder -- correlator entry and durable intent left ACTIVE "
+                           "pending its own later resolution.", trans.order, resolved_position_id);
+              }
+            else
+              {
+               AFC_RemovePending(pending_index);
+               // Definitive terminal resolution -- safe to clear the durable
+               // intent now (see AttemptOrderSubmission's own step 7 comment
+               // for why it was deliberately left active until this point).
+               IM_ClearIntent(g_symbol, InpMagicNumber);
+               // **Added, 2026-07-27 (Codex round-9 P0 finding 1):** the
+               // reservation this fill's own submission made is released here
+               // too -- real exposure now exists and is counted by
+               // ComputeOwnMagicOpenRiskCash() itself, so continuing to hold
+               // the reservation on top of that would double-count this
+               // exact risk against the cap.
+               RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+              }
             LogAsyncFillResolution(pending_signal_id, true, resolved_position_id,
                                     "async_fill_confirmed");
            }
@@ -897,7 +919,20 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
         {
          ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(trans.order, ORDER_STATE);
-         if(state != ORDER_STATE_FILLED)
+         // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding
+         // 4): 'state != ORDER_STATE_FILLED' previously treated EVERY
+         // non-FILLED final state identically to "never filled" -- but an
+         // order that partially filled (real exposure created) and was then
+         // cancelled (its unfilled remainder) also ends in a non-FILLED
+         // state (CANCELED/EXPIRED), not FILLED. ORDER_POSITION_ID is MT5's
+         // own documented link from an order to the position it opened or
+         // added to -- nonzero here proves real exposure exists regardless
+         // of this order's own final state, and is checked BEFORE trusting
+         // the final-state-only signal.**
+         ulong order_position_id = (ulong)HistoryOrderGetInteger(trans.order, ORDER_POSITION_ID);
+         bool  any_volume_filled = (state == ORDER_STATE_FILLED) || (order_position_id != 0);
+
+         if(!any_volume_filled)
            {
             AFC_RemovePending(pending_index);
             IM_ClearIntent(g_symbol, InpMagicNumber); // cancelled/expired/rejected -- terminal
@@ -906,6 +941,21 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             RRM_ReleaseReservation(g_symbol, InpMagicNumber);
             LogAsyncFillResolution(pending_signal_id, false, 0,
                                     StringFormat("async_order_never_filled_state_%s",
+                                                  EnumToString(state)));
+           }
+         else
+           {
+            // Real exposure exists (a partial fill occurred before this
+            // order's own remainder was cancelled/expired). Definitively
+            // terminal now -- the order itself is fully done, no live
+            // remainder can remain (see the DEAL_ENTRY_IN handler's own
+            // OrderSelect check, which is what would have kept this pending
+            // record alive this long in the first place).
+            AFC_RemovePending(pending_index);
+            IM_ClearIntent(g_symbol, InpMagicNumber);
+            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+            LogAsyncFillResolution(pending_signal_id, true, order_position_id,
+                                    StringFormat("async_order_partial_fill_then_%s",
                                                   EnumToString(state)));
            }
         }
@@ -1801,6 +1851,40 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // outcome (fill confirmed, or cancelled/expired).
    if(!opened)
      {
+      // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 4):
+      // OM_OpenPosition returning false does NOT always mean the order was
+      // rejected -- exposure_unresolved means the broker's own retcode
+      // confirmed a REAL fill (DONE/DONE_PARTIAL) but this process could
+      // not resolve the fill's own deal/position details. Treating this
+      // identically to an outright rejection (the previous behavior) would
+      // clear the durable intent and leave real, live exposure completely
+      // uncorrelated -- a second decision on the next bar could then submit
+      // ANOTHER order for the same symbol+magic on top of it. The intent is
+      // left ACTIVE here (never cleared) so IM_BeginIntent's own guard
+      // continues refusing a new submission for this symbol+magic until a
+      // later reconciliation pass (IM_ReconcileOnRestart, or a subsequent
+      // OnTradeTransaction call once the terminal's own history catches up)
+      // resolves it. The risk reservation IS released, though -- the real
+      // position this fill created will be picked up by
+      // ComputeOwnMagicOpenRiskCash()'s own independent PositionsTotal()
+      // scan regardless of this process's resolution failure, so continuing
+      // to hold the reservation on top of that would double-count it.**
+      if(open_result.exposure_unresolved)
+        {
+         RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+         AppendReason(rejected, "order_exposure_unresolved_awaiting_reconciliation_" +
+                      open_result.rejection_reason);
+         decision.reasons_passed_json = BuildJsonStringArray(passed);
+         decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+         PrintFormat("ThembaEA: CRITICAL -- OM_OpenPosition confirms broker retcode=%u (a REAL "
+                     "fill) but could not resolve this fill's own position details (%s). Live "
+                     "exposure may exist at the broker, uncorrelated to this decision. The durable "
+                     "intent is left ACTIVE -- no new entry will be attempted for '%s' magic %I64d "
+                     "until this is reconciled.",
+                     open_result.retcode, open_result.rejection_reason, g_symbol, InpMagicNumber);
+         return;
+        }
+
       IM_ClearIntent(g_symbol, InpMagicNumber); // rejected outright -- definitively terminal
       RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1
       AppendReason(rejected, "order_" + open_result.rejection_reason);
@@ -1810,7 +1894,28 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
      }
    if(open_result.position_id != 0)
      {
-      IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
+      // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding
+      // 4): a DONE_PARTIAL fill under ORDER_FILLING_RETURN can leave this
+      // exact order ticket still WORKING for its unfilled remainder (see
+      // SOrderOpenResult's own has_live_remainder comment) -- clearing the
+      // intent unconditionally here would let a LATER remainder fill (or
+      // cancellation) go completely uncorrelated. When a remainder is
+      // still live, the intent is left ACTIVE and this order is registered
+      // with AsyncFillCorrelator.mqh (the same mechanism the fully-async
+      // PLACED path below already uses) so OnTradeTransaction's normal
+      // DEAL_ENTRY_IN/HISTORY_ADD handling resolves it whenever the
+      // remainder's own terminal outcome eventually arrives.**
+      if(open_result.has_live_remainder)
+        {
+         AFC_AddPending(open_result.order_ticket, decision.signal_id);
+         PrintFormat("ThembaEA: DONE_PARTIAL fill for position_id=%I64u still has a live order "
+                     "remainder (ticket #%I64u) -- durable intent left ACTIVE pending its own "
+                     "later resolution.", open_result.position_id, open_result.order_ticket);
+        }
+      else
+        {
+         IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
+        }
       RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1 -- real
                                                           // exposure now exists and is counted by
                                                           // ComputeOwnMagicOpenRiskCash() itself.

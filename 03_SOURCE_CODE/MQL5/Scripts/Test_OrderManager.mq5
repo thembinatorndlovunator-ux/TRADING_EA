@@ -235,6 +235,21 @@ void OnStart()
       // paths.**
       Check("a full (non-partial) fill's filled_volume equals the requested volume",
             MathAbs(open_result.filled_volume - real.volume_min) < 0.0000001);
+      // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding
+      // 4): an ordinary, fully-resolved fill must report BOTH new flags
+      // false -- exposure_unresolved is for the "retcode confirms a real
+      // fill but resolution failed" case, and has_live_remainder is for a
+      // DONE_PARTIAL-with-a-still-working-remainder case, neither of which
+      // applies to a normal successful DONE fill like this one. The
+      // reverse (forcing HistoryDealSelect to fail, or forcing
+      // ORDER_FILLING_RETURN to leave a real remainder) needs broker-side
+      // conditions this test environment cannot force deterministically;
+      // compile-verified only, matching this project's established
+      // precedent for broker-fill-state-dependent paths.**
+      Check("an ordinary successful fill reports exposure_unresolved == false",
+            open_result.exposure_unresolved == false);
+      Check("an ordinary successful (non-partial) fill reports has_live_remainder == false",
+            open_result.has_live_remainder == false);
 
       //--- 9. TASK-041: OM_ModifyStop moves this same live position's SL --
       double point = SymbolInfoDouble(InpTestSymbol, SYMBOL_POINT);
