@@ -25,6 +25,19 @@
 //| shared account-wide namespace — per section 8's own "per-instance             |
 //| namespace" wording, since each magic-numbered instance manages its own            |
 //| closure independently.                                                                |
+//|                                                                    |
+//| **Reused, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 1):** ThembaAdaptiveIntradayEA.mq5's OnTradeTransaction now also calls          |
+//| DWB_AttemptClosure for a POST-FILL hard-risk-cap breach (the recomputed             |
+//| actual per-trade or total-open-risk figure exceeding InpRiskCapPercent),                 |
+//| not only a daily/weekly loss-cap breach -- both breach reasons require                       |
+//| the exact same corrective action (close every own-magic position, cancel                        |
+//| every own-magic pending order), so this module's persisted                                       |
+//| closure_pending flag/retry-until-closed machinery is shared rather than                           |
+//| duplicated under a second name. The flag itself does not distinguish                              |
+//| WHICH breach reason armed it -- callers needing that distinction must                             |
+//| log it themselves (see the EA's own PrintFormat calls at each call                                 |
+//| site).**                                                                                           |
 //+------------------------------------------------------------------+
 #property strict
 

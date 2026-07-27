@@ -71,6 +71,7 @@
 #include "../Include/ThembaEA/Risk/CooldownManager.mqh"
 #include "../Include/ThembaEA/Risk/NoStopGraceManager.mqh"
 #include "../Include/ThembaEA/Risk/DailyWeeklyBreachManager.mqh"
+#include "../Include/ThembaEA/Risk/RiskReservationManager.mqh"
 #include "../Include/ThembaEA/Journal/DecisionJournal.mqh"
 #include "../Include/ThembaEA/Execution/IntradayCloseManager.mqh"
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
@@ -621,9 +622,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
   {
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
      {
-      if(!HistoryDealSelect(trans.deal))
-         return;
-
       // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding
       // 3): daily/weekly loss-cap breach detection, per section 8: "breach
       // detection happens inside the OnTradeTransaction handler at the
@@ -637,7 +635,18 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       // reflects this deal's own fill by the time this handler runs. Skips
       // if a closure is already pending -- OnTick's own retry loop is
       // already driving that one to completion; re-arming here would just
-      // restate the same persisted flag redundantly.**
+      // restate the same persisted flag redundantly.
+      //
+      // **Moved above the HistoryDealSelect gate below, 2026-07-27 (Codex
+      // review finding, ninth round, P0 finding 1): this check reads only
+      // ACCOUNT_EQUITY (via DWL_IsDailyLossBreached/DWL_IsWeeklyLossBreached),
+      // never any trans.deal-specific field -- it does NOT need
+      // HistoryDealSelect(trans.deal) to have succeeded at all. Running it
+      // AFTER that select meant a HistoryDealSelect failure (rare, but a
+      // real possible broker/terminal glitch, not provably impossible)
+      // bypassed the mandatory daily/weekly breach check entirely for that
+      // fill event -- exactly the "fail-open on an unreadable component"
+      // defect this same finding closes elsewhere in this function.**
       if(!DWB_IsClosurePending(g_symbol, InpMagicNumber))
         {
          double breach_daily_change, breach_weekly_change;
@@ -656,6 +665,14 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                         breach_closed ? "completed" : "pending (will retry every tick)");
            }
         }
+
+      // Every remaining branch below (position mode/cooldown bookkeeping,
+      // the post-fill hard-risk-cap recomputation, async-fill correlation)
+      // DOES need this deal's own specific fields, so it is still guarded
+      // by a successful select -- only the account-equity-only check above
+      // is exempt.
+      if(!HistoryDealSelect(trans.deal))
+         return;
 
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
 
@@ -776,6 +793,79 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
       if(entry == DEAL_ENTRY_IN)
         {
+         // **Added, 2026-07-27 (Codex review finding, ninth round, P0
+         // finding 1): recompute THIS fill's own ACTUAL risk (real fill
+         // price, real stop, real volume, including adverse entry
+         // slippage: abs(actual_fill - stop) * actual_volume * tick_value
+         // / tick_size, per the review's own suggested formula) and this
+         // magic's real total open risk, forcing a mandatory closure if
+         // either now exceeds InpRiskCapPercent. Every gate before this
+         // point (gate 4/5b in AttemptOrderSubmission) can only check a
+         // pre-fill ESTIMATE -- a real broker fill can land at a worse
+         // price than requested, and this is the only point that can
+         // catch the resulting REAL breach. Reuses
+         // DailyWeeklyBreachManager.mqh's own DWB_AttemptClosure (closes
+         // every own-magic position, cancels every own-magic pending
+         // order) -- the corrective action for a risk-cap breach is
+         // identical to a daily/weekly breach's, so this shares that
+         // module's persisted closure_pending flag/retry-until-closed
+         // machinery rather than duplicating it under a second name.**
+         if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) == InpMagicNumber &&
+            HistoryDealGetString(trans.deal, DEAL_SYMBOL) == g_symbol &&
+            !DWB_IsClosurePending(g_symbol, InpMagicNumber))
+           {
+            ulong opened_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+            if(PositionSelectByTicket(opened_position_id))
+              {
+               double pos_sl = PositionGetDouble(POSITION_SL);
+               double equity_now = AccountInfoDouble(ACCOUNT_EQUITY);
+               bool   per_trade_breached = false;
+               double actual_trade_risk_cash = 0.0;
+
+               // A stopless position is priced by ComputeOwnMagicOpenRiskCash's
+               // own no-SL worst-case fallback below (via the total-risk
+               // check), not by this per-trade slippage formula, which needs
+               // a real stop to measure a loss distance against.
+               if(pos_sl != 0.0)
+                 {
+                  CSymbolProfile fill_profile;
+                  if(fill_profile.Load(g_symbol) && fill_profile.tick_size > 0.0 && equity_now > 0.0)
+                    {
+                     double actual_fill_price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+                     double actual_volume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+                     double slippage_loss_distance = MathAbs(actual_fill_price - pos_sl);
+                     actual_trade_risk_cash = slippage_loss_distance * actual_volume *
+                                              fill_profile.tick_value_loss / fill_profile.tick_size;
+                     double actual_trade_risk_percent = 100.0 * actual_trade_risk_cash / equity_now;
+                     per_trade_breached = actual_trade_risk_percent > InpRiskCapPercent + 1e-6;
+                    }
+                  else
+                     per_trade_breached = true; // cannot verify this fill's own actual risk -- fail closed
+                 }
+
+               double total_risk_cash;
+               bool   total_readable;
+               ComputeOwnMagicOpenRiskCash(total_risk_cash, total_readable);
+               bool total_breached = !total_readable ||
+                                     (equity_now > 0.0 &&
+                                      100.0 * total_risk_cash / equity_now > InpRiskCapPercent + 1e-6);
+
+               if(per_trade_breached || total_breached)
+                 {
+                  string breach_reasons[];
+                  bool breach_closed = DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_reasons);
+                  PrintFormat("ThembaEA: POST-FILL hard-risk-cap breach for position_id=%I64u "
+                              "(per_trade_breached=%s total_breached=%s, "
+                              "actual_trade_risk_cash=%.2f, total_risk_cash=%.2f, "
+                              "total_risk_readable=%s) -- closure %s.",
+                              opened_position_id, per_trade_breached ? "true" : "false",
+                              total_breached ? "true" : "false", actual_trade_risk_cash,
+                              total_risk_cash, total_readable ? "true" : "false",
+                              breach_closed ? "completed" : "pending (will retry every tick)");
+                 }
+              }
+           }
+
          string pending_signal_id;
          int pending_index;
          if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
@@ -786,6 +876,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // intent now (see AttemptOrderSubmission's own step 7 comment
             // for why it was deliberately left active until this point).
             IM_ClearIntent(g_symbol, InpMagicNumber);
+            // **Added, 2026-07-27 (Codex round-9 P0 finding 1):** the
+            // reservation this fill's own submission made is released here
+            // too -- real exposure now exists and is counted by
+            // ComputeOwnMagicOpenRiskCash() itself, so continuing to hold
+            // the reservation on top of that would double-count this
+            // exact risk against the cap.
+            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
             LogAsyncFillResolution(pending_signal_id, true, resolved_position_id,
                                     "async_fill_confirmed");
            }
@@ -804,6 +901,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
            {
             AFC_RemovePending(pending_index);
             IM_ClearIntent(g_symbol, InpMagicNumber); // cancelled/expired/rejected -- terminal
+            // No exposure was ever created -- release this submission's own
+            // risk reservation (Codex round-9 P0 finding 1).
+            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
             LogAsyncFillResolution(pending_signal_id, false, 0,
                                     StringFormat("async_order_never_filled_state_%s",
                                                   EnumToString(state)));
@@ -1213,10 +1313,30 @@ bool GetCurrentATRForSymbol(const string symbol, const ENUM_TIMEFRAMES timeframe
 //| taking the larger of two figures instead of their sum. A stopless pending                                                 |
 //| order is skipped here too (defensive completeness only -- the mandatory-                                                     |
 //| stop rule at submission should make this unreachable in practice).**                                                            |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 1):     |
+//| this previously returned a bare double, silently treating "position/       |
+//| order risk could not be priced" identically to "genuinely zero risk"          |
+//| -- a symbol profile that fails to load, ATR unavailable for a stopless           |
+//| position, RM_Compute*RiskCash itself failing, or a stopless PENDING                  |
+//| order (genuinely unbounded risk if it fills; the mandatory-stop rule                    |
+//| SHOULD make this unreachable, but this function must not silently                          |
+//| trust that invariant) all now mark the WHOLE scan invalid, not just                            |
+//| skip their own contribution. 'all_readable_out' is false whenever ANY                              |
+//| component's risk could not be verified -- callers MUST treat that as                                   |
+//| "cannot verify headroom" and fail closed (refuse the new entry), never                                    |
+//| trade on the partial total 'risk_cash_out' still reports for                                              |
+//| diagnostic logging. A position/order whose stop is genuinely on the                                       |
+//| non-loss side (a real, legitimately zero-risk state                                                       |
+//| RM_ComputeLossDistance's own documented contract already returns 0.0                                      |
+//| for) is NOT treated as invalid -- only genuinely unreadable/unpriceable                                   |
+//| states are.**                                                                                             |
 //+------------------------------------------------------------------+
-double ComputeOwnMagicOpenRiskCash()
+bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
   {
    double total = 0.0;
+   bool   all_readable = true;
+
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
       ulong ticket = PositionGetTicket(i);
@@ -1231,7 +1351,10 @@ double ComputeOwnMagicOpenRiskCash()
 
       CSymbolProfile pos_profile;
       if(!pos_profile.Load(pos_symbol))
+        {
+         all_readable = false; // symbol profile unreadable -- risk unknown, not zero
          continue;
+        }
 
       double sl = PositionGetDouble(POSITION_SL);
       double risk_cash;
@@ -1239,22 +1362,30 @@ double ComputeOwnMagicOpenRiskCash()
         {
          double atr;
          if(!GetCurrentATRForSymbol(pos_symbol, InpRegimeTimeframe, 14, atr))
-            continue; // ATR unavailable this tick -- EnforceNoStopGracePeriod
-                      // will still close this position once the grace period
-                      // elapses regardless of whether this pricing succeeds.
+           {
+            all_readable = false; // ATR unavailable this tick -- EnforceNoStopGracePeriod
+                                   // will still close this position once the grace period
+                                   // elapses regardless of whether this pricing succeeds,
+                                   // but THIS scan cannot vouch for its risk right now.
+            continue;
+           }
          if(RM_ComputeNoStopRiskCash(pos_profile, atr, volume, risk_cash,
                                       InpNoStopWorstCaseATRMultiple))
             total += risk_cash;
+         else
+            all_readable = false;
          continue;
         }
 
       double entry = PositionGetDouble(POSITION_PRICE_OPEN);
       double loss_distance = pos_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
       if(loss_distance <= 0.0)
-         continue;
+         continue; // stop genuinely on the non-loss side -- a real zero, not unreadable
 
       if(RM_ComputeRiskCash(pos_profile, loss_distance, volume, risk_cash))
          total += risk_cash;
+      else
+         all_readable = false;
      }
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -1267,7 +1398,14 @@ double ComputeOwnMagicOpenRiskCash()
 
       double sl = OrderGetDouble(ORDER_SL);
       if(sl == 0.0)
-         continue; // mandatory-stop rule should make this unreachable — see header
+        {
+         // A stopless PENDING order represents genuinely unbounded risk if it
+         // fills. The mandatory-stop rule at submission should make this
+         // unreachable for this EA's own orders, but this scan must not
+         // silently trust that invariant for whatever produced this order.
+         all_readable = false;
+         continue;
+        }
 
       string ord_symbol = OrderGetString(ORDER_SYMBOL);
       double entry = OrderGetDouble(ORDER_PRICE_OPEN);
@@ -1278,18 +1416,25 @@ double ComputeOwnMagicOpenRiskCash()
 
       double loss_distance = ord_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
       if(loss_distance <= 0.0)
-         continue;
+         continue; // stop genuinely on the non-loss side -- a real zero, not unreadable
 
       CSymbolProfile ord_profile;
       if(!ord_profile.Load(ord_symbol))
+        {
+         all_readable = false;
          continue;
+        }
 
       double risk_cash;
       if(RM_ComputeRiskCash(ord_profile, loss_distance, volume, risk_cash))
          total += risk_cash; // unconditional sum — see header comment
+      else
+         all_readable = false;
      }
 
-   return total;
+   risk_cash_out = total;
+   all_readable_out = all_readable;
+   return all_readable;
   }
 
 //+------------------------------------------------------------------+
@@ -1558,14 +1703,36 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // SAME InpRiskCapPercent value the per-trade check above already uses,
    // matching the spec's own stated "hard cap 1.00% per trade, 1.00% total
    // open risk" (both caps share one number in this project's design).
-   double existing_open_risk_cash = ComputeOwnMagicOpenRiskCash();
-   double total_open_risk_percent = 100.0 * (existing_open_risk_cash + sizing.risk_cash_actual) /
-                                     equity;
-   if(total_open_risk_percent > InpRiskCapPercent + 1e-6)
+   //
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 1):**
+   // this previously trusted a bare double from ComputeOwnMagicOpenRiskCash
+   // (now fail-closed -- see that function's own header) and checked it as an
+   // unguarded snapshot, so two chart instances sharing this magic on
+   // different symbols could each independently see headroom and both
+   // submit, together exceeding the cap. RRM_TryReserve now performs the
+   // whole check-then-reserve sequence under ONE account-lock hold
+   // (StateManager.mqh's own owner-token lock), summing every OTHER symbol's
+   // own live reservation under this same magic before deciding -- see
+   // RiskReservationManager.mqh's own header for the full design.
+   double existing_open_risk_cash;
+   bool   existing_risk_readable;
+   ComputeOwnMagicOpenRiskCash(existing_open_risk_cash, existing_risk_readable);
+   if(!existing_risk_readable)
      {
-      AppendReason(rejected, StringFormat(
-         "total_open_risk_cap_exceeded_%.4fpct_cap_%.4fpct", total_open_risk_percent,
-         InpRiskCapPercent));
+      AppendReason(rejected, "total_open_risk_unreadable_failing_closed");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+
+   double total_open_risk_percent;
+   string reservation_rejection;
+   bool reserved = RRM_TryReserve(g_symbol, InpMagicNumber, existing_open_risk_cash,
+                                    sizing.risk_cash_actual, InpRiskCapPercent, equity,
+                                    total_open_risk_percent, reservation_rejection);
+   if(!reserved)
+     {
+      AppendReason(rejected, reservation_rejection);
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
       return;
@@ -1579,6 +1746,10 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
                                           InpRiskCrossCheckTolerancePercent);
    if(!cross_ok)
      {
+      // Codex round-9 P0 finding 1: the reservation gate 5b just made must
+      // not be left dangling until its own crash-recovery staleness timeout
+      // -- this decision is rejected here, so no submission will ever use it.
+      RRM_ReleaseReservation(g_symbol, InpMagicNumber);
       AppendReason(rejected, StringFormat(
          "risk_cross_check_failed_computed_%.4f_broker_%.4f",
          sizing.risk_cash_actual, broker_risk_cash));
@@ -1595,6 +1766,9 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       // An intent is already active — a prior submission on this symbol+magic
       // has not yet been confirmed filled/rejected. Refuse to submit a
       // second order rather than risk a duplicate position.
+      // Same reservation-release requirement as the cross-check rejection
+      // above (Codex round-9 P0 finding 1).
+      RRM_ReleaseReservation(g_symbol, InpMagicNumber);
       AppendReason(rejected, "intent_already_active_refusing_duplicate_submission");
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
@@ -1628,6 +1802,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    if(!opened)
      {
       IM_ClearIntent(g_symbol, InpMagicNumber); // rejected outright -- definitively terminal
+      RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1
       AppendReason(rejected, "order_" + open_result.rejection_reason);
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
@@ -1636,6 +1811,9 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    if(open_result.position_id != 0)
      {
       IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
+      RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1 -- real
+                                                          // exposure now exists and is counted by
+                                                          // ComputeOwnMagicOpenRiskCash() itself.
 
       // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
       // 13): captures THIS position's own confirmed intraday_mode at the

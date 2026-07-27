@@ -99,6 +99,29 @@ string KE_PositionNamespace(const string prefix, const ulong position_id)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 1):** bounded, collision-resistant MAGIC-WIDE namespace (login+server+     |
+//| magic, deliberately NO symbol) -- for RiskReservationManager.mqh's own          |
+//| cross-symbol risk-reservation ledger, which must be prefix-scannable            |
+//| across every symbol this magic number manages (GlobalVariablesTotal()/           |
+//| GlobalVariableName(i) enumeration, filtered by this exact prefix) to sum               |
+//| every live reservation this magic currently holds, on any symbol,                          |
+//| before allowing a NEW one -- KE_InstanceNamespace's own symbol+magic                           |
+//| hash deliberately does NOT support this (symbol is folded into the SAME                            |
+//| opaque digest as magic, so there is no shared prefix to scan for across                            |
+//| a different symbol's own key). Callers append their own bounded                                       |
+//| per-symbol suffix (e.g. KE_HashHex(symbol)) after this namespace's own                                       |
+//| trailing "__".                                                                                                 |
+//+------------------------------------------------------------------+
+string KE_MagicNamespace(const string prefix, const long magic)
+  {
+   long   login  = AccountInfoInteger(ACCOUNT_LOGIN);
+   string server = AccountInfoString(ACCOUNT_SERVER);
+   string raw = IntegerToString(login) + "_" + server + "_" + IntegerToString(magic);
+   return prefix + "_" + KE_HashHex(raw);
+  }
+
+//+------------------------------------------------------------------+
 //| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
 //| 6):** checked GlobalVariableSet — the review's own finding: "The code         |
 //| ignores that return value." GlobalVariableSet returns 0 (a falsy               |

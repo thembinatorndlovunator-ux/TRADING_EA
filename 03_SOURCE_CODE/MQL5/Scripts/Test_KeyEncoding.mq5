@@ -87,6 +87,29 @@ void OnStart()
    Check("PositionStateTracker-style key (its own longest field name) stays within "
          "MT5's 63-char limit", StringLen(pst_key) <= 63);
 
+   //--- 5b. KE_MagicNamespace (Codex review finding, ninth round, P0 -------
+   //---     finding 1): magic-wide, deliberately symbol-independent, so ----
+   //---     every symbol's own reservation key under the same magic ------
+   //---     shares this exact prefix and is prefix-scannable. -------------
+   string rrm_key = KE_MagicNamespace("ThembaEA_RRM", 990001) +
+                     "__" + KE_HashHex("Volatility 100 Index");
+   PrintFormat("INFO: RiskReservationManager-style key for a long synthetic symbol: '%s' "
+               "(length=%d)", rrm_key, StringLen(rrm_key));
+   Check("RiskReservationManager-style key stays within MT5's 63-char limit",
+         StringLen(rrm_key) <= 63);
+   Check("KE_MagicNamespace is deterministic for the same magic",
+         KE_MagicNamespace("ThembaEA_RRM", 990001) == KE_MagicNamespace("ThembaEA_RRM", 990001));
+   Check("KE_MagicNamespace differs for different magics",
+         KE_MagicNamespace("ThembaEA_RRM", 990001) != KE_MagicNamespace("ThembaEA_RRM", 990002));
+   Check("KE_MagicNamespace is symbol-independent (the whole point -- two symbols under "
+         "the SAME magic share this exact prefix, unlike KE_InstanceNamespace)",
+         KE_MagicNamespace("ThembaEA_RRM", 990001) + "__" + KE_HashHex("XAUUSD") !=
+         KE_MagicNamespace("ThembaEA_RRM", 990001) + "__" + KE_HashHex("EURUSD") &&
+         StringFind(KE_MagicNamespace("ThembaEA_RRM", 990001) + "__" + KE_HashHex("XAUUSD"),
+                    KE_MagicNamespace("ThembaEA_RRM", 990001)) == 0 &&
+         StringFind(KE_MagicNamespace("ThembaEA_RRM", 990001) + "__" + KE_HashHex("EURUSD"),
+                    KE_MagicNamespace("ThembaEA_RRM", 990001)) == 0);
+
    //--- 6. KE_SetDoubleChecked round-trips a real write ----------------------
    string test_key = KE_InstanceNamespace("ThembaEA_TEST", "EURUSD", 1) + "__probe";
    if(GlobalVariableCheck(test_key))
