@@ -141,11 +141,23 @@ void OnStart()
       SChartPatternResult r;
       bool ok = CPT_DetectTripleTopArray(highs, lows, closes, 1, 5, 2.0, 0.5, 1.0, 2, 0.1, r);
       Check("triple top (sloped neckline) detected", ok && r.found && r.type == CPT_TRIPLE_TOP);
-      Check("triple top boundary_price == 92.5 (sloped neckline at h1, NOT the flat "
-            "min(85,70)=70 the previous version would have reported)",
-            NearlyEqual(r.boundary_price, 92.5));
+      // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 14): boundary_price is now evaluated at index 0 (the current bar),
+      // not at the old 'h1' pivot -- 96.25 = CPT_LinearInterpolate(trough1=3,
+      // 85, trough2=7, 70, k=0), hand-verified: 85 + (70-85)*(3-0)/(3-7) =
+      // 85 + 11.25 = 96.25. The PREVIOUS value (92.5) was this same line
+      // evaluated at h1=1 instead -- correct for a bar that no longer
+      // exists once evaluated against the CURRENT bar's close, which is
+      // exactly the bug this fix closes. 'target' is unaffected (still
+      // computed from breakout_index/extreme_index, not from
+      // boundary_price) -- see this test's own cross-validation against
+      // the unchanged 75.0 below.**
+      Check("triple top boundary_price == 96.25 (sloped neckline projected to the "
+            "CURRENT bar, index 0 -- NOT frozen at the old h1 pivot)",
+            NearlyEqual(r.boundary_price, 96.25));
       Check("triple top extreme_price == 110", NearlyEqual(r.extreme_price, 110.0));
-      Check("triple top target == 75 (92.5 - (110-92.5)), NOT the old flat formula's 30",
+      Check("triple top target == 75 (unaffected by the boundary_price fix -- still "
+            "computed from breakout_index/extreme_index projections)",
             NearlyEqual(r.target, 75.0));
    }
 
@@ -160,11 +172,18 @@ void OnStart()
                                                  TREND_BARS, r);
       Check("head and shoulders detected", ok && r.found && r.type == CPT_HEAD_SHOULDERS);
       Check("H&S extreme_price == 110 (the head)", NearlyEqual(r.extreme_price, 110.0));
-      Check("H&S boundary_price == 86.5 (sloped neckline at RS, hand-interpolated)",
-            NearlyEqual(r.boundary_price, 86.5));
+      // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 14): see the triple-top sloped-neckline test's own fix comment --
+      // 87.25 = CPT_LinearInterpolate(trough1=5, 86, trough2=9, 85, k=0),
+      // hand-verified: 86 + (85-86)*(5-0)/(5-9) = 86 + 1.25 = 87.25.
+      // (Previous value 86.5 was this line evaluated at rs=3 instead.)
+      // 'target' (62.25) is unaffected -- still computed from
+      // breakout_index=2/neckline_at_head, cross-verified unchanged below.**
+      Check("H&S boundary_price == 87.25 (sloped neckline projected to the CURRENT "
+            "bar, index 0)", NearlyEqual(r.boundary_price, 87.25));
       Check("H&S breakout_index == 2", r.breakout_index == 2);
-      Check("H&S target == 62.25 (86.75 - (110 - 85.5), hand-interpolated)",
-            NearlyEqual(r.target, 62.25));
+      Check("H&S target == 62.25 (86.75 - (110 - 85.5), unaffected by the "
+            "boundary_price fix)", NearlyEqual(r.target, 62.25));
       Check("H&S stop == 100.2 (100 + 2*0.1)", NearlyEqual(r.stop, 100.2));
    }
 
@@ -180,11 +199,18 @@ void OnStart()
       Check("inverse head and shoulders detected",
             ok && r.found && r.type == CPT_INV_HEAD_SHOULDERS);
       Check("inverse H&S extreme_price == 40 (the head)", NearlyEqual(r.extreme_price, 40.0));
-      Check("inverse H&S boundary_price == 108.5 (sloped neckline at RS)",
-            NearlyEqual(r.boundary_price, 108.5));
+      // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+      // 14): see the triple-top sloped-neckline test's own fix comment --
+      // 107.75 = CPT_LinearInterpolate(peak1=5, 109, peak2=9, 110, k=0),
+      // hand-verified: 109 + (110-109)*(5-0)/(5-9) = 109 - 1.25 = 107.75.
+      // (Previous value 108.5 was this line evaluated at rs=3 instead.)
+      // 'target' (177.75) is unaffected -- still computed from
+      // breakout_index=2/neckline_at_head, cross-verified unchanged below.**
+      Check("inverse H&S boundary_price == 107.75 (sloped neckline projected to the "
+            "CURRENT bar, index 0)", NearlyEqual(r.boundary_price, 107.75));
       Check("inverse H&S breakout_index == 2", r.breakout_index == 2);
-      Check("inverse H&S target == 177.75 (108.25 + (109.5 - 40))",
-            NearlyEqual(r.target, 177.75));
+      Check("inverse H&S target == 177.75 (108.25 + (109.5 - 40), unaffected by the "
+            "boundary_price fix)", NearlyEqual(r.target, 177.75));
       Check("inverse H&S stop == 49.8 (50 - 2*0.1)", NearlyEqual(r.stop, 49.8));
    }
 

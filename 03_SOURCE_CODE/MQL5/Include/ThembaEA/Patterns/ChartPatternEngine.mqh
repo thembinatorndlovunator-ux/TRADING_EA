@@ -330,7 +330,17 @@ bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const
 
    result.found = true;
    result.type = CPT_TRIPLE_TOP;
-   result.boundary_price = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], h1);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 14): previously evaluated at 'h1' (the old pivot bar the neckline was
+   // measured against, NOT the current bar) -- the live strategy's own
+   // retest check (ChartPatternStrategy.mqh) compares this value directly
+   // against closes[0] (the CURRENT bar's close). Whenever the neckline
+   // has any slope, a value frozen at an old historical index is simply
+   // wrong for that comparison -- it does not represent where the line
+   // actually sits NOW. Projecting to index 0 (this array's own "current
+   // bar" convention, matching every other index-0 read throughout this
+   // module) makes boundary_price genuinely comparable to closes[0].**
+   result.boundary_price = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], 0);
    result.extreme_price = extreme;
    result.target = neckline_at_target - (extreme - neckline_at_extreme);
    result.stop = highs[h1] + current_atr * breakout_buffer_atr;
@@ -421,7 +431,10 @@ bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], co
 
    result.found = true;
    result.type = CPT_TRIPLE_BOTTOM;
-   result.boundary_price = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], l1);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 14): see CPT_DetectTripleTopArray's own identical fix comment --
+   // projects to index 0 (current bar) instead of the old 'l1' pivot.**
+   result.boundary_price = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], 0);
    result.extreme_price = extreme;
    result.target = neckline_at_target + (neckline_at_extreme - extreme);
    result.stop = lows[l1] - current_atr * breakout_buffer_atr;
@@ -511,7 +524,10 @@ bool CPT_DetectHeadAndShouldersArray(const double &highs[], const double &lows[]
 
    result.found = true;
    result.type = CPT_HEAD_SHOULDERS;
-   result.boundary_price = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], rs);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 14): see CPT_DetectTripleTopArray's own identical fix comment --
+   // projects to index 0 (current bar) instead of the old 'rs' pivot.**
+   result.boundary_price = CPT_LinearInterpolate(trough1, lows[trough1], trough2, lows[trough2], 0);
    result.extreme_price = H;
    result.target = neckline_at_target - (H - neckline_at_head);
    result.stop = RS_p + current_atr * breakout_buffer_atr;
@@ -601,7 +617,10 @@ bool CPT_DetectInverseHeadAndShouldersArray(const double &highs[], const double 
 
    result.found = true;
    result.type = CPT_INV_HEAD_SHOULDERS;
-   result.boundary_price = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], rs);
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 14): see CPT_DetectTripleTopArray's own identical fix comment --
+   // projects to index 0 (current bar) instead of the old 'rs' pivot.**
+   result.boundary_price = CPT_LinearInterpolate(peak1, highs[peak1], peak2, highs[peak2], 0);
    result.extreme_price = H;
    result.target = neckline_at_target + (neckline_at_head - H);
    result.stop = RS_p - current_atr * breakout_buffer_atr;

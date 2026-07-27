@@ -181,6 +181,24 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
 
    if(r.breakout_index > cfg.max_breakout_age_bars)
       return false; // stale breakout
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 14): "Retest" requires the breakout to have already happened, and
+   // THEN price returning to the boundary afterward -- a breakout found at
+   // breakout_index==0 (the CURRENT bar) has price breaking out and being
+   // checked for "retest" confirmation on the exact same single bar, which
+   // is not a retest at all (there is no later bar in which price could
+   // have come back). Requiring breakout_index >= 1 (a strictly earlier
+   // bar) is a real, bounded fix for "no state proves that breakout
+   // occurred first and then price returned, allowing same-bar breakout/
+   // retest behavior" -- the review's own more general ask (a persisted
+   // FORMING/CONFIRMED/RETESTING/TRADED/INVALIDATED/EXPIRED registry
+   // preventing the SAME pattern instance from being traded repeatedly
+   // across multiple bars) remains a substantial, separate architectural
+   // task, not attempted here -- this detector is still stateless and
+   // rediscovers geometry fresh every bar, matching finding 12's own
+   // explicitly-stated, still-deferred pipeline-reorder scope.**
+   if(r.breakout_index < 1)
+      return false; // breakout and retest cannot be the same single bar
 
    double current_price = closes[0];
    double tol = current_atr * cfg.retest_tolerance_atr;

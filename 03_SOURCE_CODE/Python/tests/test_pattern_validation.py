@@ -823,17 +823,24 @@ def test_detect_triple_top_uses_sloped_neckline_not_flat_min():
     linear_interpolate(3, 85.0, 7, 70.0, k) = 85.0 + (70.0-85.0)*(3-k)/(3-7)
     = 85.0 + 15.0*(3-k)/4.0.
 
-    boundary_price is evaluated at h1=1:
-      85.0 + 15.0*(3-1)/4.0 = 85.0 + 7.5 = 92.5 -- NOT the flat 70.0 the
-      previous version would have reported.
+    **Extended, 2026-07-22 (Codex review finding, eighth round, P1 finding
+    14):** boundary_price is now evaluated at index 0 (the current bar),
+    not at h1 -- the live strategy compares this value directly against
+    closes[0], and a value frozen at an old pivot bar is simply wrong
+    whenever the neckline has any slope (see pattern_validation.py's own
+    fix comment, mirroring ChartPatternEngine.mqh's identical fix):
+      85.0 + 15.0*(3-0)/4.0 = 85.0 + 11.25 = 96.25 -- NOT the flat 70.0 the
+      pre-seventh-round version would have reported, and NOT the
+      92.5 (evaluated at the now-stale h1=1) an intermediate version did.
 
     No breakout is found (closes[0]=98.0 never drops below the neckline
-    minus the buffer at any scanned k), so target_reference=h1=1 too, and
-    neckline_at_extreme is ALSO evaluated at h1 (extreme_index==h1 here,
-    since all three peaks tie at 110.0 and ties never advance
-    extreme_index past the first/newest one): both equal 92.5, giving
-    target = 92.5 - (110.0 - 92.5) = 92.5 - 17.5 = 75.0 -- not the old
-    formula's 70.0 - (110.0-70.0) = 30.0.
+    minus the buffer at any scanned k), so target_reference=h1=1, and
+    neckline_at_extreme is evaluated at h1 (extreme_index==h1 here, since
+    all three peaks tie at 110.0 and ties never advance extreme_index past
+    the first/newest one) -- BOTH of these are unaffected by the
+    boundary_price fix (target_reference/extreme_index still use h1, never
+    index 0): neckline_at_h1 = 85.0 + 15.0*(3-1)/4.0 = 92.5, giving
+    target = 92.5 - (110.0 - 92.5) = 75.0, unchanged.
     """
 
     result = detect_triple_top(
@@ -849,7 +856,7 @@ def test_detect_triple_top_uses_sloped_neckline_not_flat_min():
         breakout_buffer_atr=0.1,
     )
     assert result.found is True
-    assert result.boundary_price == pytest.approx(92.5)
+    assert result.boundary_price == pytest.approx(96.25)
     assert result.extreme_price == pytest.approx(110.0)
     assert result.target == pytest.approx(75.0)
 

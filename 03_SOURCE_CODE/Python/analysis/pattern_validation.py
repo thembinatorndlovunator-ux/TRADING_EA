@@ -989,16 +989,26 @@ def detect_triple_top(
             breakout_index = k
             break
 
-    neckline_at_extreme = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2],
-                                              extreme_index)
+    neckline_at_extreme = linear_interpolate(
+        trough1, lows[trough1], trough2, lows[trough2], extreme_index
+    )
     target_reference = breakout_index if breakout_index >= 0 else h1
-    neckline_at_target = linear_interpolate(trough1, lows[trough1], trough2, lows[trough2],
-                                             target_reference)
+    neckline_at_target = linear_interpolate(
+        trough1, lows[trough1], trough2, lows[trough2], target_reference
+    )
 
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.TRIPLE_TOP,
-        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], h1),
+        # **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+        # 14): previously evaluated at 'h1' (an old pivot bar), mirroring the
+        # same bug ChartPatternEngine.mqh's own CPT_DetectTripleTopArray had
+        # -- projects to index 0 (the current/most recent bar) instead, so
+        # boundary_price is genuinely comparable to closes[0] whenever the
+        # neckline has any slope. See that MQL5 function's own fix comment
+        # for the full rationale (both sides are meant to mirror the same
+        # algorithm for this project's own Python-vs-MQL cross-check).**
+        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], 0),
         extreme_price=extreme,
         target=neckline_at_target - (extreme - neckline_at_extreme),
         stop=highs[h1] + current_atr * breakout_buffer_atr,
@@ -1073,16 +1083,21 @@ def detect_triple_bottom(
             breakout_index = k
             break
 
-    neckline_at_extreme = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2],
-                                              extreme_index)
+    neckline_at_extreme = linear_interpolate(
+        peak1, highs[peak1], peak2, highs[peak2], extreme_index
+    )
     target_reference = breakout_index if breakout_index >= 0 else l1
-    neckline_at_target = linear_interpolate(peak1, highs[peak1], peak2, highs[peak2],
-                                             target_reference)
+    neckline_at_target = linear_interpolate(
+        peak1, highs[peak1], peak2, highs[peak2], target_reference
+    )
 
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.TRIPLE_BOTTOM,
-        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], l1),
+        # **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+        # 14): see the triple-top boundary_price fix's own comment above --
+        # projects to index 0 instead of the old 'l1' pivot.**
+        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], 0),
         extreme_price=extreme,
         target=neckline_at_target + (neckline_at_extreme - extreme),
         stop=lows[l1] - current_atr * breakout_buffer_atr,
@@ -1161,7 +1176,10 @@ def detect_head_and_shoulders(
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.HEAD_SHOULDERS,
-        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], rs),
+        # **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+        # 14): see the triple-top boundary_price fix's own comment above --
+        # projects to index 0 instead of the old 'rs' pivot.**
+        boundary_price=linear_interpolate(trough1, lows[trough1], trough2, lows[trough2], 0),
         extreme_price=head_price,
         target=neckline_at_target - (head_price - neckline_at_head),
         stop=rs_price + current_atr * breakout_buffer_atr,
@@ -1241,7 +1259,10 @@ def detect_inverse_head_and_shoulders(
     return ChartPatternResult(
         found=True,
         type=ChartPatternType.INV_HEAD_SHOULDERS,
-        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], rs),
+        # **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+        # 14): see the triple-top boundary_price fix's own comment above --
+        # projects to index 0 instead of the old 'rs' pivot.**
+        boundary_price=linear_interpolate(peak1, highs[peak1], peak2, highs[peak2], 0),
         extreme_price=head_price,
         target=neckline_at_target + (neckline_at_head - head_price),
         stop=rs_price - current_atr * breakout_buffer_atr,
