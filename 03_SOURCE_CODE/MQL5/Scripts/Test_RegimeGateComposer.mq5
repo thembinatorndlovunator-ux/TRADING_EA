@@ -113,6 +113,34 @@ void OnStart()
    Check("gate clears: second consecutive clean RANGING read confirms RANGING",
          r5b.effective_regime == REGIME_RANGING);
 
+   //--- 6. **Codex review finding, eighth round, P0 finding 9**: a first ---
+   //--- low-confidence (REGIME_TRANSITION_OR_UNCERTAIN) bar must NOT let ----
+   //--- the prior CONFIRMED tradable regime keep reporting as effective -----
+   //--- for even one more bar -- the exact counterexample the review ---------
+   //--- reported: a confirmed TRENDING_UP regime, then one single low-----------
+   //--- confidence bar, with NO gates active. -----------------------------------
+   SRegimeHysteresisState state6;
+   MRE_InitHysteresisState(state6);
+   RGC_ComposeGates(state6, REGIME_TRENDING_UP, false, false, "", 2); // 1st read
+   SRegimeGateResult r6confirm = RGC_ComposeGates(state6, REGIME_TRENDING_UP, false, false, "", 2);
+   Check("setup: TRENDING_UP is confirmed after 2 consecutive matching reads",
+         r6confirm.effective_regime == REGIME_TRENDING_UP);
+
+   SRegimeGateResult r6low = RGC_ComposeGates(state6, REGIME_TRANSITION_OR_UNCERTAIN,
+                                               false, false, "", 2);
+   Check("a first low-confidence bar immediately reports TRANSITION_OR_UNCERTAIN as "
+         "effective_regime, NOT the stale prior confirmed TRENDING_UP",
+         r6low.effective_regime == REGIME_TRANSITION_OR_UNCERTAIN);
+
+   //--- 6b. And a later ordinary (non-low-confidence) read must NOT ---------
+   //--- instantly re-confirm the old regime either -- the bypass genuinely ---
+   //--- resets hysteresis's own pending state (required_bars=2 again from ----
+   //--- this point), matching MRE_ApplyHysteresis's own bypass contract. -----
+   SRegimeGateResult r6b = RGC_ComposeGates(state6, REGIME_TRENDING_UP, false, false, "", 2);
+   Check("one clean read after the low-confidence bypass is not enough to "
+         "re-confirm TRENDING_UP on its own (hysteresis restarted)",
+         r6b.effective_regime == REGIME_TRANSITION_OR_UNCERTAIN);
+
    PrintFormat("=== TASK-034 RegimeGateComposer test complete: %d passed, %d failed ===",
                g_pass, g_fail);
   }

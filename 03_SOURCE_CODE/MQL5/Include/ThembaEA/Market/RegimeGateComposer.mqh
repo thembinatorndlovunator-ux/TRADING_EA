@@ -68,6 +68,23 @@ SRegimeGateResult RGC_ComposeGates(SRegimeHysteresisState &hysteresis_state,
       regime_for_hysteresis = REGIME_NEWS_BLACKOUT;
       bypass = true;
      }
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 9):
+   // TASK-002_PHASE2_SPECIFICATION.md:401-411 states confidence below 0.5
+   // "forces transition treatment for routing regardless of the nominal
+   // state" -- this bypass was previously only applied for spread/liquidity
+   // and news, so a raw_regime of REGIME_TRANSITION_OR_UNCERTAIN (which is
+   // exactly what the EA maps a sub-0.5-confidence read to) went through
+   // ORDINARY hysteresis instead, requiring 'hysteresis_required_bars'
+   // consecutive low-confidence bars before effective_regime actually
+   // changed. On just the FIRST low-confidence bar, effective_regime stayed
+   // pinned to the prior CONFIRMED (possibly tradable) regime, letting
+   // strategies keep trading against a regime read the classifier itself no
+   // longer trusts. The low-confidence override must be immediate, exactly
+   // like the spread/liquidity and news gates above.**
+   else if(raw_regime == REGIME_TRANSITION_OR_UNCERTAIN)
+     {
+      bypass = true;
+     }
 
    r.effective_regime = MRE_ApplyHysteresis(hysteresis_state, regime_for_hysteresis, bypass,
                                              hysteresis_required_bars);
