@@ -99,6 +99,10 @@ bool ICM_CloseAllOwnedPositions(const long magic, string &reasons[])
          continue;
         }
 
+      // Codex round-9 P0 finding 7: selected per-position since this loop
+      // spans every symbol this magic manages, not just one (see
+      // OrderManager.mqh's own identical comment for the full rationale).
+      trade.SetTypeFillingBySymbol(symbol);
       bool ok = trade.PositionClose(ticket);
       uint retcode = trade.ResultRetcode();
       if(retcode == TRADE_RETCODE_PLACED)

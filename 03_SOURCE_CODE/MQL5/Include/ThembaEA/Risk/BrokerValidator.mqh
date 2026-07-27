@@ -25,18 +25,55 @@ void BV_AppendReason(string &reasons[], const string reason)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding      |
+//| 7):** true iff 'filling_mode' (the SYMBOL_FILLING_MODE bitmask)          |
+//| reports support for at least one NON-RETURN filling policy (FOK          |
+//| and/or IOC). A symbol whose bitmask supports ONLY the implicit           |
+//| RETURN behavior (or reports the bitmask as literally 0, which this      |
+//| project's own CSymbolProfile comment notes some brokers legitimately    |
+//| report instead of an explicit flag) can leave a market order's own      |
+//| unfilled remainder still working after a partial fill (see              |
+//| OrderManager.mqh's own P0 finding 4 fix,                                 |
+//| SOrderOpenResult.has_live_remainder) -- this project's own order-        |
+//| submission code (OM_OpenPosition/OM_ClosePosition) now explicitly        |
+//| selects FOK/IOC via CTrade::SetTypeFillingBySymbol, but this             |
+//| validator confirms the SYMBOL ITSELF actually supports one of them       |
+//| before the EA is allowed to run on it at all.                           |
+//+------------------------------------------------------------------+
+bool BV_SupportsNonReturnFilling(const long filling_mode)
+  {
+   return (filling_mode & SYMBOL_FILLING_FOK) != 0 || (filling_mode & SYMBOL_FILLING_IOC) != 0;
+  }
+
+//+------------------------------------------------------------------+
 //| Validates a CSymbolProfile. Returns true only if every check       |
 //| passes. On any failure, 'reasons' (must be a dynamic array —       |
 //| it is cleared and rebuilt here) holds one machine-readable string  |
 //| per failed check, per PROJECT_RULES.md rule 6.                     |
 //|                                                                    |
-//| filling_mode == 0 and margin_initial == 0 are NOT treated as       |
-//| failures here — both are legitimate broker-reported values (a      |
-//| default fill policy, or leverage-based margin instead of a fixed   |
-//| per-symbol initial margin respectively). A genuinely failed read   |
-//| of either is instead caught by profile.loaded being false, which   |
-//| this function checks first and treats as an immediate, total       |
-//| failure — no other field is trustworthy once Load() itself failed. |
+//| margin_initial == 0 is NOT treated as a failure here -- a           |
+//| legitimate broker-reported value (leverage-based margin instead of  |
+//| a fixed per-symbol initial margin). A genuinely failed READ of it   |
+//| is instead caught by profile.loaded being false, which this        |
+//| function checks first and treats as an immediate, total failure —  |
+//| no other field is trustworthy once Load() itself failed.           |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding       |
+//| 7):** this module's own header has always claimed it validates          |
+//| "filling mode... and margin" per TASK-002_PHASE2_SPECIFICATION.md       |
+//| section 8, but the function body previously stopped after freeze        |
+//| level -- filling_mode==0 was explicitly documented as "not a failure"    |
+//| with NO check of any kind for the non-zero case either, and margin      |
+//| was never validated via any live broker call (OrderCalcMargin) at       |
+//| all. Two real checks are added: (1) BV_SupportsNonReturnFilling         |
+//| above -- a symbol whose bitmask supports ONLY RETURN is now refused;    |
+//| (2) OrderCalcMargin itself is called for a representative minimum-      |
+//| volume order -- if the BROKER'S OWN margin calculation for this         |
+//| exact symbol fails outright, that is a genuine symbol/account-          |
+//| configuration incompatibility this project's own risk math depends      |
+//| on being able to trust downstream (RM_CrossCheckRiskCash's own          |
+//| OrderCalcProfit cross-check makes the identical assumption for          |
+//| profit calculation).**                                                   |
 //+------------------------------------------------------------------+
 bool BV_ValidateSymbolProfile(const CSymbolProfile &profile, string &reasons[])
   {
@@ -98,6 +135,21 @@ bool BV_ValidateSymbolProfile(const CSymbolProfile &profile, string &reasons[])
    if(profile.freeze_level_points < 0)
      {
       BV_AppendReason(reasons, "invalid_freeze_level");
+      pass = false;
+     }
+   if(!BV_SupportsNonReturnFilling(profile.filling_mode))
+     {
+      BV_AppendReason(reasons, "filling_mode_return_only_or_unreported");
+      pass = false;
+     }
+
+   double margin_check_price = SymbolInfoDouble(profile.symbol, SYMBOL_ASK);
+   double margin_out;
+   if(margin_check_price <= 0.0 ||
+      !OrderCalcMargin(ORDER_TYPE_BUY, profile.symbol, profile.volume_min, margin_check_price,
+                        margin_out))
+     {
+      BV_AppendReason(reasons, "margin_calculation_failed");
       pass = false;
      }
 

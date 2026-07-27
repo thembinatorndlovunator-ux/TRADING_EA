@@ -270,6 +270,71 @@ int OnInit()
       return INIT_FAILED;
      }
 
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 7):
+   // the check above only validated the TARGET stays within the operator's
+   // own configured CAP -- nothing validated the cap itself (or the daily/
+   // weekly caps) against RISK_POLICY.md's own stated MAXIMA (1.00% hard
+   // per-trade/total-open-risk cap, 2.00% daily, 4.00% weekly). An operator
+   // could configure every field labelled "hard" in this project's own
+   // documentation to a value ABOVE the policy that names them hard limits
+   // in the first place, and nothing would refuse to run.**
+   if(InpRiskCapPercent > 1.0 + 1e-9)
+     {
+      PrintFormat("ThembaEA: invalid InpRiskCapPercent=%.4f -- exceeds RISK_POLICY.md's own "
+                  "stated hard per-trade/total-open-risk cap maximum of 1.00%%. Refusing to run.",
+                  InpRiskCapPercent);
+      return INIT_FAILED;
+     }
+   if(InpDailyLossCapPercent <= 0.0 || InpDailyLossCapPercent > 2.0 + 1e-9)
+     {
+      PrintFormat("ThembaEA: invalid InpDailyLossCapPercent=%.4f -- must be positive and not "
+                  "exceed RISK_POLICY.md's own stated daily loss cap maximum of 2.00%%. "
+                  "Refusing to run.", InpDailyLossCapPercent);
+      return INIT_FAILED;
+     }
+   if(InpWeeklyLossCapPercent <= 0.0 || InpWeeklyLossCapPercent > 4.0 + 1e-9)
+     {
+      PrintFormat("ThembaEA: invalid InpWeeklyLossCapPercent=%.4f -- must be positive and not "
+                  "exceed RISK_POLICY.md's own stated weekly loss cap maximum of 4.00%%. "
+                  "Refusing to run.", InpWeeklyLossCapPercent);
+      return INIT_FAILED;
+     }
+
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 7):
+   // InpMagicNumber was never required to be nonzero. Zero is MT5's own
+   // "unset"/wildcard-like value in several contexts, and -- more
+   // concretely for this project's own risk logic -- every own-magic
+   // ownership scan throughout this EA (ComputeOwnMagicOpenRiskCash,
+   // EnforceNoStopGracePeriod, ICM_CloseAllOwnedPositions, etc.) filters by
+   // `POSITION_MAGIC == InpMagicNumber`/`ORDER_MAGIC == InpMagicNumber`. If
+   // an operator ever configured InpMagicNumber=0 (whether by mistake or
+   // because 0 looks like a harmless default), any MANUAL position/order
+   // placed with no magic number at all (MT5's own actual default) would
+   // match every one of these scans -- exposing a human's own manual
+   // trading to this EA's bulk mandatory-close/breach-closure logic.**
+   if(InpMagicNumber == 0)
+     {
+      Print("ThembaEA: invalid InpMagicNumber=0 -- a zero magic number would make manual "
+            "positions/orders (MT5's own default magic) match every one of this EA's own-magic "
+            "ownership scans, exposing them to bulk mandatory closure. Refusing to run.");
+      return INIT_FAILED;
+     }
+
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 7):
+   // the stop floor must stay strictly below the stop cap -- with the floor
+   // ABOVE the cap, RM_ValidateStopDistance's own "widen a tighter stop out
+   // to the floor" branch can widen an already-cap-validated stop distance
+   // to a value that itself exceeds the cap, silently defeating the very
+   // cap check that ran immediately before it.**
+   if(InpStopFloorAtrMultiple >= InpStopCapAtrMultiple)
+     {
+      PrintFormat("ThembaEA: invalid stop floor/cap configuration -- InpStopFloorAtrMultiple=%.4f "
+                  "must be strictly less than InpStopCapAtrMultiple=%.4f (a floor at or above the "
+                  "cap can widen an already-validated stop past the cap). Refusing to run.",
+                  InpStopFloorAtrMultiple, InpStopCapAtrMultiple);
+      return INIT_FAILED;
+     }
+
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 2):
    // TASK-002_PHASE2_SPECIFICATION.md bounds InpMaxSpreadATRMultiple to
    // [0.02, 1.0] -- an out-of-range operator value (or the previous default

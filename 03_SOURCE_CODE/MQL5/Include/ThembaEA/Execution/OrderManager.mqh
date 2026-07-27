@@ -257,6 +257,16 @@ bool OM_OpenPosition(const string symbol, const bool is_long, const double volum
 
    CTrade trade;
    trade.SetExpertMagicNumber(magic);
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 7):
+   // explicitly selects this SYMBOL's own best-supported filling mode
+   // (CTrade prefers FOK, then IOC, over RETURN) instead of leaving CTrade
+   // to fall back on whatever its own internal default is -- closes the
+   // structural possibility BrokerValidator.mqh's own new
+   // BV_SupportsNonReturnFilling check names: an order left to RETURN mode
+   // can leave a real, unfilled remainder still working after a partial
+   // fill (see this file's own SOrderOpenResult.has_live_remainder,
+   // finding 4).**
+   trade.SetTypeFillingBySymbol(symbol);
 
    double price = is_long ? SymbolInfoDouble(symbol, SYMBOL_ASK)
                            : SymbolInfoDouble(symbol, SYMBOL_BID);
@@ -430,6 +440,8 @@ bool OM_ClosePosition(const ulong position_ticket, const long magic, string &rej
 
    CTrade trade;
    trade.SetExpertMagicNumber(magic);
+   // See OM_OpenPosition's own identical comment (Codex round-9 P0 finding 7).
+   trade.SetTypeFillingBySymbol(PositionGetString(POSITION_SYMBOL));
    bool ok = trade.PositionClose(position_ticket);
    uint retcode = trade.ResultRetcode();
    if(retcode == TRADE_RETCODE_PLACED)

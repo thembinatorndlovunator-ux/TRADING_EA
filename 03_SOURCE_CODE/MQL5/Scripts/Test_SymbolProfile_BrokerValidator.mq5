@@ -129,18 +129,61 @@ void OnStart()
             ArraySize(reasons) == 3);
      }
 
-   //--- 5. filling_mode == 0 and margin_initial == 0 are NOT failures -
-   //---    on an otherwise-loaded profile (legitimate broker values). -
+   //--- 5. margin_initial == 0 alone is NOT a failure on an otherwise --
+   //---    loaded profile (a legitimate broker value -- leverage-based --
+   //---    margin instead of a fixed initial margin). -------------------
    if(loaded_ok)
      {
-      CSymbolProfile zero_optional = good;
-      zero_optional.filling_mode = 0;
-      zero_optional.margin_initial = 0.0;
-      bool v4 = BV_ValidateSymbolProfile(zero_optional, reasons);
-      Check("zero filling_mode/margin_initial alone does not fail validation",
-            v4 == true);
-      Check("zero filling_mode/margin_initial produces zero reasons",
-            ArraySize(reasons) == 0);
+      CSymbolProfile zero_margin_initial = good;
+      zero_margin_initial.margin_initial = 0.0;
+      bool v4 = BV_ValidateSymbolProfile(zero_margin_initial, reasons);
+      Check("zero margin_initial alone does not fail validation", v4 == true);
+      Check("zero margin_initial produces zero reasons", ArraySize(reasons) == 0);
+     }
+
+   //--- 6. **Codex review finding, ninth round, P0 finding 7**: --------
+   //--- BV_SupportsNonReturnFilling / the filling-mode check. This -----
+   //--- module's own header previously (and wrongly) treated -----------
+   //--- filling_mode == 0 as never a failure -- it now correctly fails --
+   //--- validation, since a bitmask with neither FOK nor IOC set can ----
+   //--- leave a market order's own remainder still working after a -----
+   //--- partial fill (see OrderManager.mqh's own has_live_remainder). ---
+   Check("BV_SupportsNonReturnFilling accepts SYMBOL_FILLING_FOK alone",
+         BV_SupportsNonReturnFilling(SYMBOL_FILLING_FOK));
+   Check("BV_SupportsNonReturnFilling accepts SYMBOL_FILLING_IOC alone",
+         BV_SupportsNonReturnFilling(SYMBOL_FILLING_IOC));
+   Check("BV_SupportsNonReturnFilling accepts both FOK and IOC set together",
+         BV_SupportsNonReturnFilling(SYMBOL_FILLING_FOK | SYMBOL_FILLING_IOC));
+   Check("BV_SupportsNonReturnFilling rejects a bitmask of exactly 0 "
+         "(no filling mode reported at all)",
+         BV_SupportsNonReturnFilling(0) == false);
+
+   if(loaded_ok)
+     {
+      CSymbolProfile return_only = good;
+      return_only.filling_mode = 0; // no FOK/IOC bit set -- RETURN-only or unreported
+      bool v5 = BV_ValidateSymbolProfile(return_only, reasons);
+      Check("a profile with filling_mode == 0 (no FOK/IOC support) now FAILS validation "
+            "(corrected, ninth round P0 finding 7 -- previously this was never a failure)",
+            v5 == false);
+      Check("that failure's reason is filling_mode_return_only_or_unreported",
+            ReasonsContain(reasons, "filling_mode_return_only_or_unreported"));
+     }
+
+   //--- 7. **Codex review finding, ninth round, P0 finding 7**: the ----
+   //--- new OrderCalcMargin-based check -- a profile whose OWN symbol --
+   //--- string cannot be margin-calculated (a bogus symbol name, even -
+   //--- though every OTHER field was copied from a genuinely loaded ----
+   //--- profile) must fail validation via the new margin check. ---------
+   if(loaded_ok)
+     {
+      CSymbolProfile bogus_margin_symbol = good;
+      bogus_margin_symbol.symbol = "NOT_A_REAL_SYMBOL_XYZ_12345";
+      bool v6 = BV_ValidateSymbolProfile(bogus_margin_symbol, reasons);
+      Check("a profile whose own symbol cannot be margin-calculated fails validation",
+            v6 == false);
+      Check("that failure's reason is margin_calculation_failed",
+            ReasonsContain(reasons, "margin_calculation_failed"));
      }
 
    PrintFormat("=== TASK-004 SymbolProfile / BrokerValidator test complete: "
