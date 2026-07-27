@@ -35,6 +35,19 @@
 //| - Timestamps use DJ_ServerTimeToUtc's own conversion (duplicated here,                                    |
 //|   this file has no dependency on DecisionJournal.mqh) instead of labelling                                  |
 //|   server time "Z" directly (P0 finding 10).                                                                    |
+//|                                                                    |
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 16):  |
+//| a new 'timestamp_server' column (the SAME tick's own TimeTradeServer(),         |
+//| formatted plainly, no "Z" -- this is genuinely NOT UTC). The live risk           |
+//| contract's daily boundary (PROJECT_RULES.md / SessionManager.mqh's own              |
+//| SN_CurrentDailyBoundary) resets at TRADE-SERVER midnight, explicitly not             |
+//| UTC -- analysis.equity_curve_metrics.py's own "daily" giveback metric                  |
+//| previously grouped by UTC calendar date, which a broker-server GMT                        |
+//| offset can split into two Python days (or merge two adjacent server                          |
+//| days) relative to what the live EA actually experienced. Recording the                           |
+//| server time directly here lets the Python side group by the SAME                                    |
+//| server-calendar-day boundary the live engine actually resets on,                                        |
+//| instead of silently substituting a different (UTC) clock.**                                                |
 //+------------------------------------------------------------------+
 #property strict
 #property version   "2.00"
@@ -58,6 +71,22 @@ string Iso8601Utc(const datetime server_time)
    MqlDateTime dt;
    TimeToStruct(utc, dt);
    return StringFormat("%04d-%02d-%02dT%02d:%02d:%02dZ", dt.year, dt.mon, dt.day, dt.hour, dt.min,
+                        dt.sec);
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding    |
+//| 16):** plain (non-UTC) server-local timestamp formatting -- no "Z"        |
+//| suffix, since this is deliberately NOT UTC. Lets the Python side group      |
+//| by the live risk contract's own trade-server-midnight daily boundary,        |
+//| not a UTC calendar date that a broker-server GMT offset can split or          |
+//| merge relative to it.                                                          |
+//+------------------------------------------------------------------+
+string Iso8601ServerLocal(const datetime server_time)
+  {
+   MqlDateTime dt;
+   TimeToStruct(server_time, dt);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d", dt.year, dt.mon, dt.day, dt.hour, dt.min,
                         dt.sec);
   }
 
@@ -107,8 +136,8 @@ int OnInit()
 
    FileSeek(g_file_handle, 0, SEEK_END);
    if(!file_exists)
-      FileWriteString(g_file_handle, "timestamp_utc,run_id,account_login,broker_server,equity,"
-                                     "balance\r\n");
+      FileWriteString(g_file_handle, "timestamp_utc,timestamp_server,run_id,account_login,"
+                                     "broker_server,equity,balance\r\n");
 
    if(!EventSetMillisecondTimer(InpSampleIntervalMs))
      {
@@ -143,9 +172,11 @@ void OnTimer()
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
+   datetime tick_server_time = TimeTradeServer();
 
-   string line = StringFormat("%s,%I64d,%I64d,%s,%.2f,%.2f\r\n", Iso8601Utc(TimeTradeServer()),
-                               (long)g_run_id, login, CsvQuoteField(server), equity, balance);
+   string line = StringFormat("%s,%s,%I64d,%I64d,%s,%.2f,%.2f\r\n", Iso8601Utc(tick_server_time),
+                               Iso8601ServerLocal(tick_server_time), (long)g_run_id, login,
+                               CsvQuoteField(server), equity, balance);
    FileWriteString(g_file_handle, line);
    FileFlush(g_file_handle);
   }

@@ -26,16 +26,36 @@ TIMESTAMPS = [
 EQUITY = [1000.0, 1010.0, 1005.0, 1005.0, 1020.0, 995.0]
 
 
-def _write_equity_ticks_csv(path, timestamps=None, equity=None, balance=None):
+def _write_equity_ticks_csv(
+    path,
+    timestamps=None,
+    equity=None,
+    balance=None,
+    timestamps_server=None,
+    run_id=None,
+    account_login=None,
+    broker_server=None,
+):
     timestamps = timestamps if timestamps is not None else TIMESTAMPS
     equity = equity if equity is not None else EQUITY
     balance = balance if balance is not None else equity
+    # Server-local timestamps default to the SAME naive wall-clock reading
+    # as the UTC ones (offset 0) when a test doesn't care about the
+    # UTC-vs-server distinction -- strip the trailing "Z" only.
+    timestamps_server = (
+        timestamps_server if timestamps_server is not None else [t.rstrip("Z") for t in timestamps]
+    )
     df = pd.DataFrame(
         {
             "timestamp_utc": timestamps,
-            "run_id": [1] * len(timestamps),
-            "account_login": [12345] * len(timestamps),
-            "broker_server": ["Deriv-Demo"] * len(timestamps),
+            "timestamp_server": timestamps_server,
+            "run_id": run_id if run_id is not None else [1] * len(timestamps),
+            "account_login": account_login
+            if account_login is not None
+            else [12345] * len(timestamps),
+            "broker_server": broker_server
+            if broker_server is not None
+            else ["Deriv-Demo"] * len(timestamps),
             "equity": equity,
             "balance": balance,
         }
@@ -111,6 +131,12 @@ def test_read_equity_ticks_csv_rejects_mixed_run_ids(tmp_path):
                 "2026-07-22T09:00:00Z",
                 "2026-07-22T10:00:00Z",
             ],
+            "timestamp_server": [
+                "2026-07-21T10:00:00",
+                "2026-07-21T11:00:00",
+                "2026-07-22T09:00:00",
+                "2026-07-22T10:00:00",
+            ],
             "run_id": [1, 1, 2, 2],  # run 2 is a DIFFERENT run appended to the same file
             "account_login": [12345, 12345, 12345, 12345],
             "broker_server": ["Deriv-Demo", "Deriv-Demo", "Deriv-Demo", "Deriv-Demo"],
@@ -137,6 +163,7 @@ def test_read_equity_ticks_csv_rejects_mixed_accounts(tmp_path):
     df = pd.DataFrame(
         {
             "timestamp_utc": ["2026-07-21T10:00:00Z", "2026-07-21T11:00:00Z"],
+            "timestamp_server": ["2026-07-21T10:00:00", "2026-07-21T11:00:00"],
             "run_id": [1, 1],
             "account_login": [12345, 67890],  # different account
             "broker_server": ["Deriv-Demo", "Deriv-Demo"],
@@ -146,6 +173,38 @@ def test_read_equity_ticks_csv_rejects_mixed_accounts(tmp_path):
     )
     df.to_csv(path, index=False)
     with pytest.raises(CsvSchemaError):
+        read_equity_ticks_csv(path)
+
+
+def test_read_equity_ticks_csv_rejects_wholly_blank_identity(tmp_path):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 16): the previous 'exactly one distinct identity' check alone
+    accepted an entirely BLANK file (every row's run_id/account_login/
+    broker_server empty) as one uniform, but meaningless, (NaN, NaN, NaN)
+    tuple, and computed a curve from it (the review's own reproduced
+    counterexample: a two-row probe with all three fields empty)."""
+
+    path = tmp_path / "equity_ticks.csv"
+    df = pd.DataFrame(
+        {
+            "timestamp_utc": ["2026-07-21T10:00:00Z", "2026-07-21T11:00:00Z"],
+            "timestamp_server": ["2026-07-21T10:00:00", "2026-07-21T11:00:00"],
+            "run_id": ["", ""],
+            "account_login": ["", ""],
+            "broker_server": ["", ""],
+            "equity": [10000.0, 10500.0],
+            "balance": [10000.0, 10500.0],
+        }
+    )
+    df.to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError, match="blank/missing"):
+        read_equity_ticks_csv(path)
+
+
+def test_read_equity_ticks_csv_rejects_whitespace_only_identity(tmp_path):
+    path = tmp_path / "equity_ticks.csv"
+    _write_equity_ticks_csv(path, timestamps=TIMESTAMPS[:2], equity=EQUITY[:2], run_id=["  ", "  "])
+    with pytest.raises(CsvSchemaError, match="blank/missing"):
         read_equity_ticks_csv(path)
 
 
@@ -222,6 +281,42 @@ def test_compute_equity_curve_metrics_hand_traced():
     assert result.max_drawdown.max_drawdown_pct == pytest.approx(0.0245098, abs=1e-6)
     assert result.account_peak_giveback.armed is True
     assert result.daily_peak_giveback.total_trigger_events == 1
+
+
+def test_run_groups_daily_giveback_by_server_clock_not_utc(tmp_path):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 16): the "daily" giveback metric previously grouped by UTC
+    calendar date, but the live risk contract's own daily boundary resets
+    at trade-server midnight -- a broker-server GMT offset can split one
+    live risk day into two UTC dates (or merge pieces of two adjacent
+    server days). This constructs exactly that split: three ticks whose
+    UTC timestamps span two different UTC calendar dates (21st, 21st,
+    22nd) but whose SERVER-local timestamps (a +3 offset) all fall on the
+    SAME server calendar date (22nd). Grouping by UTC would report 2 days;
+    grouping by the correct server clock must report exactly 1."""
+
+    equity_ticks_csv = tmp_path / "equity_ticks.csv"
+    _write_equity_ticks_csv(
+        equity_ticks_csv,
+        timestamps=[
+            "2026-07-21T22:00:00Z",
+            "2026-07-21T23:30:00Z",
+            "2026-07-22T00:30:00Z",
+        ],
+        timestamps_server=[
+            "2026-07-22T01:00:00",
+            "2026-07-22T02:30:00",
+            "2026-07-22T03:30:00",
+        ],
+        equity=[1000.0, 1010.0, 1005.0],
+    )
+
+    result = run(equity_ticks_csv)
+    assert len(result.daily_peak_giveback.days) == 1, (
+        "all three ticks share the SAME server-calendar day (2026-07-22) despite spanning "
+        "two different UTC calendar dates -- grouping by UTC would incorrectly report 2 days"
+    )
+    assert result.daily_peak_giveback.days[0].date == "2026-07-22"
 
 
 def test_run_writes_summary_json_with_real_provenance(tmp_path):

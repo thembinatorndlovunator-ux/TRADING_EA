@@ -65,6 +65,7 @@ from analysis.time_utils import parse_utc_series
 
 REQUIRED_COLUMNS = {
     "timestamp_utc",
+    "timestamp_server",
     "run_id",
     "account_login",
     "broker_server",
@@ -120,6 +121,26 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
     (e.g. filter to one run_id) before calling this function, per this
     project's own fail-closed-over-silently-permissive discipline used
     throughout this review round.
+
+    **Rewritten, 2026-07-27 (Codex review finding, ninth round, P1 finding
+    16):** the "exactly one distinct identity" check above only compares
+    whatever pandas happened to infer for these columns -- an entirely
+    BLANK file (every row's run_id/account_login/broker_server empty) is
+    still exactly one (NaN, NaN, NaN) tuple, so it was silently accepted
+    and a curve computed from it (the review's own reproduced
+    counterexample: a two-row probe with all three fields empty). Every
+    identity column is now read as a STRING explicitly (never left to
+    pandas' own numeric/NaN inference) and asserted fully non-blank
+    (neither missing nor empty/whitespace-only) on every row, in addition
+    to the existing single-tuple check -- an identity is not just
+    "consistent," it must actually identify something.
+
+    Also parses 'timestamp_server' (EquityTickRecorder.mq5's own new
+    trade-server-local column, this same finding's own MQL-side fix) as a
+    naive datetime -- deliberately NOT run through ``parse_utc_series``
+    (which exists specifically to REJECT naive timestamps as ambiguous;
+    here there is no ambiguity, since this column's own contract is
+    "trade-server local time, never UTC").
     """
 
     df, file_hash = read_csv_with_required_columns_and_hash(path, REQUIRED_COLUMNS)
@@ -128,6 +149,19 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
 
     df = df.copy()
     identity_cols = ["run_id", "account_login", "broker_server"]
+    for col in identity_cols:
+        # **Note:** ``Series.astype(str)`` does NOT reliably stringify a
+        # NaN cell to the literal "nan" across pandas versions/dtypes (it
+        # can leave the original float NaN object untouched) -- explicit
+        # ``pd.isna`` handling below is required, not a stylistic choice.
+        df[col] = df[col].apply(lambda v: "" if pd.isna(v) else str(v).strip())
+        if (df[col] == "").any():
+            raise CsvSchemaError(
+                f"{path}: '{col}' contains a blank/missing value -- an identity column must "
+                f"actually identify something, not merely be CONSISTENT (a wholly blank file "
+                f"reads as one uniform, but meaningless, identity tuple)"
+            )
+
     distinct_identities = df[identity_cols].drop_duplicates()
     if len(distinct_identities) > 1:
         raise CsvSchemaError(
@@ -140,6 +174,10 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
         )
 
     df["timestamp_utc"] = parse_utc_series(df["timestamp_utc"])
+    try:
+        df["timestamp_server"] = pd.to_datetime(df["timestamp_server"], errors="raise")
+    except (ValueError, TypeError) as exc:
+        raise CsvSchemaError(f"{path}: 'timestamp_server' contains an unparseable value") from exc
     for col in ("equity", "balance"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
         if not df[col].apply(lambda v: pd.notna(v) and math.isfinite(v)).all():
@@ -157,13 +195,28 @@ def compute_daily_equity_peak_giveback(
 ) -> DailyEquityGivebackResult:
     """The SAME arm/trigger giveback formula
     ``compute_balance_peak_giveback`` implements, but with the running
-    peak reset at each UTC calendar-day boundary -- the "Daily equity-peak
-    giveback" master-prompt metric, which (unlike
-    ``compute_balance_peak_giveback``'s own whole-curve peak) genuinely
-    needs a per-day reset. Groups 'timestamps'/'equity_curve' by UTC
-    calendar date and re-runs ``compute_balance_peak_giveback``
-    independently on each day's own slice (already curve-agnostic, so no
-    duplicated math), then aggregates across days.
+    peak reset at each calendar-day boundary of whichever clock
+    'timestamps' represents -- the "Daily equity-peak giveback"
+    master-prompt metric, which (unlike ``compute_balance_peak_giveback``'s
+    own whole-curve peak) genuinely needs a per-day reset. Groups
+    'timestamps'/'equity_curve' by calendar date and re-runs
+    ``compute_balance_peak_giveback`` independently on each day's own
+    slice (already curve-agnostic, so no duplicated math), then aggregates
+    across days.
+
+    **Corrected, 2026-07-27 (Codex review finding, ninth round, P1 finding
+    16): 'timestamps' MUST be the trade-SERVER-local clock (EquityTickRecorder.mq5's
+    own 'timestamp_server' column), never UTC.** The live risk contract's
+    daily boundary (``SessionManager.mqh``'s own ``SN_CurrentDailyBoundary``)
+    resets at trade-server midnight, explicitly not UTC -- this function
+    previously received UTC timestamps, so a broker-server GMT offset
+    could split one live risk day into two calendar dates here (or merge
+    pieces of two adjacent server days), computing a daily metric that
+    does not reproduce the boundary the live engine actually resets on.
+    This function's own grouping logic is unchanged (group by whatever
+    calendar date 'timestamps' represents) -- the fix is entirely in which
+    clock the caller passes; see ``read_equity_ticks_csv``'s/``run``'s own
+    header for where that is now enforced.
 
     Raises ValueError if 'timestamps' and 'equity_curve' are not the same
     length.
@@ -227,7 +280,17 @@ def compute_equity_curve_metrics(
     """The three required metrics, computed together from the same
     equity series: max account-equity drawdown (whole series),
     account-peak giveback (whole series, never resetting), and
-    daily-reset equity-peak giveback (per UTC calendar day)."""
+    daily-reset equity-peak giveback (per calendar day of whichever clock
+    'timestamps' represents).
+
+    **'timestamps' MUST be the trade-SERVER-local clock, not UTC (Codex
+    review finding, ninth round, P1 finding 16)** -- see
+    ``compute_daily_equity_peak_giveback``'s own header for why. Only the
+    daily-giveback metric actually consumes 'timestamps' (max drawdown and
+    the whole-series account-peak giveback operate on the equity values
+    alone, order-preserved), but this function's own parameter is named
+    generically since it is threaded straight through.
+    """
 
     return EquityCurveMetricsResult(
         n_ticks=len(equity_curve),
@@ -259,8 +322,12 @@ def run(
 
     df, file_hash = read_equity_ticks_csv(equity_ticks_csv)
     equity_curve = df["equity"].tolist()
+    # **Fixed, 2026-07-27 (Codex review finding, ninth round, P1 finding
+    # 16): passes 'timestamp_server' (trade-server-local), not
+    # 'timestamp_utc' -- the daily-giveback reset boundary must match the
+    # live risk contract's own trade-server-midnight clock, not UTC.**
     result = compute_equity_curve_metrics(
-        df["timestamp_utc"].tolist(), equity_curve, arm_percent, floor_percent
+        df["timestamp_server"].tolist(), equity_curve, arm_percent, floor_percent
     )
 
     if summary_json is not None:
