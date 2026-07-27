@@ -61,6 +61,17 @@ struct SChartPatternResult
    double                  target;
    double                  stop;
    int                     breakout_index;  // -1 if no confirmed breakout found yet
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):
+   // the two identity-defining pivot bars' own indices (into the SAME
+   // highs[]/lows[]/closes[] arrays passed to the detector), per section 6's
+   // "keyed by pattern type + boundary pivots" durable-identity requirement.
+   // A bar INDEX shifts by one every new bar (index 0 is always "current"),
+   // so these are NOT a stable identity on their own -- ChartPatternStrategy.mqh
+   // converts them to the underlying bars' own TIMES (stable) before using
+   // them as ChartPatternLifecycle.mqh's own persisted-instance key. -1 if
+   // not applicable (found == false).
+   int                     pivot_index_1;   // the newest of the two identity pivots
+   int                     pivot_index_2;   // the oldest of the two identity pivots
   };
 
 //+------------------------------------------------------------------+
@@ -113,6 +124,8 @@ bool CPT_DetectDoubleTopArray(const double &highs[], const double &lows[], const
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -159,6 +172,8 @@ bool CPT_DetectDoubleTopArray(const double &highs[], const double &lows[], const
    result.target = neckline - (extreme - neckline);
    result.stop = highs[h1] + current_atr * breakout_buffer_atr; // above the more recent peak
    result.breakout_index = breakout_level_index;
+   result.pivot_index_1 = h1;
+   result.pivot_index_2 = h2;
    return true;
   }
 
@@ -178,6 +193,8 @@ bool CPT_DetectDoubleBottomArray(const double &highs[], const double &lows[], co
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -224,6 +241,8 @@ bool CPT_DetectDoubleBottomArray(const double &highs[], const double &lows[], co
    result.target = neckline + (neckline - extreme);
    result.stop = lows[l1] - current_atr * breakout_buffer_atr;
    result.breakout_index = breakout_level_index;
+   result.pivot_index_1 = l1;
+   result.pivot_index_2 = l2;
    return true;
   }
 
@@ -265,6 +284,8 @@ bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -345,6 +366,8 @@ bool CPT_DetectTripleTopArray(const double &highs[], const double &lows[], const
    result.target = neckline_at_target - (extreme - neckline_at_extreme);
    result.stop = highs[h1] + current_atr * breakout_buffer_atr;
    result.breakout_index = breakout_index;
+   result.pivot_index_1 = h1;
+   result.pivot_index_2 = h3;
    return true;
   }
 
@@ -366,6 +389,8 @@ bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], co
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -439,6 +464,8 @@ bool CPT_DetectTripleBottomArray(const double &highs[], const double &lows[], co
    result.target = neckline_at_target + (neckline_at_extreme - extreme);
    result.stop = lows[l1] - current_atr * breakout_buffer_atr;
    result.breakout_index = breakout_index;
+   result.pivot_index_1 = l1;
+   result.pivot_index_2 = l3;
    return true;
   }
 
@@ -461,6 +488,8 @@ bool CPT_DetectHeadAndShouldersArray(const double &highs[], const double &lows[]
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -532,6 +561,8 @@ bool CPT_DetectHeadAndShouldersArray(const double &highs[], const double &lows[]
    result.target = neckline_at_target - (H - neckline_at_head);
    result.stop = RS_p + current_atr * breakout_buffer_atr;
    result.breakout_index = breakout_index;
+   result.pivot_index_1 = rs;
+   result.pivot_index_2 = ls;
    return true;
   }
 
@@ -554,6 +585,8 @@ bool CPT_DetectInverseHeadAndShouldersArray(const double &highs[], const double 
    result.target = 0.0;
    result.stop = 0.0;
    result.breakout_index = -1;
+   result.pivot_index_1 = -1;
+   result.pivot_index_2 = -1;
 
    if(current_atr <= 0.0)
       return false;
@@ -625,6 +658,8 @@ bool CPT_DetectInverseHeadAndShouldersArray(const double &highs[], const double 
    result.target = neckline_at_target + (neckline_at_head - H);
    result.stop = RS_p - current_atr * breakout_buffer_atr;
    result.breakout_index = breakout_index;
+   result.pivot_index_1 = rs;
+   result.pivot_index_2 = ls;
    return true;
   }
 

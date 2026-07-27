@@ -23,6 +23,7 @@
 #include "../Market/MarketRegimeEngine.mqh"
 #include "../Patterns/ChartPatternEngine.mqh"
 #include "../Patterns/CandlestickPatternEngine.mqh"
+#include "../Patterns/ChartPatternLifecycle.mqh"
 
 enum ENUM_CPS_SETUP
   {
@@ -63,7 +64,150 @@ struct SCPStrategyConfig
    int    max_breakout_age_bars;
    double retest_tolerance_atr;
    int    candlestick_trend_lookback;
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):
+   // CPT_CheckRetestArray's own hold/fail parameters, per TASK-002_PHASE2_
+   // SPECIFICATION.md section 6 (InpRetestFailureATR default 0.2,
+   // InpRetestMaxBars default 10) -- previously never wired to any live
+   // caller at all (the strategy used current-price proximity only, never
+   // calling the engine's own hold/fail predicate).
+   double retest_failure_atr;
+   int    retest_max_bars;
   };
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):  |
+//| applies ChartPatternLifecycle.mqh's persisted state machine to an          |
+//| already-breakout-confirmed pattern instance (CPT_Detect*Array's own          |
+//| 'found' + 'breakout_index >= 0' contract). Returns true ONLY on the exact       |
+//| bar this instance's retest resolves to TRADED for the first and only time         |
+//| -- every other case (already consumed, not yet touching the retest zone,             |
+//| retest still pending, or a transition to INVALIDATED/EXPIRED this very                  |
+//| call) returns false. A CONSUMED instance (TRADED/INVALIDATED/EXPIRED)                       |
+//| never re-enters eligibility, per section 6's own "permanently marks an                         |
+//| instance TRADED as consumed" requirement, extended to all three terminal                            |
+//| states.                                                                                                    |
+//|                                                                    |
+//| **Stated scope boundary:** the false-break invalidation path (section 6:      |
+//| "a confirmed close back inside the boundary within InpFalseBreakBars bars       |
+//| of breakout") is NOT implemented here -- a separate predicate this fix           |
+//| does not attempt, named honestly rather than silently folded into the               |
+//| retest-fail path (which is a DIFFERENT trigger: failing AFTER entering the              |
+//| retest zone, not before it). See ChartPatternLifecycle.mqh's own header             |
+//| for the FORMING-stage tracking this module also does not attempt.**                     |
+//+------------------------------------------------------------------+
+bool CPS_ApplyLifecycle(const string symbol, const long magic,
+                          const ENUM_CHART_PATTERN_TYPE pattern_type, const int pivot_index_1,
+                          const int pivot_index_2, const datetime &times[], const double &closes[],
+                          const double current_price, const double boundary_price,
+                          const bool is_bullish_breakout, const double current_atr,
+                          const double retest_tolerance_atr, const double retest_failure_atr,
+                          const int retest_max_bars)
+  {
+   int n = ArraySize(times);
+   if(pivot_index_1 < 0 || pivot_index_2 < 0 || pivot_index_1 >= n || pivot_index_2 >= n)
+      return false; // cannot form a durable identity without both pivot times
+
+   datetime pivot1_time = times[pivot_index_1];
+   datetime pivot2_time = times[pivot_index_2];
+
+   ENUM_CP_LIFECYCLE_STATE state = CPL_GetState(symbol, magic, (int)pattern_type, pivot1_time,
+                                                  pivot2_time);
+   if(CPL_IsTerminal(state))
+      return false; // consumed (TRADED/INVALIDATED/EXPIRED) -- never re-enters eligibility
+
+   if(state == CPL_STATE_NONE)
+     {
+      // Newly confirmed instance -- first time this exact identity has ever
+      // been observed.
+      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_CONFIRMED);
+      CPL_SetConfirmedTime(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, times[0]);
+      state = CPL_STATE_CONFIRMED;
+     }
+
+   double tol = current_atr * retest_tolerance_atr;
+   bool currently_in_retest_zone = MathAbs(current_price - boundary_price) <= tol;
+
+   if(state == CPL_STATE_CONFIRMED)
+     {
+      if(!currently_in_retest_zone)
+         return false; // still waiting to touch the retest zone
+      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_RETESTING);
+      CPL_SetRetestTouchTime(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, times[0]);
+      return false; // just entered RETESTING this bar -- hold/fail is evaluated on a later bar
+     }
+
+   // state == CPL_STATE_RETESTING: recompute the touch bar's CURRENT "bars
+   // ago" index from its own persisted TIME (bar indices shift by one every
+   // new bar -- the raw index recorded at touch time is stale by now).
+   datetime touch_time = CPL_GetRetestTouchTime(symbol, magic, (int)pattern_type, pivot1_time,
+                                                  pivot2_time);
+   int touch_index_now = -1;
+   for(int k = 0; k < n; k++)
+     {
+      if(times[k] == touch_time)
+        {
+         touch_index_now = k;
+         break;
+        }
+     }
+   if(touch_index_now < 0 || touch_index_now > retest_max_bars)
+     {
+      // The touch bar has either rolled out of the shared evaluation
+      // window (cannot verify -- fail closed) or InpRetestMaxBars has
+      // elapsed with neither a hold nor a fail resolved -- section 6's own
+      // third RETESTING transition path.
+      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_EXPIRED);
+      return false;
+     }
+
+   bool holds;
+   if(!CPT_CheckRetestArray(closes, touch_index_now, boundary_price, is_bullish_breakout, current_atr,
+                             retest_failure_atr, retest_max_bars, holds))
+      return false; // touch_index invalid -- should not happen given the check above
+
+   if(holds)
+     {
+      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_TRADED);
+      return true; // eligible to trade -- this exact instance is now consumed forever after
+     }
+
+   CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_INVALIDATED);
+   return false;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):  |
+//| the range-boundary setup has no breakout/retest cycle of its own (it        |
+//| fires as soon as a double top/bottom's own extreme coincides with the         |
+//| current range boundary AND a confirming candlestick appears) -- its own            |
+//| consumed-suppression is therefore simpler: the FIRST time this exact               |
+//| identity is about to emit a real signal, mark it TRADED (consumed)                    |
+//| immediately and allow the emission; any LATER call for the SAME identity                 |
+//| (the same pivots rediscovered, e.g. a second confirming candlestick days                    |
+//| later at the same boundary) is suppressed. Call only at the exact point                        |
+//| an entry signal is otherwise about to be emitted (after candlestick                                confirmation
+//| has already passed), never earlier.**                                                                 |
+//+------------------------------------------------------------------+
+bool CPS_ConsumeRangeBoundaryInstance(const string symbol, const long magic,
+                                        const ENUM_CHART_PATTERN_TYPE pattern_type,
+                                        const int pivot_index_1, const int pivot_index_2,
+                                        const datetime &times[])
+  {
+   int n = ArraySize(times);
+   if(pivot_index_1 < 0 || pivot_index_2 < 0 || pivot_index_1 >= n || pivot_index_2 >= n)
+      return false;
+
+   datetime pivot1_time = times[pivot_index_1];
+   datetime pivot2_time = times[pivot_index_2];
+
+   ENUM_CP_LIFECYCLE_STATE state = CPL_GetState(symbol, magic, (int)pattern_type, pivot1_time,
+                                                  pivot2_time);
+   if(CPL_IsTerminal(state))
+      return false; // already consumed by an earlier bar's own emission
+
+   CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_TRADED);
+   return true;
+  }
 
 void CPS_InitSignal(SChartPatternStrategySignal &signal)
   {
@@ -84,7 +228,8 @@ void CPS_InitSignal(SChartPatternStrategySignal &signal)
 //+------------------------------------------------------------------+
 bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &highs[],
                                            const double &lows[], const double &closes[],
-                                           const double &atr_values[],
+                                           const double &atr_values[], const datetime &times[],
+                                           const string symbol, const long magic,
                                            const ENUM_MARKET_REGIME regime,
                                            const SCPStrategyConfig &cfg,
                                            SChartPatternStrategySignal &signal)
@@ -201,9 +346,20 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
       return false; // breakout and retest cannot be the same single bar
 
    double current_price = closes[0];
-   double tol = current_atr * cfg.retest_tolerance_atr;
-   if(MathAbs(current_price - r.boundary_price) > tol)
-      return false; // not currently retesting
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):
+   // the naive current-price-proximity check (kept no persisted state across
+   // bars at all) is replaced by the real, persisted lifecycle registry --
+   // ChartPatternLifecycle.mqh -- which gives this exact pattern instance a
+   // durable identity (type + the two identity pivots' own bar TIMES),
+   // tracks it through CONFIRMED -> RETESTING -> TRADED/INVALIDATED/EXPIRED,
+   // calls the engine's own CPT_CheckRetestArray hold/fail predicate (never
+   // wired to any live caller before this fix), and permanently suppresses a
+   // TRADED/INVALIDATED/EXPIRED instance from ever re-entering eligibility --
+   // closing "rediscovered geometry can trade repeatedly."**
+   if(!CPS_ApplyLifecycle(symbol, magic, found_type, r.pivot_index_1, r.pivot_index_2, times, closes,
+                           current_price, r.boundary_price, pattern_is_bullish_breakout, current_atr,
+                           cfg.retest_tolerance_atr, cfg.retest_failure_atr, cfg.retest_max_bars))
+      return false; // not yet eligible this bar (still forming/retesting), or consumed/expired
 
    string pattern_name = "";
    bool confirmed = false;
@@ -243,6 +399,7 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
 //+------------------------------------------------------------------+
 bool CPS_EvaluateRangeBoundaryArray(const double &opens[], const double &highs[], const double &lows[],
                                      const double &closes[], const double &atr_values[],
+                                     const datetime &times[], const string symbol, const long magic,
                                      const ENUM_MARKET_REGIME regime,
                                      const SMarketStructureState &structure,
                                      const SCPStrategyConfig &cfg,
@@ -277,7 +434,9 @@ bool CPS_EvaluateRangeBoundaryArray(const double &opens[], const double &highs[]
          else if(CP_IsBearishEngulfingArray(opens, highs, lows, closes, 0))
            { confirmed = true; pattern_name = "bearish_engulfing"; }
 
-         if(confirmed)
+         if(confirmed && CPS_ConsumeRangeBoundaryInstance(symbol, magic, CPT_DOUBLE_TOP,
+                                                            rTop.pivot_index_1, rTop.pivot_index_2,
+                                                            times))
            {
             signal.found = true;
             signal.setup_type = CPS_RANGE_BOUNDARY;
@@ -306,7 +465,9 @@ bool CPS_EvaluateRangeBoundaryArray(const double &opens[], const double &highs[]
          else if(CP_IsBullishEngulfingArray(opens, highs, lows, closes, 0))
            { confirmed = true; pattern_name = "bullish_engulfing"; }
 
-         if(confirmed)
+         if(confirmed && CPS_ConsumeRangeBoundaryInstance(symbol, magic, CPT_DOUBLE_BOTTOM,
+                                                            rBot.pivot_index_1, rBot.pivot_index_2,
+                                                            times))
            {
             signal.found = true;
             signal.setup_type = CPS_RANGE_BOUNDARY;
@@ -328,14 +489,16 @@ bool CPS_EvaluateRangeBoundaryArray(const double &opens[], const double &highs[]
 //| Dispatcher.                                                        |
 //+------------------------------------------------------------------+
 bool CPS_EvaluateArray(const double &opens[], const double &highs[], const double &lows[],
-                        const double &closes[], const double &atr_values[],
+                        const double &closes[], const double &atr_values[], const datetime &times[],
+                        const string symbol, const long magic,
                         const ENUM_MARKET_REGIME regime, const SMarketStructureState &structure,
                         const SCPStrategyConfig &cfg, SChartPatternStrategySignal &signal)
   {
-   if(CPS_EvaluateTrendBreakoutRetestArray(opens, highs, lows, closes, atr_values, regime, cfg, signal))
+   if(CPS_EvaluateTrendBreakoutRetestArray(opens, highs, lows, closes, atr_values, times, symbol, magic,
+                                            regime, cfg, signal))
       return true;
-   if(CPS_EvaluateRangeBoundaryArray(opens, highs, lows, closes, atr_values, regime, structure, cfg,
-                                      signal))
+   if(CPS_EvaluateRangeBoundaryArray(opens, highs, lows, closes, atr_values, times, symbol, magic,
+                                      regime, structure, cfg, signal))
       return true;
 
    CPS_InitSignal(signal);
@@ -345,7 +508,8 @@ bool CPS_EvaluateArray(const double &opens[], const double &highs[], const doubl
 //+------------------------------------------------------------------+
 //| CMARKETDATA-INTEGRATED WRAPPER                                     |
 //+------------------------------------------------------------------+
-bool CPS_EvaluateLive(CMarketData &md, const int atr_percentile_window, const int efficiency_window,
+bool CPS_EvaluateLive(CMarketData &md, const string symbol, const long magic,
+                       const int atr_percentile_window, const int efficiency_window,
                        const int ema_period, const int ema_slope_bars, const int adx_period,
                        const double trend_threshold, const double expansion_threshold,
                        const double compression_threshold, const double min_efficiency,
@@ -365,21 +529,23 @@ bool CPS_EvaluateLive(CMarketData &md, const int atr_percentile_window, const in
       return false;
 
    double opens[], highs[], lows[], closes[], atr_values[];
+   datetime times[];
    ArrayResize(opens, window);
    ArrayResize(highs, window);
    ArrayResize(lows, window);
    ArrayResize(closes, window);
    ArrayResize(atr_values, window);
+   ArrayResize(times, window);
    for(int i = 0; i < window; i++)
      {
       if(!md.GetOpen(i, opens[i]) || !md.GetHigh(i, highs[i]) || !md.GetLow(i, lows[i]) ||
-         !md.GetClose(i, closes[i]) || !md.GetATR(i, atr_values[i], 14))
+         !md.GetClose(i, closes[i]) || !md.GetATR(i, atr_values[i], 14) || !md.GetTime(i, times[i]))
          return false;
      }
 
    SMarketStructureState structure;
    MS_ComputeStructureArray(highs, lows, closes, cfg.depth, cfg.max_lookback, structure);
 
-   return CPS_EvaluateArray(opens, highs, lows, closes, atr_values, regime_read.regime, structure,
-                             cfg, signal);
+   return CPS_EvaluateArray(opens, highs, lows, closes, atr_values, times, symbol, magic,
+                             regime_read.regime, structure, cfg, signal);
   }

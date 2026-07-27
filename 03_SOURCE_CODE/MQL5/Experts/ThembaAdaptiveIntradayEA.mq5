@@ -2571,17 +2571,27 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
      }
 
    double opens[], highs[], lows[], closes[], atr_values[];
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):
+   // bar_times[] threads each bar's own TIME alongside the existing shared
+   // OHLC/ATR arrays -- ChartPatternStrategy.mqh's new lifecycle registry
+   // needs a stable pattern identity across bars (a bar's own TIME never
+   // changes; its INDEX into this array shifts by one every new bar), which
+   // requires the underlying bar times to be available at this shared
+   // evaluation layer, not just derivable prices.
+   datetime bar_times[];
    ArrayResize(opens, InpSharedWindowBars);
    ArrayResize(highs, InpSharedWindowBars);
    ArrayResize(lows, InpSharedWindowBars);
    ArrayResize(closes, InpSharedWindowBars);
    ArrayResize(atr_values, InpSharedWindowBars);
+   ArrayResize(bar_times, InpSharedWindowBars);
    for(int i = 0; i < InpSharedWindowBars; i++)
      {
       if(!g_md.GetOpen(i, opens[i]) || !g_md.GetHigh(i, highs[i]) || !g_md.GetLow(i, lows[i]) ||
-         !g_md.GetClose(i, closes[i]) || !g_md.GetATR(i, atr_values[i], 14))
+         !g_md.GetClose(i, closes[i]) || !g_md.GetATR(i, atr_values[i], 14) ||
+         !g_md.GetTime(i, bar_times[i]))
         {
-         Print("ThembaEA: a required price/ATR read failed — skipping this bar's evaluation.");
+         Print("ThembaEA: a required price/ATR/time read failed — skipping this bar's evaluation.");
          JournalDataFailureDecision("price_or_atr_read_failed");
          return;
         }
@@ -2664,9 +2674,12 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    cpCfg.min_head_prominence_atr = 1.0; cpCfg.time_tolerance = 0.5;
    cpCfg.trend_bars = 10; cpCfg.breakout_buffer_atr = 0.1; cpCfg.max_breakout_age_bars = 15;
    cpCfg.retest_tolerance_atr = 0.3; cpCfg.candlestick_trend_lookback = 5;
+   // TASK-002_PHASE2_SPECIFICATION.md section 6 defaults (InpRetestFailureATR
+   // 0.2, InpRetestMaxBars 10) -- Codex round-9 P1 finding 11.
+   cpCfg.retest_failure_atr = 0.2; cpCfg.retest_max_bars = 10;
    SChartPatternStrategySignal cpSig;
-   CPS_EvaluateArray(opens, highs, lows, closes, atr_values, effective_regime, structure, cpCfg,
-                      cpSig);
+   CPS_EvaluateArray(opens, highs, lows, closes, atr_values, bar_times, g_symbol, InpMagicNumber,
+                      effective_regime, structure, cpCfg, cpSig);
    candidates[2] = SS_FromChartPattern(cpSig);
 
    // 4. Trend Following
