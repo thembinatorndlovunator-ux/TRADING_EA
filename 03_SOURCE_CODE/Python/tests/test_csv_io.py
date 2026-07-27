@@ -97,6 +97,74 @@ def test_actual_bytes_read_checked_even_if_stat_reports_smaller_size(tmp_path, m
         read_csv_with_required_columns(path, {"trade_id", "profit"})
 
 
+def test_read_never_requests_a_single_huge_buffer_against_the_real_default_ceiling(
+    tmp_path, monkeypatch
+):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 15): the seventh-round fix's own fh.read(MAX_CSV_FILE_BYTES +
+    1) requested a buffer sized near the FULL 500,000,001-byte ceiling
+    regardless of the file's actual size -- CPython's BufferedReader
+    attempts to size its buffer to the requested count, producing real,
+    reproducible MemoryError failures under pytest even for a tiny CSV
+    (confirmed by two independent full pytest runs in the pinned
+    environment). Both existing tests above monkeypatch MAX_CSV_FILE_BYTES
+    down to 10, so neither ever exercised the SHIPPED 500,000,000-byte
+    default's own read behavior. This test leaves the real default ceiling
+    untouched and instead instruments the underlying file object's own
+    read() calls, asserting that NONE of them ever requests anywhere near
+    the full ceiling -- every chunk must be bounded to
+    CSV_READ_CHUNK_BYTES (1 MiB), proving this module cannot reproduce the
+    reported MemoryError regardless of how large MAX_CSV_FILE_BYTES is
+    configured."""
+
+    import analysis.csv_io as csv_io_module
+
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit\nt1,10.0\n", encoding="utf-8")
+
+    requested_sizes: list[int] = []
+    real_path_open = Path.open
+
+    class _TrackingFile:
+        """Thin read()-instrumenting wrapper -- _io.FileIO/BufferedReader
+        are immutable C types (monkeypatching their own .read directly
+        raises TypeError), so this wraps the real handle at the Path.open
+        level instead, which IS patchable (a pure-Python method)."""
+
+        def __init__(self, fh):
+            self._fh = fh
+
+        def read(self, size=-1):
+            requested_sizes.append(size)
+            return self._fh.read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            self._fh.close()
+            return False
+
+    def tracking_open(self, *args, **kwargs):
+        fh = real_path_open(self, *args, **kwargs)
+        if self == path:
+            return _TrackingFile(fh)
+        return fh
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    df = read_csv_with_required_columns(path, {"trade_id", "profit"})
+    assert list(df["trade_id"]) == ["t1"]
+
+    assert len(requested_sizes) > 0, "expected at least one instrumented read() call"
+    max_requested = max(requested_sizes)
+    assert max_requested <= csv_io_module.CSV_READ_CHUNK_BYTES, (
+        f"a single read() call requested {max_requested} bytes -- expected every call to stay "
+        f"bounded to CSV_READ_CHUNK_BYTES ({csv_io_module.CSV_READ_CHUNK_BYTES}), never anywhere "
+        f"near MAX_CSV_FILE_BYTES ({csv_io_module.MAX_CSV_FILE_BYTES})"
+    )
+
+
 def test_quoted_multiline_duplicate_header_rejected(tmp_path):
     """Regression for a Codex review finding (2026-07-22, third round):
     reading only the first PHYSICAL line missed a header row that itself

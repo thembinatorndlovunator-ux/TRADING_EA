@@ -51,6 +51,20 @@ TRADE_ID_DTYPE = {"trade_id": str}
 # stat() BEFORE the unbounded read_bytes() call below.**
 MAX_CSV_FILE_BYTES = 500_000_000  # 500 MB
 
+# **Added, 2026-07-22 Codex review finding (eighth round, P1 finding 15):
+# the read below previously issued ONE fh.read(MAX_CSV_FILE_BYTES + 1) call
+# regardless of the file's actual size -- CPython's BufferedReader.read(n)
+# for an explicit positive n attempts to size its buffer to n upfront, so
+# even a genuinely tiny CSV triggered an allocation attempt near the full
+# 500,000,001-byte ceiling (the review's own probe measured ~500,008,794
+# bytes for a one-byte file), producing MemoryError nondeterministically
+# under constrained available memory -- confirmed by two independent full
+# pytest runs in the pinned environment, both with real MemoryError
+# failures at this exact line, directly falsifying a prior "0 failed"
+# claim. Reading in bounded chunks (never allocating anywhere near the
+# full ceiling for an ordinary small file) closes this.**
+CSV_READ_CHUNK_BYTES = 1_048_576  # 1 MiB per chunk
+
 
 def _read_csv_bytes_checked(
     path: Path, required_columns: set[str], dtype: Optional[dict]
@@ -83,11 +97,21 @@ def _read_csv_bytes_checked(
     16): the previous version checked stat() size, then called
     path.read_bytes() (unbounded) -- a concurrently growing file could
     exceed the ceiling in the window between the two calls (a classic
-    TOCTOU race), and read_bytes() itself has no cap regardless. The
-    actual read is now bounded to AT MOST MAX_CSV_FILE_BYTES + 1 bytes
-    (so this function itself never loads more, even transiently), and
-    the ACTUAL bytes returned are re-checked against the ceiling after
-    the read, independent of whatever the earlier stat() call reported.**
+    TOCTOU race), and read_bytes() itself has no cap regardless.
+
+    **Fixed again, 2026-07-22 Codex review finding (eighth round, P1
+    finding 15): the seventh-round fix's own single fh.read(
+    MAX_CSV_FILE_BYTES + 1) call requested a huge buffer up front
+    regardless of the file's real size, triggering a large allocation
+    attempt (and real, reproducible MemoryError failures under pytest) for
+    even a tiny CSV -- see CSV_READ_CHUNK_BYTES' own header for the full
+    story. The read is now performed in bounded CSV_READ_CHUNK_BYTES (1
+    MiB) chunks: the running total is checked against the ceiling after
+    EVERY chunk, so a file that turns out to be oversized is rejected
+    (and stops reading) as soon as the ceiling is crossed, without ever
+    allocating a buffer anywhere near the full ceiling size for an
+    ordinary small file, and without reading the whole oversized file
+    first either.**
     """
 
     file_size = path.stat().st_size
@@ -97,13 +121,22 @@ def _read_csv_bytes_checked(
             f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the whole file into memory"
         )
 
+    chunks: list[bytes] = []
+    total_read = 0
     with path.open("rb") as fh:
-        raw_bytes = fh.read(MAX_CSV_FILE_BYTES + 1)
-    if len(raw_bytes) > MAX_CSV_FILE_BYTES:
-        raise CsvSchemaError(
-            f"{path}: file size (observed while reading) exceeds MAX_CSV_FILE_BYTES ceiling of "
-            f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the rest into memory"
-        )
+        while True:
+            chunk = fh.read(CSV_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            total_read += len(chunk)
+            if total_read > MAX_CSV_FILE_BYTES:
+                raise CsvSchemaError(
+                    f"{path}: file size (observed while reading) exceeds MAX_CSV_FILE_BYTES "
+                    f"ceiling of {MAX_CSV_FILE_BYTES} bytes -- refusing to load the rest into "
+                    f"memory"
+                )
+            chunks.append(chunk)
+    raw_bytes = b"".join(chunks)
     # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
     # leading BOM, identical to plain "utf-8" otherwise) without a second
     # file open.
