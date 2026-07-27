@@ -176,6 +176,10 @@ input double InpRiskCrossCheckTolerancePercent = 5.0; // section 8 default
 // grace period -- see ComputeOwnMagicOpenRiskCash and EnforceNoStopGracePeriod.**
 input double InpNoStopWorstCaseATRMultiple = 10.0;  // section 8 no-SL fallback default
 input int    InpNoStopGraceSeconds        = 5;      // section 8: close immediately if unremediated
+// **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 5):
+// section 11's durable-intent abandonment timeout -- see
+// ReconcileIntentAndFeedAFC/IntentManager.mqh's own IM_ReconcileOnRestart.**
+input int    InpIntentTimeoutSeconds      = 30;     // section 11 default
 
 CMarketData             g_md;
 CSymbolProfile          g_profile;
@@ -347,25 +351,11 @@ int OnInit()
 
    // TASK-034: reconcile any durable-intent record orphaned by a crash/restart between
    // "about to submit" and "confirmed filled or rejected" — before resuming normal operation.
-   // **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding 1):
-   // a matching PENDING ORDER (accepted at the broker, not yet filled/
-   // cancelled) now leaves the intent deliberately ACTIVE rather than
-   // clearing it and resuming as if nothing were outstanding.**
-   bool orphaned_intent_was_filled, orphaned_intent_still_pending;
-   if(IM_ReconcileOnRestart(g_symbol, InpMagicNumber, orphaned_intent_was_filled,
-                             orphaned_intent_still_pending))
-     {
-      string reconcile_outcome;
-      if(orphaned_intent_still_pending)
-         reconcile_outcome = "a pending order still exists at the broker — intent left ACTIVE "
-                              "until OnTradeTransaction observes its terminal outcome";
-      else if(orphaned_intent_was_filled)
-         reconcile_outcome = "a matching position exists (order had filled)";
-      else
-         reconcile_outcome = "no matching position or pending order exists (order never filled)";
-      PrintFormat("ThembaEA: reconciled an orphaned durable-intent record on restart for '%s' "
-                  "magic %I64d — %s.", g_symbol, InpMagicNumber, reconcile_outcome);
-     }
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 5): now
+   // delegates to ReconcileIntentAndFeedAFC(), which also searches closed
+   // history and reconstructs AsyncFillCorrelator's pending record — see
+   // that function's own header and OnTick's own repeated call to it.**
+   ReconcileIntentAndFeedAFC();
 
    if(InpEnableOrderSubmission)
       PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
@@ -428,6 +418,67 @@ bool PositionStillOpenById(const ulong position_id)
          return true;
      }
    return false;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 5):** shared durable-intent reconciliation, called once from OnInit          |
+//| (restart) and again every tick from OnTick while an intent remains              |
+//| unresolved by the normal live-position/live-order paths -- a single OnInit          |
+//| call is not always sufficient: an intent found with NO live position, NO             |
+//| live order, and NO closed-history trace, but still younger than                          |
+//| InpIntentTimeoutSeconds, is left active by IM_ReconcileOnRestart pending                     |
+//| a later re-check (the broker may simply not have responded to the crash-                        |
+//| interrupted submission yet), and this is the only place that re-check                              |
+//| happens. Also reconstructs AsyncFillCorrelator.mqh's session-only pending                              |
+//| array when a still-live pending order is found -- without this, a                                        |
+//| still-pending order surviving a restart could never be resolved by the                                       |
+//| normal OnTradeTransaction/AFC_FindPending path (that array is empty after                                        |
+//| every restart), leaving the intent stuck until yet another restart.**                                                |
+//+------------------------------------------------------------------+
+void ReconcileIntentAndFeedAFC()
+  {
+   bool  orphaned_was_filled, orphaned_still_pending, orphaned_abandoned;
+   ulong orphaned_pending_ticket;
+   if(!IM_ReconcileOnRestart(g_symbol, InpMagicNumber, InpIntentTimeoutSeconds,
+                              orphaned_was_filled, orphaned_still_pending,
+                              orphaned_pending_ticket, orphaned_abandoned))
+      return; // no active intent -- nothing to reconcile
+
+   if(orphaned_still_pending && orphaned_pending_ticket != 0)
+     {
+      string existing_signal_id;
+      int    existing_index;
+      if(!AFC_FindPending(orphaned_pending_ticket, existing_signal_id, existing_index))
+        {
+         string synthetic_signal_id = StringFormat("restart_reconciled_%s",
+                                                     IM_GetIntentId(g_symbol, InpMagicNumber));
+         AFC_AddPending(orphaned_pending_ticket, synthetic_signal_id);
+         PrintFormat("ThembaEA: reconciliation found a still-pending order #%I64u for '%s' magic "
+                     "%I64d -- reconstructed async-fill correlation (synthetic signal_id=%s) so "
+                     "its eventual outcome resolves through the normal OnTradeTransaction path.",
+                     orphaned_pending_ticket, g_symbol, InpMagicNumber, synthetic_signal_id);
+        }
+      return;
+     }
+
+   if(orphaned_still_pending)
+      return; // too young to conclude anything yet -- retried on a later tick
+
+   string reconcile_outcome;
+   if(orphaned_abandoned)
+      reconcile_outcome = StringFormat("no trace found anywhere and the intent is older than "
+                                        "InpIntentTimeoutSeconds=%d -- treated as abandoned",
+                                        InpIntentTimeoutSeconds);
+   else if(orphaned_was_filled)
+      reconcile_outcome = "a matching live position or closed-history fill record exists "
+                           "(order had filled)";
+   else
+      reconcile_outcome = "resolved in closed history as cancelled/expired/rejected (order "
+                           "never filled), or no matching position/order/history trace exists "
+                           "at all (order never reached the broker)";
+   PrintFormat("ThembaEA: reconciled an orphaned durable-intent record for '%s' magic %I64d -- "
+               "%s.", g_symbol, InpMagicNumber, reconcile_outcome);
   }
 
 //+------------------------------------------------------------------+
@@ -622,6 +673,17 @@ void OnTick()
    // >= InpNoStopGraceSeconds is closed immediately (fail-closed), not just
    // priced into ComputeOwnMagicOpenRiskCash's own risk figure.**
    EnforceNoStopGracePeriod();
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 5):
+   // re-runs durable-intent reconciliation every tick while an intent
+   // remains active -- see ReconcileIntentAndFeedAFC's own header for why a
+   // single OnInit call is not always sufficient (a too-young-to-conclude
+   // intent needs a later re-check to age past InpIntentTimeoutSeconds; a
+   // just-discovered pending order needs its AsyncFillCorrelator record
+   // reconstructed before the normal fill/cancel path can resolve it).
+   // Cheap no-op via IM_HasActiveIntent's own single GlobalVariableGet
+   // whenever no intent is outstanding, which is the steady-state case.**
+   ReconcileIntentAndFeedAFC();
 
    // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
    // a persistent post-boundary entry lock. SN_IsPastIntradayBoundary() is a
@@ -1267,7 +1329,8 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    AppendReason(passed, "risk_cross_check_passed");
 
    //--- 7. Durable-intent-guarded real order submission (TASK-034) --------
-   if(!IM_BeginIntent(g_symbol, InpMagicNumber, is_long, sizing.volume, TimeCurrent()))
+   string intent_id;
+   if(!IM_BeginIntent(g_symbol, InpMagicNumber, is_long, sizing.volume, TimeCurrent(), intent_id))
      {
       // An intent is already active — a prior submission on this symbol+magic
       // has not yet been confirmed filled/rejected. Refuse to submit a
@@ -1278,9 +1341,16 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       return;
      }
 
-   string comment = StringFormat("Themba_%s", decision.strategy);
-   if(StringLen(comment) > 31)
-      comment = StringSubstr(comment, 0, 31); // MT5 order-comment length limit
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 5):
+   // the broker comment now carries the durable intent's own unique ID
+   // ("TI<microsecond-counter>") instead of "Themba_<strategy>" -- per
+   // TASK-002_PHASE2_SPECIFICATION.md section 11's "broker-visible
+   // correlation" requirement: this comment is what
+   // IM_FindIntentInHistory searches for after a restart, so it must be
+   // this exact, unique value, not a human-readable but collision-prone
+   // strategy tag. IM_BeginIntent already guarantees intent_id fits well
+   // within MT5's 31-character comment limit (see its own header).**
+   string comment = intent_id;
 
    SOrderOpenResult open_result;
    bool opened = OM_OpenPosition(g_symbol, is_long, sizing.volume, final_stop,
