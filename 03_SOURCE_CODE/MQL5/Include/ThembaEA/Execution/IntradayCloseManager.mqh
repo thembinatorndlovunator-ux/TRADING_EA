@@ -20,6 +20,7 @@
 #property strict
 
 #include <Trade\Trade.mqh>
+#include "../Core/KeyEncoding.mqh"
 #include "../Market/SessionManager.mqh"
 
 //--- In-memory (not persisted) once-per-day guard: suppresses redundant
@@ -182,5 +183,103 @@ bool ICM_ExecuteIntradayClose(const long magic, string &reasons[])
    g_icm_close_done_date  = SN_CurrentDailyBoundary();
    g_icm_close_done_today = all_ok;
 
+   return all_ok;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 10):** persisted (restart- and midnight-rollover-durable) "a close is        |
+//| owed for this calendar day" record, per-instance (symbol+magic). The           |
+//| module-level g_icm_close_done_date/g_icm_close_done_today guard above is         |
+//| IN-MEMORY ONLY -- if the EA restarts, or if no tick arrives between the            |
+//| boundary and the next server midnight (the review's own reported gap:                 |
+//| "there is no timer... the next day's tick makes                                          |
+//| SN_IsPastIntradayBoundary() false again, so overnight exposure can                          |
+//| remain"), that in-memory guard is silently lost and nothing else recorded                      |
+//| that yesterday's close was ever due, let alone whether it completed. This                          |
+//| persisted field is the authoritative record ICM_ReconcileIntradayClose                                 |
+//| below checks FIRST -- before even asking whether TODAY's own boundary has                                 |
+//| been reached -- so a still-owed close from an EARLIER day is never                                            |
+//| silently dropped by the calendar simply rolling over.                                                             |
+//+------------------------------------------------------------------+
+string ICM_PendingCloseKey(const string symbol, const long magic)
+  {
+   return KE_InstanceNamespace("ThembaEA_ICM", symbol, magic) + "__pending_close_date";
+  }
+
+//+------------------------------------------------------------------+
+//| The calendar day (its own SN_CurrentDailyBoundary() value) whose close   |
+//| is still owed, or 0 if none is currently owed.                             |
+//+------------------------------------------------------------------+
+datetime ICM_GetPendingCloseDate(const string symbol, const long magic)
+  {
+   string key = ICM_PendingCloseKey(symbol, magic);
+   if(!GlobalVariableCheck(key))
+      return 0;
+   return (datetime)GlobalVariableGet(key);
+  }
+
+bool ICM_SetPendingCloseDate(const string symbol, const long magic, const datetime date)
+  {
+   bool ok = KE_SetDoubleChecked(ICM_PendingCloseKey(symbol, magic), (double)date);
+   if(ok)
+      // Safety-critical: must survive a crash occurring the instant after
+      // this call returns, not wait for MT5's own periodic flush cadence --
+      // this IS the record that makes the close survive a restart.
+      GlobalVariablesFlush();
+   return ok;
+  }
+
+void ICM_ClearPendingCloseDate(const string symbol, const long magic)
+  {
+   KE_SetDoubleChecked(ICM_PendingCloseKey(symbol, magic), 0.0);
+  }
+
+//+------------------------------------------------------------------+
+//| True iff a close is currently owed (armed but not yet confirmed          |
+//| fully done) for this instance -- callers use this to block new entries      |
+//| even when SN_IsPastIntradayBoundary() itself reads false (e.g. just         |
+//| after midnight, before today's own boundary, with YESTERDAY's close             |
+//| still unresolved).                                                              |
+//+------------------------------------------------------------------+
+bool ICM_IsCloseReconciliationPending(const string symbol, const long magic)
+  {
+   return ICM_GetPendingCloseDate(symbol, magic) != 0;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 10):** the full persisted-due/pending intraday-close check+execute,          |
+//| callable identically from OnInit (restart reconciliation -- "reconcile          |
+//| the previous day's unfinished close before allowing any new entry"),                |
+//| OnTick, AND OnTimer (the no-tick-boundary guarantee: a timer fires on its               |
+//| own wall-clock schedule regardless of whether any tick arrives).                           |
+//|                                                                    |
+//| Arms the persisted pending-close record the INSTANT today's own boundary        |
+//| is first observed reached (idempotent -- re-arming the same date is a               |
+//| harmless no-op), then attempts the close whenever ANY date is recorded                 |
+//| pending -- including one left over from an earlier day this instance                      |
+//| never got to attempt again before now (a restart, or a tick-starved                          |
+//| overnight gap). Only clears the record once ICM_ExecuteIntradayClose                             |
+//| reports EVERY own-magic position closed and EVERY own-magic pending                                 |
+//| order cancelled.                                                                                        |
+//+------------------------------------------------------------------+
+bool ICM_ReconcileIntradayClose(const string symbol, const long magic,
+                                 const int boundary_hour = 23, const int boundary_minute = 45)
+  {
+   if(SN_IsPastIntradayBoundary(boundary_hour, boundary_minute))
+     {
+      datetime todays_boundary = SN_CurrentDailyBoundary();
+      if(ICM_GetPendingCloseDate(symbol, magic) != todays_boundary)
+         ICM_SetPendingCloseDate(symbol, magic, todays_boundary);
+     }
+
+   if(!ICM_IsCloseReconciliationPending(symbol, magic))
+      return true; // nothing owed right now
+
+   string reasons[];
+   bool all_ok = ICM_ExecuteIntradayClose(magic, reasons);
+   if(all_ok)
+      ICM_ClearPendingCloseDate(symbol, magic);
    return all_ok;
   }

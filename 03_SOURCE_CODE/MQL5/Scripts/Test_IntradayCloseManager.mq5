@@ -100,6 +100,41 @@ void OnStart()
          "on the very first check)",
          ICM_ShouldExecuteIntradayClose(0, 0));
 
+   //--- 1b. **Codex review finding, eighth round, P0 finding 10**: the -----
+   //--- persisted due/pending-close record -- pure GlobalVariable state, ----
+   //--- no live order needed. Cleaned up first so a prior aborted run --------
+   //--- leaves no residue. -----------------------------------------------------
+   ICM_ClearPendingCloseDate(InpTestSymbol, InpTestMagic);
+   Check("no close is pending on a freshly cleared instance",
+         ICM_IsCloseReconciliationPending(InpTestSymbol, InpTestMagic) == false);
+   Check("ICM_GetPendingCloseDate returns 0 when nothing is pending",
+         ICM_GetPendingCloseDate(InpTestSymbol, InpTestMagic) == 0);
+
+   datetime fake_boundary_date = TimeTradeServer() - 86400; // "yesterday", to
+                                                              // prove this
+                                                              // survives a
+                                                              // simulated
+                                                              // day rollover
+   bool armed = ICM_SetPendingCloseDate(InpTestSymbol, InpTestMagic, fake_boundary_date);
+   Check("ICM_SetPendingCloseDate reports success", armed);
+   Check("a close is now reported pending", ICM_IsCloseReconciliationPending(InpTestSymbol,
+                                                                              InpTestMagic));
+   Check("ICM_GetPendingCloseDate returns the exact date just armed",
+         ICM_GetPendingCloseDate(InpTestSymbol, InpTestMagic) == fake_boundary_date);
+
+   // **The core of this finding: a close armed for an EARLIER day (as if
+   // the calendar already rolled over past it without the close ever
+   // completing) stays reported as pending -- SN_IsPastIntradayBoundary()
+   // for TODAY may well be false right now, but ICM_IsCloseReconciliationPending
+   // must not depend on that; it is the persisted record, not today's clock.**
+   Check("a close armed for an EARLIER day remains pending regardless of "
+         "TODAY's own boundary state (the exact gap this finding closes)",
+         ICM_IsCloseReconciliationPending(InpTestSymbol, InpTestMagic));
+
+   ICM_ClearPendingCloseDate(InpTestSymbol, InpTestMagic);
+   Check("ICM_ClearPendingCloseDate leaves nothing pending",
+         ICM_IsCloseReconciliationPending(InpTestSymbol, InpTestMagic) == false);
+
    //--- 2. Open one real market position under the test magic -----------
    CTrade trade;
    trade.SetExpertMagicNumber(InpTestMagic);
@@ -151,6 +186,29 @@ void OnStart()
       Check("ICM_ShouldExecuteIntradayClose returns false immediately "
             "after a fully successful close today",
             ICM_ShouldExecuteIntradayClose(0, 0) == false);
+
+      //--- 6. **Codex review finding, eighth round, P0 finding 10**: ------
+      //--- ICM_ReconcileIntradayClose end-to-end -- opens one more real -----
+      //--- position, verifies the reconcile call (boundary 0:0, always -------
+      //--- due) both closes it AND clears the persisted pending record ------
+      //--- once fully successful. ---------------------------------------------
+      ICM_ClearPendingCloseDate(InpTestSymbol, InpTestMagic); // clean slate
+      bool opened3 = trade.Buy(vol, InpTestSymbol, SymbolInfoDouble(InpTestSymbol, SYMBOL_ASK),
+                                0.0, 0.0, "TASK010_TEST_RECONCILE");
+      if(opened3)
+        {
+         Check("one owned position exists before ICM_ReconcileIntradayClose",
+               CountOwnedPositions(InpTestMagic) == 1);
+         bool reconciled = ICM_ReconcileIntradayClose(InpTestSymbol, InpTestMagic, 0, 0);
+         Check("ICM_ReconcileIntradayClose reports full success", reconciled);
+         Check("zero owned positions remain after ICM_ReconcileIntradayClose",
+               CountOwnedPositions(InpTestMagic) == 0);
+         Check("ICM_ReconcileIntradayClose clears the pending record on full success",
+               ICM_IsCloseReconciliationPending(InpTestSymbol, InpTestMagic) == false);
+        }
+      else
+         Print("INFO: skipping step 6 (ICM_ReconcileIntradayClose end-to-end) -- could not "
+               "open the additional test position.");
      }
 
    //--- Final safety check: this magic must be completely clear ----------

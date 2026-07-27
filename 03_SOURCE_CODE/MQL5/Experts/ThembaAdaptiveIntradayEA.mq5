@@ -180,6 +180,14 @@ input int    InpNoStopGraceSeconds        = 5;      // section 8: close immediat
 // section 11's durable-intent abandonment timeout -- see
 // ReconcileIntentAndFeedAFC/IntentManager.mqh's own IM_ReconcileOnRestart.**
 input int    InpIntentTimeoutSeconds      = 30;     // section 11 default
+// **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+// section 8's InpIntradayBoundaryServerTime was previously only a hard-coded
+// default in SN_IsPastIntradayBoundary/ICM_ShouldExecuteIntradayClose's own
+// function arguments, never a real operator input -- see OnInit's own bounds
+// check below and ICM_ReconcileIntradayClose's call sites (OnInit/OnTick/
+// OnTimer) for where these are actually threaded through now.**
+input int    InpIntradayBoundaryHour      = 23;     // section 8 default (server time)
+input int    InpIntradayBoundaryMinute    = 45;     // section 8 default (server time)
 
 CMarketData             g_md;
 CSymbolProfile          g_profile;
@@ -243,6 +251,20 @@ int OnInit()
      {
       PrintFormat("ThembaEA: invalid InpMaxSpreadAtrMultiple=%.4f -- must be in [0.02, 1.0] per "
                   "TASK-002_PHASE2_SPECIFICATION.md. Refusing to run.", InpMaxSpreadAtrMultiple);
+      return INIT_FAILED;
+     }
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+   // InpIntradayBoundaryHour/Minute is now a real, validated operator input
+   // (previously only a hard-coded function-argument default) -- an
+   // out-of-range value would otherwise silently corrupt every downstream
+   // SN_IsPastIntradayBoundary/ICM_ReconcileIntradayClose call.**
+   if(InpIntradayBoundaryHour < 0 || InpIntradayBoundaryHour > 23 ||
+      InpIntradayBoundaryMinute < 0 || InpIntradayBoundaryMinute > 59)
+     {
+      PrintFormat("ThembaEA: invalid intraday boundary %02d:%02d -- hour must be [0,23] and "
+                  "minute [0,59]. Refusing to run.", InpIntradayBoundaryHour,
+                  InpIntradayBoundaryMinute);
       return INIT_FAILED;
      }
 
@@ -372,6 +394,34 @@ int OnInit()
    // history and reconstructs AsyncFillCorrelator's pending record — see
    // that function's own header and OnTick's own repeated call to it.**
    ReconcileIntentAndFeedAFC();
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+   // reconciles a still-owed intraday close from an EARLIER day (crash
+   // before it completed, or a tick-starved gap across midnight) before
+   // this instance resumes normal operation -- "reconcile the previous
+   // day's unfinished close before allowing any new entry." A single
+   // attempt here is enough to bring most restarts fully current; OnTick's
+   // and OnTimer's own repeated calls (see below) cover anything this one
+   // does not immediately finish.**
+   bool close_reconciled = ICM_ReconcileIntradayClose(g_symbol, InpMagicNumber,
+                                                        InpIntradayBoundaryHour,
+                                                        InpIntradayBoundaryMinute);
+   if(!close_reconciled)
+      PrintFormat("ThembaEA: restart reconciliation found a still-owed intraday close for '%s' "
+                  "magic %I64d -- not yet fully closed, will keep retrying every tick/timer.",
+                  g_symbol, InpMagicNumber);
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+   // a timer guarantees the mandatory intraday close is attempted even if
+   // NO TICK arrives at or after the boundary before the next server
+   // midnight -- previously the close only ran from OnTick, so a
+   // tick-starved period (illiquid symbol, off-hours) could let the
+   // boundary pass with no close attempt at all, and the very next day's
+   // first tick would silently reset SN_IsPastIntradayBoundary() to false
+   // for the new day, discarding the unfulfilled obligation. 30 seconds is
+   // frequent enough to close well within the boundary window without
+   // meaningful overhead.**
+   EventSetTimer(30);
 
    if(InpEnableOrderSubmission)
       PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
@@ -656,7 +706,29 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
 void OnDeinit(const int reason)
   {
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+   // pairs with OnInit's own EventSetTimer(30) -- MT5 requires a matching
+   // EventKillTimer, and leaving the timer running past this EA's own
+   // lifetime would fire OnTimer against globals/state no longer valid for
+   // this chart attachment.**
+   EventKillTimer();
    PrintFormat("ThembaEA: deinitialized, reason=%d.", reason);
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 10):** the no-tick-boundary guarantee -- fires on its own 30-second           |
+//| wall-clock schedule (EventSetTimer, armed in OnInit) regardless of              |
+//| whether any price tick arrives, so the mandatory intraday close is                |
+//| attempted even through a tick-starved period spanning the boundary. Uses             |
+//| the SAME persisted-due/pending reconciliation OnTick and OnInit both use,                |
+//| so a close armed here and one armed from a tick are the same record, never                  |
+//| double-tracked.                                                                                 |
+//+------------------------------------------------------------------+
+void OnTimer()
+  {
+   ICM_ReconcileIntradayClose(g_symbol, InpMagicNumber, InpIntradayBoundaryHour,
+                               InpIntradayBoundaryMinute);
   }
 
 void OnTick()
@@ -671,13 +743,22 @@ void OnTick()
    // InpEnableOrderSubmission=false this remains a no-op in practice
    // (nothing is ever opened under this magic); with it true, this is this
    // EA's real end-of-day exposure close, and it now retries every tick
-   // until ICM_ExecuteIntradayClose reports a fully broker-confirmed
-   // success (see IntradayCloseManager.mqh's own P0 finding 8 fix).**
-   if(ICM_ShouldExecuteIntradayClose())
-     {
-      string closeReasons[];
-      ICM_ExecuteIntradayClose(InpMagicNumber, closeReasons);
-     }
+   // until ICM_ReconcileIntradayClose reports a fully broker-confirmed
+   // success (see IntradayCloseManager.mqh's own P0 finding 8/10 fixes).
+   //
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
+   // now delegates to ICM_ReconcileIntradayClose (persisted, restart- and
+   // midnight-rollover-durable due/pending tracking) instead of
+   // ICM_ShouldExecuteIntradayClose/ICM_ExecuteIntradayClose's own in-memory-
+   // only guard, and uses the real InpIntradayBoundaryHour/Minute operator
+   // inputs instead of a hard-coded function-argument default. See
+   // IntradayCloseManager.mqh's own header for the full gap this closes: a
+   // close that was still owed when the calendar rolled over to a new day
+   // could previously be silently dropped (the next day's own boundary check
+   // reads false until ITS OWN 23:45 arrives), leaving overnight exposure
+   // open indefinitely.**
+   ICM_ReconcileIntradayClose(g_symbol, InpMagicNumber, InpIntradayBoundaryHour,
+                               InpIntradayBoundaryMinute);
 
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
    // retry-until-closed for a daily/weekly loss-cap breach closure -- per
@@ -720,8 +801,19 @@ void OnTick()
    // of its own. This closes the gap where a fully successful close (which
    // suppresses further CLOSE attempts for the rest of the day via
    // g_icm_close_done_today) left no gate blocking a later bar's NEW entry
-   // after the boundary had already passed.**
-   bool past_intraday_boundary = SN_IsPastIntradayBoundary();
+   // after the boundary had already passed.
+   //
+   // **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding
+   // 10): now uses the real InpIntradayBoundaryHour/Minute operator inputs,
+   // and ALSO blocks on ICM_IsCloseReconciliationPending -- a still-owed
+   // close carried over from an EARLIER day (the calendar has already rolled
+   // to a new day, so SN_IsPastIntradayBoundary() alone now reads false
+   // again) must keep blocking new entries just as much as TODAY's own
+   // not-yet-resolved boundary does; this is exactly the persisted-due/
+   // pending record IntradayCloseManager.mqh's own header describes.**
+   bool past_intraday_boundary = SN_IsPastIntradayBoundary(InpIntradayBoundaryHour,
+                                                             InpIntradayBoundaryMinute) ||
+                                  ICM_IsCloseReconciliationPending(g_symbol, InpMagicNumber);
 
    // **Moved, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
    // equity-peak tracking now runs on EVERY tick -- previously these only
