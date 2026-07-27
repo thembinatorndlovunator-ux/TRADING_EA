@@ -107,10 +107,10 @@ void OnStart()
    IM_BeginIntent(InpTestSymbol, InpTestMagic, true, 0.10, now, intent_id_5);
    IM_SetDouble(InpTestSymbol, InpTestMagic, "timestamp",
                 (double)(now - InpTestTimeoutSeconds - 5)); // backdated past the timeout
-   bool has_position = IM_HasMatchingPosition(InpTestSymbol, InpTestMagic);
+   bool has_position = IM_HasMatchingPosition(InpTestSymbol, InpTestMagic, intent_id_5);
    Check("precondition: dedicated test magic has no real open position",
          has_position == false);
-   bool has_pending_order = IM_HasMatchingPendingOrder(InpTestSymbol, InpTestMagic);
+   bool has_pending_order = IM_HasMatchingPendingOrder(InpTestSymbol, InpTestMagic, intent_id_5);
    Check("precondition: dedicated test magic has no real pending order",
          has_pending_order == false);
 
@@ -166,12 +166,54 @@ void OnStart()
          IM_HasActiveIntent(InpTestSymbol, other_magic) == false);
 
    //--- 7. IM_FindIntentInHistory refuses to search for a never-recorded ---
-   //--- intent ID (the "TI0" default-field sentinel), per its own header ----
+   //--- intent ID (the "TI0_0" default-field sentinel), per its own header --
+   //--- **Fixed, 2026-07-27 (Codex round-9 P0 finding 3): sentinel changed --
+   //--- from "TI0" to "TI0_0" now that IM_BuildIntentId folds in BOTH the ---
+   //--- wall-clock timestamp and the microsecond counter.** -----------------
    bool history_filled;
-   bool found_in_history = IM_FindIntentInHistory(InpTestSymbol, InpTestMagic, "TI0", now,
-                                                   history_filled);
-   Check("IM_FindIntentInHistory refuses to search for the 'TI0' sentinel ID",
+   bool history_lookup_failed;
+   bool found_in_history = IM_FindIntentInHistory(InpTestSymbol, InpTestMagic, "TI0_0", now,
+                                                   history_filled, history_lookup_failed);
+   Check("IM_FindIntentInHistory refuses to search for the 'TI0_0' sentinel ID",
          found_in_history == false);
+
+   //--- 7b. **Codex round-9 P0 finding 3**: a genuine (non-sentinel) search -
+   //--- that finds nothing reports lookup_failed_out == false, distinct -----
+   //--- from a HistorySelect failure -- proves the two are genuinely --------
+   //--- separate output channels, not conflated into one "not found" bit. ---
+   //--- A live HistorySelect FAILURE itself cannot be deterministically -----
+   //--- forced from a script (this project's own established runtime-       ---
+   //--- verification-batched precedent) and remains part of that backlog.  --
+   bool history_filled_2;
+   bool history_lookup_failed_2;
+   bool found_in_history_2 = IM_FindIntentInHistory(InpTestSymbol, InpTestMagic, intent_id_5, now,
+                                                      history_filled_2, history_lookup_failed_2);
+   Check("a genuine search for a real (never-submitted-to-broker) intent ID "
+         "reports lookup_failed_out == false (HistorySelect itself succeeded)",
+         history_lookup_failed_2 == false);
+   Check("that same search correctly reports 'not found' (this test never "
+         "actually submitted an order)", found_in_history_2 == false);
+
+   //--- 7c. **Codex round-9 P0 finding 3**: the intent ID format folds in ---
+   //--- BOTH the wall-clock timestamp and the microsecond counter -- two ----
+   //--- intents begun with explicitly DIFFERENT 'now' values must produce ---
+   //--- IDs with different timestamp components (proving the timestamp is --
+   //--- genuinely part of the ID, not just the microsecond counter alone, --
+   //--- which is what let two intents from DIFFERENT terminal sessions -----
+   //--- collide before this fix). ------------------------------------------
+   IM_ClearIntent(InpTestSymbol, InpTestMagic);
+   string intent_id_7c_a, intent_id_7c_b;
+   IM_BeginIntent(InpTestSymbol, InpTestMagic, true, 0.10, now, intent_id_7c_a);
+   IM_ClearIntent(InpTestSymbol, InpTestMagic);
+   IM_BeginIntent(InpTestSymbol, InpTestMagic, true, 0.10, now + 3600, intent_id_7c_b);
+   IM_ClearIntent(InpTestSymbol, InpTestMagic);
+   string expected_prefix_a = StringFormat("TI%.0f_", (double)now);
+   string expected_prefix_b = StringFormat("TI%.0f_", (double)(now + 3600));
+   Check("an intent ID's own timestamp component matches the 'now' it was begun with",
+         StringFind(intent_id_7c_a, expected_prefix_a) == 0);
+   Check("two intents begun one hour apart get DIFFERENT ID timestamp prefixes",
+         StringFind(intent_id_7c_b, expected_prefix_b) == 0 &&
+         intent_id_7c_a != intent_id_7c_b);
 
    //--- Cleanup: leave no residue -------------------------------------------
    IM_ResetInstance(InpTestSymbol, InpTestMagic);

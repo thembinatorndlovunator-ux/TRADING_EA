@@ -84,31 +84,26 @@ bool IM_HasActiveIntent(const string symbol, const long magic)
   }
 
 //+------------------------------------------------------------------+
-//| **Fixed, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
-//| 1):** the bootstrap "create the lock variable if absent" step must         |
-//| run exactly once, from OnInit, BEFORE any order-submission logic ever         |
-//| runs — never from inside IM_BeginIntent itself (the hot path). The           |
-//| original code re-ran "if(!GlobalVariableCheck(active_key))                     |
-//| GlobalVariableSet(active_key, 0.0)" on every call: if a second instance             |
-//| sharing this symbol+magic ever raced the FIRST-EVER creation of this                 |
-//| key (both see it absent before either creates it), one instance's                      |
-//| unconditional GlobalVariableSet(0.0) could silently reset the OTHER                      |
-//| instance's already-successful CAS-to-1.0 back to 0.0, breaking the                         |
-//| idempotency guard entirely. Native MQL5 GlobalVariables have no atomic                       |
-//| create-if-absent primitive, so this bootstrap cannot be made airtight                          |
-//| purely with GlobalVariable calls in the general multi-instance case --                           |
-//| calling this ONCE from OnInit (a point that, per this project's own                                |
-//| one-instance-per-symbol+magic convention used throughout TASK-034/041,                              |
-//| is not itself expected to race against another instance's OnInit for                                  |
-//| the SAME symbol+magic) closes the practical exposure: after OnInit, the                                 |
-//| key always already exists, so IM_BeginIntent's own CAS never takes the                                    |
-//| create-if-absent branch again.                                                                               |
+//| **Superseded, 2026-07-27 (Codex review finding, ninth round, P0     |
+//| finding 3): this OnInit-only bootstrap is no longer called or       |
+//| needed.** The previous "one instance per symbol+magic never races    |
+//| its own OnInit" assumption this relied on is exactly what the review |
+//| flagged as unproven -- two concurrent OnInit calls (a fast EA        |
+//| restart racing a still-shutting-down previous instance, or an        |
+//| operator accidentally attaching the same symbol+magic twice) could   |
+//| still reset an already-active intent via this exact check-then-set.  |
+//| Bootstrap is now folded directly into IM_BeginIntent itself (see      |
+//| that function's own header), using the same GetLastError()           |
+//| ERR_GLOBALVARIABLE_NOT_FOUND technique StateManager.mqh's own         |
+//| SM_AcquireAccountLock fix (round 9, P0 finding 2) already established |
+//| -- provably race-free regardless of how many instances race the      |
+//| very first-ever call for a given symbol+magic. Kept only as a no-op  |
+//| so the EA's own existing OnInit call site does not need to be        |
+//| deleted.**                                                            |
 //+------------------------------------------------------------------+
 void IM_EnsureInitialized(const string symbol, const long magic)
   {
-   string active_key = IM_Key(symbol, magic, "active");
-   if(!GlobalVariableCheck(active_key))
-      GlobalVariableSet(active_key, 0.0);
+   // Intentionally a no-op -- see header comment above.
   }
 
 //+------------------------------------------------------------------+
@@ -117,30 +112,41 @@ void IM_EnsureInitialized(const string symbol, const long magic)
 //| counter -- native MQL5 global variables are double-only (no string             |
 //| storage), so the ID itself is never persisted as a string; it is                 |
 //| DETERMINISTICALLY RECONSTRUCTED from the persisted numeric component                |
-//| whenever needed (IM_GetIntentId). GetMicrosecondCount() (microseconds               |
-//| since this terminal's own start) exactly round-trips through a double for              |
-//| any realistic terminal uptime (double exactly represents every integer up                 |
-//| to 2^53 -- roughly 285 years of microseconds -- the same round-trip                          |
-//| argument this project already applies to ulong deal tickets stored as                           |
-//| doubles, see DailyWeeklyLimits.mqh's own cash-flow cursor). Uniqueness                              |
-//| only needs to hold within this symbol+magic's own history, which a                                    |
-//| microsecond-resolution counter satisfies per this codebase's existing                                    |
-//| BuildSignalId precedent.                                                                                    |
+//| whenever needed (IM_GetIntentId).                                                        |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3):     |
+//| this previously used GetMicrosecondCount() ALONE -- microseconds since         |
+//| THIS TERMINAL'S OWN START, which resets to a small value on every              |
+//| restart. Two intents created shortly after two DIFFERENT terminal               |
+//| restarts (a routine, expected event, not a rare edge case) could easily              |
+//| collide on this component alone, and IM_FindIntentInHistory searches by                  |
+//| exact ID-string match against ORDER_COMMENT -- a collision there could                       |
+//| resolve a restart's own orphaned intent against a COMPLETELY UNRELATED                          |
+//| historical order from a prior session. Now also folds in 'intent_time'                             |
+//| (TimeCurrent() at the moment the intent began -- WALL-CLOCK time, which                            |
+//| does NOT reset across a restart, exactly the same fix BuildSignalId                                |
+//| already applies for the same reason), so two intents would need to                                |
+//| collide on BOTH the exact same wall-clock SECOND and the exact same                                |
+//| microsecond-since-terminal-start value to actually collide --                                      |
+//| astronomically less likely than either alone.**                                                    |
 //+------------------------------------------------------------------+
-string IM_BuildIntentId(const double intent_micro)
+string IM_BuildIntentId(const datetime intent_time, const double intent_micro)
   {
-   return StringFormat("TI%.0f", intent_micro);
+   return StringFormat("TI%.0f_%.0f", (double)intent_time, intent_micro);
   }
 
 //+------------------------------------------------------------------+
 //| Reconstructs the current intent's broker-visible ID from its persisted    |
-//| microsecond component. "TI0" (micro==0, the field's default) means NO         |
-//| intent ID was ever recorded for this symbol+magic — callers must treat            |
-//| that as "cannot be searched for in history", never as a real ID.                     |
+//| timestamp and microsecond components. "TI0_0" (both fields at their           |
+//| defaults) means NO intent ID was ever recorded for this symbol+magic —            |
+//| callers must treat that as "cannot be searched for in history", never as             |
+//| a real ID.                                                                            |
 //+------------------------------------------------------------------+
 string IM_GetIntentId(const string symbol, const long magic)
   {
-   return IM_BuildIntentId(IM_GetDouble(symbol, magic, "intent_micro", 0.0));
+   datetime intent_time = (datetime)IM_GetDouble(symbol, magic, "timestamp", 0.0);
+   double   intent_micro = IM_GetDouble(symbol, magic, "intent_micro", 0.0);
+   return IM_BuildIntentId(intent_time, intent_micro);
   }
 
 //+------------------------------------------------------------------+
@@ -149,10 +155,6 @@ string IM_GetIntentId(const string symbol, const long magic)
 //| the idempotency guard: a caller must never submit a second order for      |
 //| the same symbol+magic while one is already in flight. 'is_long' is         |
 //| stored as 1.0/0.0, 'volume' and 'timestamp' verbatim.                        |
-//|                                                                    |
-//| **Assumes IM_EnsureInitialized(symbol, magic) has already run this       |
-//| instance's lifetime (the live EA calls it once from OnInit) — this          |
-//| function itself no longer performs the racy create-if-absent bootstrap.**    |
 //|                                                                    |
 //| **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding      |
 //| 5):** now also generates and persists a unique intent_id and returns it        |
@@ -163,19 +165,45 @@ string IM_GetIntentId(const string symbol, const long magic)
 //| all, so a crash/restart could never distinguish "this specific intent's                             |
 //| own order" from any other order sharing the same symbol+magic in closed                                 |
 //| history.**                                                                                                  |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3):     |
+//| the bootstrap ("create the 'active' key if this is the very first call        |
+//| ever for this symbol+magic") is now folded directly into THIS function's       |
+//| own atomic acquire, exactly like StateManager.mqh's SM_AcquireAccountLock          |
+//| fix (round 9, P0 finding 2): GlobalVariableSetOnCondition against a               |
+//| variable that does not exist yet fails with GetLastError() ==                        |
+//| ERR_GLOBALVARIABLE_NOT_FOUND, which is now checked -- on that specific                    |
+//| error, the key is created (always to the SAME neutral "inactive" value,                       |
+//| however many callers redundantly do it) and the atomic acquire is                             |
+//| retried immediately. This is provably race-free regardless of how many                        |
+//| instances race the very first-ever call for a given symbol+magic,                             |
+//| unlike the previous separate, non-atomic IM_EnsureInitialized bootstrap                        |
+//| it replaces (now a no-op, see that function's own header).**                                  |
 //+------------------------------------------------------------------+
 bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
                      const double volume, const datetime now, string &intent_id_out)
   {
    intent_id_out = "";
    string active_key = IM_Key(symbol, magic, "active");
-   // Deliberately does NOT call IM_EnsureInitialized here — re-running the
-   // create-if-absent check on every hot-path call would reintroduce
-   // exactly the race this fix removes. If the key genuinely does not
-   // exist yet (IM_EnsureInitialized was never called), this call fails
-   // closed (GlobalVariableSetOnCondition returns false against a
-   // nonexistent variable) rather than silently racing to create it.
-   if(!GlobalVariableSetOnCondition(active_key, 1.0, 0.0))
+
+   bool acquired = false;
+   while(true)
+     {
+      if(GlobalVariableSetOnCondition(active_key, 1.0, 0.0))
+        {
+         acquired = true;
+         break;
+        }
+      int err = GetLastError();
+      if(err == ERR_GLOBALVARIABLE_NOT_FOUND)
+        {
+         ResetLastError();
+         GlobalVariableSet(active_key, 0.0); // race-free bootstrap -- see header
+         continue; // retry the atomic acquire above immediately
+        }
+      break; // genuinely already active (CAS failed against a real 1.0) -- fall through
+     }
+   if(!acquired)
       return false; // an intent is already active — refuse a second one
 
    double intent_micro = (double)GetMicrosecondCount();
@@ -206,7 +234,7 @@ bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
    // rather than trust MT5's own periodic flush cadence.
    GlobalVariablesFlush();
 
-   intent_id_out = IM_BuildIntentId(intent_micro);
+   intent_id_out = IM_BuildIntentId(now, intent_micro);
    return true;
   }
 
@@ -214,18 +242,51 @@ bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
 //| Clears the intent record — call on confirmed fill OR confirmed          |
 //| rejection (both are a definitive outcome; only a crash mid-flight         |
 //| leaves 'active' stuck at 1.0 for IM_ReconcileOnRestart to resolve).          |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3):     |
+//| this previously discarded the write's own success and never flushed --        |
+//| a silent failure here leaves 'active' still 1.0 on disk even though          |
+//| this instance believes the intent is resolved, so a later restart would          |
+//| find a STALE active record for an intent that has genuinely already            |
+//| concluded (a false, unnecessary reconciliation, not a duplicate-order              |
+//| risk, but still worth surfacing rather than silently swallowing). Now                |
+//| returns the write's own success and flushes on a successful clear,                      |
+//| matching every other safety-critical write in this module.**                                |
 //+------------------------------------------------------------------+
-void IM_ClearIntent(const string symbol, const long magic)
+bool IM_ClearIntent(const string symbol, const long magic)
   {
-   IM_SetDouble(symbol, magic, "active", 0.0);
+   bool ok = IM_SetDouble(symbol, magic, "active", 0.0);
+   if(ok)
+      GlobalVariablesFlush();
+   else
+      PrintFormat("ThembaEA: IntentManager failed to persist intent clear for '%s' magic "
+                  "%I64d -- a restart before this succeeds would see a stale active record.",
+                  symbol, magic);
+   return ok;
   }
 
 //+------------------------------------------------------------------+
-//| True iff a position matching 'symbol'+'magic' currently exists —       |
-//| used by reconciliation to determine whether an orphaned intent            |
-//| actually filled before the crash.                                            |
+//| True iff a position matching 'symbol'+'magic'+'intent_id' currently   |
+//| exists — used by reconciliation to determine whether an orphaned      |
+//| intent actually filled before the crash.                              |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 3): this previously matched on symbol+magic ALONE -- an UNRELATED       |
+//| position sharing this same symbol+magic (a manual position, a leftover      |
+//| from a DIFFERENT, already-resolved intent this instance never fully          |
+//| cleaned up, or in principle a second concurrent intent this module's           |
+//| own idempotency guard should prevent but a caller bug could still                |
+//| create) would be silently treated as proof THIS intent filled. Now                  |
+//| additionally requires POSITION_COMMENT to match the exact intent_id                     |
+//| this intent's own order was tagged with at submission (see                              |
+//| IM_BeginIntent's own header) -- MT5 positions typically inherit their                    |
+//| comment from the opening deal/order, but even where a broker's own                       |
+//| comment-propagation behavior is unreliable, a false negative here is                     |
+//| SAFE (not a duplicate-order risk): the caller simply falls through to                     |
+//| IM_FindIntentInHistory below, which also now matches by this same ID                      |
+//| against order AND deal history.**                                                         |
 //+------------------------------------------------------------------+
-bool IM_HasMatchingPosition(const string symbol, const long magic)
+bool IM_HasMatchingPosition(const string symbol, const long magic, const string intent_id)
   {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
@@ -235,6 +296,8 @@ bool IM_HasMatchingPosition(const string symbol, const long magic)
       if(PositionGetInteger(POSITION_MAGIC) != magic)
          continue;
       if(PositionGetString(POSITION_SYMBOL) != symbol)
+         continue;
+      if(intent_id != "" && PositionGetString(POSITION_COMMENT) != intent_id)
          continue;
       return true;
      }
@@ -258,8 +321,15 @@ bool IM_HasMatchingPosition(const string symbol, const long magic)
 //| required — otherwise a still-pending order left active by a restart can                    |
 //| never be resolved by OnTradeTransaction's normal AFC_FindPending path,                         |
 //| leaving the intent permanently stuck until another restart).                                       |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3):     |
+//| same fix as IM_HasMatchingPosition above -- now additionally requires         |
+//| ORDER_COMMENT to match the exact intent_id, so an unrelated pending           |
+//| order sharing this symbol+magic cannot be mistaken for THIS intent's           |
+//| own still-live submission.**                                                     |
 //+------------------------------------------------------------------+
-bool IM_FindMatchingPendingOrder(const string symbol, const long magic, ulong &ticket_out)
+bool IM_FindMatchingPendingOrder(const string symbol, const long magic, const string intent_id,
+                                   ulong &ticket_out)
   {
    ticket_out = 0;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -271,16 +341,18 @@ bool IM_FindMatchingPendingOrder(const string symbol, const long magic, ulong &t
          continue;
       if(OrderGetString(ORDER_SYMBOL) != symbol)
          continue;
+      if(intent_id != "" && OrderGetString(ORDER_COMMENT) != intent_id)
+         continue;
       ticket_out = ticket;
       return true;
      }
    return false;
   }
 
-bool IM_HasMatchingPendingOrder(const string symbol, const long magic)
+bool IM_HasMatchingPendingOrder(const string symbol, const long magic, const string intent_id)
   {
    ulong ignore;
-   return IM_FindMatchingPendingOrder(symbol, magic, ignore);
+   return IM_FindMatchingPendingOrder(symbol, magic, intent_id, ignore);
   }
 
 //+------------------------------------------------------------------+
@@ -295,21 +367,49 @@ bool IM_HasMatchingPendingOrder(const string symbol, const long magic)
 //| ApplyCashFlowAdjustments bounded-HistorySelect convention, not an                                    |
 //| unbounded full-history scan) from just before the intent's own recorded                                 |
 //| timestamp to just after now.                                                                                |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3),    |
+//| three defects:**                                                                 |
+//| 1. **HistorySelect failure was indistinguishable from a successful          |
+//|    search that found nothing** -- both returned `false`, and                    |
+//|    IM_ReconcileOnRestart's own timeout logic then converted that same             |
+//|    `false` into "abandoned" once InpIntentTimeoutSeconds elapsed,                     |
+//|    turning a TEMPORARY history-lookup failure into permission for a                       |
+//|    duplicate submission. `lookup_failed_out` now distinguishes the two:                       |
+//|    true means "genuinely unknown, try again later", never counted                                 |
+//|    toward abandonment; false + a `false` return means "verified absent                               |
+//|    in both order and deal history within this window".                                                   |
+//| 2. **Only order history was searched, never deal history** -- a fill        |
+//|    whose own order fell outside this bounded window's order-history         |
+//|    retention (broker-dependent) but whose DEAL is still retrievable was      |
+//|    missed entirely. Now falls back to a direct deal-history search by       |
+//|    symbol+magic+DEAL_COMMENT if no matching order is found.                  |
+//| 3. **`was_filled_out` was true only for final state ORDER_STATE_FILLED**     |
+//|    -- an order that PARTIALLY filled and was then cancelled (real            |
+//|    exposure was created, but the order's own final state is CANCELED,        |
+//|    not FILLED) was misclassified as "never filled". Now also checks          |
+//|    deal history for ANY DEAL_ENTRY_IN deal tied to the matched order's       |
+//|    own ticket -- a real partial fill leaves exactly such a deal even         |
+//|    when the order's final state says otherwise.                             |
 //+------------------------------------------------------------------+
 bool IM_FindIntentInHistory(const string symbol, const long magic, const string intent_id,
-                             const datetime since, bool &was_filled_out)
+                             const datetime since, bool &was_filled_out, bool &lookup_failed_out)
   {
    was_filled_out = false;
-   if(intent_id == "" || intent_id == "TI0")
+   lookup_failed_out = false;
+   if(intent_id == "" || intent_id == "TI0_0")
       return false; // no real intent ID was ever recorded — nothing to search for
 
    datetime from = (since > 0 ? since : TimeCurrent()) - 60;
    datetime to   = TimeCurrent() + 60;
    if(!HistorySelect(from, to))
+     {
+      lookup_failed_out = true; // genuinely unknown -- NOT "verified absent"
       return false;
+     }
 
-   int total = HistoryOrdersTotal();
-   for(int i = 0; i < total; i++)
+   int total_orders = HistoryOrdersTotal();
+   for(int i = 0; i < total_orders; i++)
      {
       ulong ticket = HistoryOrderGetTicket(i);
       if(ticket == 0)
@@ -323,9 +423,50 @@ bool IM_FindIntentInHistory(const string symbol, const long magic, const string 
 
       ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
       was_filled_out = (state == ORDER_STATE_FILLED);
+      if(!was_filled_out)
+        {
+         // A partial-then-cancelled order's own final state is not FILLED,
+         // but a real fill still leaves a DEAL_ENTRY_IN deal tied to this
+         // exact order ticket -- check for that definitive evidence too.
+         int total_deals = HistoryDealsTotal();
+         for(int d = 0; d < total_deals; d++)
+           {
+            ulong deal_ticket = HistoryDealGetTicket(d);
+            if(deal_ticket == 0)
+               continue;
+            if(HistoryDealGetInteger(deal_ticket, DEAL_ORDER) != ticket)
+               continue;
+            if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+              {
+               was_filled_out = true;
+               break;
+              }
+           }
+        }
       return true;
      }
-   return false;
+
+   // Fallback: no matching ORDER found in this window -- search DEAL
+   // history directly by comment (see fix note 2 above).
+   int total_deals = HistoryDealsTotal();
+   for(int d = 0; d < total_deals; d++)
+     {
+      ulong deal_ticket = HistoryDealGetTicket(d);
+      if(deal_ticket == 0)
+         continue;
+      if(HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != magic)
+         continue;
+      if(HistoryDealGetString(deal_ticket, DEAL_SYMBOL) != symbol)
+         continue;
+      if(HistoryDealGetString(deal_ticket, DEAL_COMMENT) != intent_id)
+         continue;
+
+      was_filled_out = ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) ==
+                         DEAL_ENTRY_IN);
+      return true;
+     }
+
+   return false; // verified absent in both order and deal history within this window
   }
 
 //+------------------------------------------------------------------+
@@ -358,12 +499,22 @@ bool IM_FindIntentInHistory(const string symbol, const long magic, const string 
 //| respond. 'pending_order_ticket_out' is set (nonzero) only in the live-                                                    |
 //| pending-order case, letting the caller reconstruct                                                                          |
 //| AsyncFillCorrelator.mqh's session-only pending array -- without this, a                                                          |
-//| still-pending order surviving a restart could never be resolved by the                                                              |
-//| normal OnTradeTransaction/AFC_FindPending path (that array is session-only,                                                              |
-//| empty after every restart), leaving the intent stuck until yet another                                                                      |
-//| restart. 'abandoned_out' is set true only on the genuine timeout path, so                                                                      |
-//| the caller can log it distinctly from an ordinary "never reached the                                                                              |
-//| broker" same-tick clear.**                                                                                                                            |
+//| still-pending order surviving a restart could never be resolved by the      |
+//| normal OnTradeTransaction/AFC_FindPending path (that array is session-only,  |
+//| empty after every restart), leaving the intent stuck until yet another      |
+//| restart. 'abandoned_out' is set true only on the genuine timeout path, so   |
+//| the caller can log it distinctly from an ordinary "never reached the        |
+//| broker" same-tick clear.**                                                   |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 3):     |
+//| position/pending-order matching now requires this exact intent_id (see        |
+//| IM_HasMatchingPosition/IM_FindMatchingPendingOrder's own headers). A            |
+//| genuine HistorySelect failure inside IM_FindIntentInHistory no longer                 |
+//| falls through to the abandonment timeout as if it were a verified-absent               |
+//| result -- 'lookup_failed_out' is checked explicitly, and a failed lookup                    |
+//| leaves the intent ACTIVE for a later retry (still_pending_out=true)          |
+//| regardless of age, exactly like the "broker hasn't responded yet" case,      |
+//| never counting a temporary lookup failure toward abandonment.**              |
 //+------------------------------------------------------------------+
 bool IM_ReconcileOnRestart(const string symbol, const long magic, const int timeout_seconds,
                             bool &was_filled_out, bool &still_pending_out,
@@ -376,7 +527,9 @@ bool IM_ReconcileOnRestart(const string symbol, const long magic, const int time
    if(!IM_HasActiveIntent(symbol, magic))
       return false;
 
-   if(IM_HasMatchingPosition(symbol, magic))
+   string intent_id = IM_GetIntentId(symbol, magic);
+
+   if(IM_HasMatchingPosition(symbol, magic, intent_id))
      {
       was_filled_out = true;
       IM_ClearIntent(symbol, magic);
@@ -384,7 +537,7 @@ bool IM_ReconcileOnRestart(const string symbol, const long magic, const int time
      }
 
    ulong pending_ticket;
-   if(IM_FindMatchingPendingOrder(symbol, magic, pending_ticket))
+   if(IM_FindMatchingPendingOrder(symbol, magic, intent_id, pending_ticket))
      {
       still_pending_out = true;
       pending_order_ticket_out = pending_ticket;
@@ -392,14 +545,24 @@ bool IM_ReconcileOnRestart(const string symbol, const long magic, const int time
      }
 
    datetime intent_time = (datetime)IM_GetDouble(symbol, magic, "timestamp", 0.0);
-   string   intent_id   = IM_GetIntentId(symbol, magic);
    bool     history_filled;
-   if(IM_FindIntentInHistory(symbol, magic, intent_id, intent_time, history_filled))
+   bool     history_lookup_failed;
+   if(IM_FindIntentInHistory(symbol, magic, intent_id, intent_time, history_filled,
+                              history_lookup_failed))
      {
       // Found in closed history — definitively terminal either way (filled
       // then closed, or resolved cancelled/rejected before this restart).
       was_filled_out = history_filled;
       IM_ClearIntent(symbol, magic);
+      return true;
+     }
+
+   if(history_lookup_failed)
+     {
+      // Genuinely unknown -- HistorySelect itself failed, not "searched and
+      // found nothing". Must never count toward abandonment; retried on a
+      // later tick exactly like an unresponded-to broker submission.
+      still_pending_out = true;
       return true;
      }
 
