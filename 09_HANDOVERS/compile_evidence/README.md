@@ -37,8 +37,9 @@ counts included), not the current state; see the round-8 entry below for
 accurate current counts and format.**
 
 `TASK-028_round8_full_compile_evidence_2026-07-27.txt` -- generated against
-the tree at commit `990f32c17327...`'s own child (this same finding's
-commit, which changes only `THEMBA_EA_GIT_COMMIT`/`THEMBA_EA_VERSION_STRING`
+the tree at commit `c9b2298` (the CHILD of the commit whose own
+`THEMBA_EA_GIT_COMMIT` value is `990f32c17327...`, i.e. this same finding's
+own commit, which changes only `THEMBA_EA_GIT_COMMIT`/`THEMBA_EA_VERSION_STRING`
 and this compile-evidence/README pair -- no compiled behavior), covering
 all 41 `.mq5` programs that exist in Git at that point: the 2 Experts
 (`ThembaAdaptiveIntradayEA.mq5`, `EquityTickRecorder.mq5`) and all 39
@@ -48,3 +49,13 @@ the summary `Result:` line) -- addressing this same finding's complaint
 that the retained evidence omitted invocation, compiler version/build, and
 most raw log text. MetaEditor version: 5.0.0.5833. Every target compiles
 with 0 errors, 0 warnings.
+
+**Corrected, 2026-07-27 (Codex round-9 P1 finding 21):** this entry's own
+phrasing above ("generated against the tree at commit `990f32c17327...`'s
+own child") was ambiguous enough that the evidence file's OWN header text
+independently described the provenance the OPPOSITE way (claimed the
+PARENT's tree was compiled) -- the two disagreed. Spelled out explicitly
+here now (`c9b2298`, not its parent `990f32c`) and corrected in the
+evidence file's own header directly; see that file's own correction note
+for the full `git show`-verified account of exactly which commit's
+`THEMBA_EA_GIT_COMMIT` value is which.

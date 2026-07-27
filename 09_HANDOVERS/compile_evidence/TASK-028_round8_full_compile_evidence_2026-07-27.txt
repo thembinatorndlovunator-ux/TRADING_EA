@@ -4,11 +4,26 @@ MetaEditor invocation (per target):
   "C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe" /compile:"<absolute path to .mq5>" /log:"<absolute path to .log>"
 MetaEditor executable: C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe
 MetaEditor version (Get-Item ... .VersionInfo): FileVersion 5.0.0.5833, ProductVersion 5.0.0.5833, SpecialBuild MQL5
-Repo tree compiled: the working tree as of this file's own commit's PARENT
-  (990f32c17327...), i.e. the tree containing THEMBA_EA_GIT_COMMIT="990f32c17327"
-  in ThembaAdaptiveIntradayEA.mq5 -- this file's own commit changes only that
-  macro string plus this evidence/README, no compiled behavior, per this
-  project's stated build-tag convention (see that file's own comment).
+Repo tree compiled: the working tree as of THIS FILE'S OWN COMMIT (c9b2298,
+  the round-8 P1 finding-21 commit), NOT that commit's parent.
+  **Corrected, 2026-07-27 (Codex round-9 P1 finding 21):** the line above
+  previously (and wrongly) claimed the PARENT commit's tree was compiled,
+  with that parent's own THEMBA_EA_GIT_COMMIT macro value given as
+  "990f32c17327" -- false on both counts, confirmed by `git show`: the
+  parent commit (990f32c) actually contains
+  THEMBA_EA_GIT_COMMIT="b362c07a1bab" (an EARLIER reference), and the
+  value "990f32c17327" was introduced by THIS commit (c9b2298) itself, not
+  its parent. This project's own build-tag convention (see
+  ThembaAdaptiveIntradayEA.mq5's own comment) is that an evidence/README-
+  only commit sets THEMBA_EA_GIT_COMMIT to reference its PARENT's hash
+  (the last commit with real code changes) rather than its own -- that
+  convention is real and intentional, but is a statement about what VALUE
+  the macro holds, not about which TREE was compiled. The tree actually
+  fed to MetaEditor for every result below is c9b2298's own tree (this
+  file's own commit) -- the compiled source bytes match the SHA-256
+  hashes recorded per-target below, which are c9b2298's, not 990f32c's.
+  The retained EA hash in this file has always matched the correct
+  (child) source; only this header's own prose description was wrong.
 Total targets compiled: 41 (2 Experts + 39 Test_*.mq5/Export_*.mq5 Scripts)
   -- corrected count, 2026-07-27 (Codex round-8 P1 finding 21): the retained
   round-7 evidence undercounted scripts (said 38) and omitted
