@@ -36,7 +36,7 @@ def make_valid_record(**overrides) -> dict:
         "targets": [2361.45],
         "risk_percent": 0.3,
         "news_state": "CLEAR",
-        "session_state": "london",
+        "session_state": "SESSION_TIME_REMAINING_HIGH",
         "reasons_passed": ["daily_weekly_loss_caps_clear"],
         "reasons_rejected": [],
         "ea_version": "1.01-task027-order-submission-optional",

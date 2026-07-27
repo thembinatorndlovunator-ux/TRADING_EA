@@ -238,3 +238,58 @@ def test_blank_identity_provenance_field_rejected(field):
 
     with pytest.raises(SchemaValidationError):
         validate_record(make_valid_record(**{field: ""}))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["signal_id", "symbol", "strategy", "setup", "session_state", "ea_version", "git_commit"],
+)
+def test_whitespace_only_identity_provenance_field_rejected(field):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 17): `Field(min_length=1)` alone did NOT reject a
+    whitespace-only value -- this model deliberately runs with
+    `str_strip_whitespace=False`, so a lone space satisfies min_length=1
+    without ever being stripped first. A focused probe reproduced this for
+    every field in this list (session_state now rejects via its own
+    Literal restriction instead of the shared strip-and-reject validator,
+    but the OUTCOME -- rejection -- must be identical)."""
+
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(**{field: "   "}))
+
+
+@pytest.mark.parametrize(
+    "field", ["signal_id", "symbol", "strategy", "setup", "ea_version", "git_commit"]
+)
+def test_identity_provenance_field_is_stripped_not_merely_rejected_when_blank(field):
+    """The fix strips THEN rejects if blank -- a genuinely non-blank value
+    with incidental leading/trailing whitespace must be accepted (and
+    normalized), not rejected outright as if it were blank."""
+
+    record = validate_record(make_valid_record(**{field: "  real-value  "}))
+    assert getattr(record, field) == "real-value"
+
+
+def test_session_state_accepts_all_three_real_producer_values():
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 17): session_state previously accepted ANY non-blank string,
+    even though ThembaAdaptiveIntradayEA.mq5's own producer has an exact
+    three-value vocabulary."""
+
+    for value in (
+        "SESSION_TIME_REMAINING_UNKNOWN",
+        "SESSION_TIME_REMAINING_HIGH",
+        "SESSION_TIME_REMAINING_LOW",
+    ):
+        record = validate_record(make_valid_record(session_state=value))
+        assert record.session_state == value
+
+
+def test_session_state_rejects_out_of_vocabulary_value():
+    """The review's own reproduced counterexample: an arbitrary token
+    (e.g. a session-name string like 'london') was previously accepted as
+    a valid session_state despite not being one of the producer's own
+    three real values."""
+
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(session_state="london"))

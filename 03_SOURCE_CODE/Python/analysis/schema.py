@@ -72,6 +72,27 @@ class SchemaValidationError(ValueError):
     failure, never silently skip it without recording why."""
 
 
+# Identity/provenance fields where a whitespace-only value is exactly as
+# meaningless as an empty one -- Codex review finding, ninth round, P1
+# finding 17: `Field(min_length=1)` alone is not sufficient here because
+# this model deliberately runs with `str_strip_whitespace=False` (so that
+# OTHER string fields -- candlestick_pattern/chart_pattern/regime/free-text
+# reasons -- are never silently mangled by an implicit strip this schema
+# does not intend for them); a lone space satisfies min_length=1 without
+# ever being stripped first. See `_strip_and_reject_blank` below.
+# ('session_state' is not listed here -- it is now a Literal of its real
+# three-value producer vocabulary, which cannot match a blank/whitespace
+# string in the first place.)
+IDENTITY_PROVENANCE_FIELDS = (
+    "signal_id",
+    "symbol",
+    "strategy",
+    "setup",
+    "ea_version",
+    "git_commit",
+)
+
+
 class TradeDecision(BaseModel):
     """One TradeDecision journal record, per TRADE_DECISION_SCHEMA.json."""
 
@@ -135,7 +156,17 @@ class TradeDecision(BaseModel):
     # real, honest third value ("BANANA"-style genuinely invalid input
     # remains rejected -- see test_unknown_news_state_rejected).**
     news_state: Literal["CLEAR", "BLACKOUT", "UNKNOWN"]
-    session_state: str = Field(min_length=1)
+    # **Fixed, 2026-07-27 Codex review finding (ninth round, P1 finding 17):
+    # this accepted ANY non-blank string, even though
+    # ThembaAdaptiveIntradayEA.mq5's own producer has an exact three-value
+    # vocabulary (KNOWN_SESSION_STATES above) -- matching market_family/
+    # intraday_mode/news_state's own established Literal precedent rather
+    # than leaving this one provenance field as free text.**
+    session_state: Literal[
+        "SESSION_TIME_REMAINING_UNKNOWN",
+        "SESSION_TIME_REMAINING_HIGH",
+        "SESSION_TIME_REMAINING_LOW",
+    ]
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_rejected: list[str] = Field(default_factory=list)
     ea_version: str = Field(min_length=1)
@@ -180,6 +211,32 @@ class TradeDecision(BaseModel):
             return ensure_utc(value)
         except TimezoneValidationError as exc:
             raise ValueError(str(exc)) from exc
+
+    # **Added, 2026-07-27 Codex review finding (ninth round, P1 finding 17):
+    # `Field(min_length=1)` alone did not reject a whitespace-only value
+    # (e.g. a single space) for any of IDENTITY_PROVENANCE_FIELDS -- this
+    # model deliberately keeps `str_strip_whitespace=False` at the config
+    # level (so candlestick_pattern/chart_pattern/regime/free-text reasons
+    # are never silently mangled), so min_length's own length check ran
+    # against the UN-stripped value, where a lone space has length 1. A
+    # focused probe reproduced this for signal_id/symbol/strategy/setup/
+    # session_state/ea_version/git_commit (session_state is now a Literal
+    # instead, see that field's own comment, but the others remain plain
+    # identity/provenance strings). This validator strips first, THEN
+    # rejects if the result is empty -- applied ONLY to the fields named
+    # above, never globally.**
+    @field_validator(*IDENTITY_PROVENANCE_FIELDS, mode="before")
+    @classmethod
+    def _strip_and_reject_blank(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == "":
+                raise ValueError(
+                    "must not be blank or whitespace-only -- this is a real identity/"
+                    "provenance field, not free text"
+                )
+            return stripped
+        return value
 
     @field_validator("regime")
     @classmethod
