@@ -42,33 +42,46 @@
 //| MUST be called BEFORE this function on every bar** (see that                    |
 //| function's own header for why the ORDER matters, not just calling both              |
 //| eventually) — reversed from this project's earlier call order.                          |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):      |
+//| now returns whether the persisted write actually succeeded (true also for       |
+//| the no-op "already rebased today" case). Previously this returned nothing            |
+//| and every caller silently proceeded even when SM_SetAccountDoublesBatch                 |
+//| failed to acquire the lock -- a genuine write failure left the OLD, stale                   |
+//| baseline in place while the caller believed a fresh one was recorded, and                       |
+//| DWL_GetDailyChangePercent/DWL_IsDailyLossBreached would then report                                 |
+//| against that stale (or, on a first-ever run, entirely absent) baseline as                              |
+//| though it were valid. Callers must now treat a false return as "risk state                                 |
+//| unknown this tick" and fail closed (reject new entries), never as "no                                          |
+//| breach".**                                                                                                        |
 //+------------------------------------------------------------------+
-void DWL_EnsureDailyBaseline()
+bool DWL_EnsureDailyBaseline()
   {
    datetime last_reset = (datetime)SM_GetAccountDouble("dwl_daily_reset_time", 0.0);
    if(last_reset != 0 && !SN_DailyBoundaryCrossed(last_reset))
-      return; // already rebased for today — no-op
+      return true; // already rebased for today — no-op, not a failure
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    string fields[2] = {"dwl_daily_start_equity", "dwl_daily_reset_time"};
    double values[2] = {equity, (double)SN_CurrentDailyBoundary()};
-   SM_SetAccountDoublesBatch(fields, values);
+   return SM_SetAccountDoublesBatch(fields, values);
   }
 
 //+------------------------------------------------------------------+
 //| Weekly analogue of DWL_EnsureDailyBaseline. Same caller-order          |
-//| contract: DWL_ApplyCashFlowAdjustments() first.                          |
+//| contract: DWL_ApplyCashFlowAdjustments() first. Same fail-closed          |
+//| return-value contract as DWL_EnsureDailyBaseline (P0 finding 4).            |
 //+------------------------------------------------------------------+
-void DWL_EnsureWeeklyBaseline()
+bool DWL_EnsureWeeklyBaseline()
   {
    datetime last_reset = (datetime)SM_GetAccountDouble("dwl_weekly_reset_time", 0.0);
    if(last_reset != 0 && !SN_WeeklyBoundaryCrossed(last_reset))
-      return;
+      return true;
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    string fields[2] = {"dwl_weekly_start_equity", "dwl_weekly_reset_time"};
    double values[2] = {equity, (double)SN_CurrentWeeklyBoundary()};
-   SM_SetAccountDoublesBatch(fields, values);
+   return SM_SetAccountDoublesBatch(fields, values);
   }
 
 //+------------------------------------------------------------------+
@@ -112,15 +125,21 @@ void DWL_EnsureWeeklyBaseline()
 //| ticket that would NOT round-trip exactly through a double is now refused                 |
 //| outright (with a Print warning) rather than silently persisting a                           |
 //| corrupted cursor value.                                                                         |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):      |
+//| now returns whether this call left account-wide state trustworthy (true          |
+//| for "nothing to apply" and "applied and persisted"; false only when                  |
+//| HistorySelect itself fails or the persisted write fails) — same fail-                    |
+//| closed contract as DWL_EnsureDailyBaseline (see that function's header).**                   |
 //+------------------------------------------------------------------+
-void DWL_ApplyCashFlowAdjustments()
+bool DWL_ApplyCashFlowAdjustments()
   {
    ulong last_ticket = (ulong)SM_GetAccountDouble("dwl_last_balance_deal_ticket", 0.0);
 
    datetime from = TimeTradeServer() - 8 * 86400;
    datetime to   = TimeTradeServer() + 60;
    if(!HistorySelect(from, to))
-      return;
+      return false;
 
    int total = HistoryDealsTotal();
    double cash_flow_sum = 0.0;
@@ -160,8 +179,9 @@ void DWL_ApplyCashFlowAdjustments()
       string fields[3] = {"dwl_daily_start_equity", "dwl_weekly_start_equity",
                            "dwl_last_balance_deal_ticket"};
       double values[3] = {daily, weekly, (double)max_ticket_seen};
-      SM_SetAccountDoublesBatch(fields, values);
+      return SM_SetAccountDoublesBatch(fields, values);
      }
+   return true;
   }
 
 //+------------------------------------------------------------------+

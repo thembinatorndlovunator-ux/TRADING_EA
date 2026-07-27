@@ -173,9 +173,25 @@ SRegimeHysteresisState  g_hysteresis_state;
 SModeState              g_mode_state; // TASK-040 (seventh-round rewrite): canonical mode formula's own state
 ENUM_MARKET_FAMILY      g_market_family = MARKET_FAMILY_UNKNOWN;
 long                    g_signal_counter = 0; // TASK-036: in-process counter feeding signal_id
+// **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+// true only when this bar's daily/weekly baseline and cash-flow-adjustment
+// persistence all genuinely succeeded -- AttemptOrderSubmission's gate 2
+// fails closed (rejects new entries) whenever this is false, rather than
+// letting an absent/stale baseline read as "no breach". See
+// EvaluateAndJournal's own comment for the full failure mode this closes.
+bool                    g_daily_weekly_risk_state_valid = false;
 
 int OnInit()
   {
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // creates the account-wide lock's own GlobalVariable exactly once, before
+   // any other StateManager call (including SM_EnsureAccountSchema below,
+   // which itself acquires the lock) can race its lazy, non-atomic
+   // check-then-set creation on the hot path -- see
+   // SM_EnsureAccountLockInitialized's own header for the full race this
+   // closes. Must run first, every OnInit, on every instance.**
+   SM_EnsureAccountLockInitialized();
+
    // **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding
    // 14): this EA never called SM_EnsureAccountSchema() anywhere -- the
    // schema-migration routine StateManager.mqh already provides (and
@@ -530,6 +546,19 @@ void OnTick()
    // g_icm_close_done_today) left no gate blocking a later bar's NEW entry
    // after the boundary had already passed.**
    bool past_intraday_boundary = SN_IsPastIntradayBoundary();
+
+   // **Moved, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // equity-peak tracking now runs on EVERY tick -- previously these only
+   // ran from EvaluateAndJournal's own once-per-completed-bar path, so a
+   // large intrabar move that reverted before the bar closed was never
+   // captured in either peak, understating both the daily giveback and the
+   // all-time drawdown section 8's own downstream risk controls depend on.
+   // Return values are intentionally not gated on here (a single tick's
+   // lock-timeout failure self-heals on the very next tick, since both
+   // functions are idempotent "raise if greater" writes); downstream
+   // consumers read whatever peak is currently persisted.**
+   EPM_UpdateDailyPeak();
+   EPM_UpdateAccountPeak();
 
    // **Reordered, 2026-07-22 (Codex review finding, seventh round, P0
    // finding 8): tick-sensitive exit management (structure/ATR trailing,
@@ -886,6 +915,19 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
      }
 
    //--- 2. Daily/weekly loss caps (account-wide measurement) -------------
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // a failed baseline/cash-flow persistence this bar (lock timeout, etc.)
+   // must fail closed -- DWL_IsDailyLossBreached/DWL_IsWeeklyLossBreached
+   // both return false for "no baseline exists" exactly the same as for
+   // "checked and not breached", so trusting them after a KNOWN write
+   // failure would silently treat an unknown risk state as safe to trade.**
+   if(!g_daily_weekly_risk_state_valid)
+     {
+      AppendReason(rejected, "daily_weekly_risk_state_persistence_failed");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
    double daily_change;
    if(DWL_IsDailyLossBreached(InpDailyLossCapPercent, daily_change))
      {
@@ -1274,11 +1316,25 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    // DWL_Ensure*Baseline() call, never after (see
    // DWL_ApplyCashFlowAdjustments' own header for why the previous order
    // double-counted a fresh baseline's own already-reflected cash flows).**
-   DWL_ApplyCashFlowAdjustments();
-   DWL_EnsureDailyBaseline();
-   DWL_EnsureWeeklyBaseline();
-   EPM_UpdateDailyPeak();
-   EPM_UpdateAccountPeak();
+   //
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // g_daily_weekly_risk_state_valid now captures whether EVERY one of these
+   // three persisted writes actually succeeded this bar -- previously their
+   // return values were discarded, so a lock-timeout write failure silently
+   // left a stale/absent baseline in place while AttemptOrderSubmission's own
+   // gate 2 (DWL_IsDailyLossBreached/DWL_IsWeeklyLossBreached) treated "no
+   // baseline" identically to "not breached", converting a genuine risk-state
+   // failure into permission to trade. Threaded into AttemptOrderSubmission
+   // below, which now fails closed (rejects new entries) whenever this is
+   // false, per that gate's own updated header.
+   // EPM_UpdateDailyPeak/EPM_UpdateAccountPeak moved OUT of this
+   // once-per-completed-bar function to OnTick's own per-tick path (see
+   // OnTick) -- section 8 requires peak tracking on every tick, not once per
+   // completed bar.**
+   bool cash_flow_ok      = DWL_ApplyCashFlowAdjustments();
+   bool daily_baseline_ok = DWL_EnsureDailyBaseline();
+   bool weekly_baseline_ok = DWL_EnsureWeeklyBaseline();
+   g_daily_weekly_risk_state_valid = cash_flow_ok && daily_baseline_ok && weekly_baseline_ok;
 
    const int    atr_percentile_window = 100;
    const int    efficiency_window     = 20;

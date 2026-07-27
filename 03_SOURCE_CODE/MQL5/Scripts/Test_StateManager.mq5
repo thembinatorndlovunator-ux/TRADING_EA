@@ -39,10 +39,20 @@ void OnStart()
   {
    Print("=== TASK-003 StateManager test start ===");
 
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // the lock's own creation is no longer bootstrapped lazily inside
+   // SM_AcquireAccountLock -- every caller (this test included) must run
+   // SM_EnsureAccountLockInitialized() once first, matching the real EA's
+   // own OnInit contract.**
+   SM_EnsureAccountLockInitialized();
+   Check("lock variable exists after SM_EnsureAccountLockInitialized",
+         GlobalVariableCheck(SM_AccountKey("lock")));
+
    // Clean slate: remove any residue from a prior run before testing.
    SM_DeleteAccountField("test_field_a");
    SM_DeleteAccountField("test_field_b");
    SM_DeleteAccountField("schema_version");
+   SM_DeleteAccountField("test_peak");
    SM_ReleaseAccountLock();
 
    //--- 1. Round-trip set/get -----------------------------------------
@@ -126,10 +136,26 @@ void OnStart()
          SM_GetAccountDouble("test_field_a", default_val) == 111.0 &&
          SM_GetAccountDouble("test_field_b", default_val) == 222.0);
 
+   //--- 7. SM_SetAccountDoubleIfGreater: atomic raise-only write (Codex ----
+   //---    review finding, eighth round, P0 finding 4) -----------------
+   bool first_raise = SM_SetAccountDoubleIfGreater("test_peak", 50.0);
+   Check("SM_SetAccountDoubleIfGreater returns true on first (never-set) write", first_raise);
+   Check("SM_SetAccountDoubleIfGreater sets the field on first write",
+         SM_GetAccountDouble("test_peak", default_val) == 50.0);
+
+   SM_SetAccountDoubleIfGreater("test_peak", 30.0); // lower candidate — must NOT overwrite
+   Check("SM_SetAccountDoubleIfGreater ignores a LOWER candidate",
+         SM_GetAccountDouble("test_peak", default_val) == 50.0);
+
+   SM_SetAccountDoubleIfGreater("test_peak", 75.0); // higher candidate — must overwrite
+   Check("SM_SetAccountDoubleIfGreater applies a HIGHER candidate",
+         SM_GetAccountDouble("test_peak", default_val) == 75.0);
+
    //--- Cleanup: leave no residue in the account-wide namespace -------
    SM_DeleteAccountField("test_field_a");
    SM_DeleteAccountField("test_field_b");
    SM_DeleteAccountField("schema_version");
+   SM_DeleteAccountField("test_peak");
    SM_ReleaseAccountLock();
    Check("field A removed after cleanup",
          !SM_AccountFieldExists("test_field_a"));

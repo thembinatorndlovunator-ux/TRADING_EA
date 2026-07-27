@@ -63,17 +63,49 @@ string SM_AccountKey(const string field)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** creates the lock variable exactly once, meant to be called          |
+//| ONLY from OnInit -- never from SM_AcquireAccountLock's own hot path            |
+//| (see that function's own fix comment for why). MQL5 native global               |
+//| variables have no atomic create-if-absent primitive                                |
+//| (GlobalVariableSetOnCondition fails outright against a variable that                  |
+//| does not exist yet), so this bootstrap-once-at-OnInit is the SAME                        |
+//| practical mitigation already established and accepted for                                    |
+//| IntentManager.mqh's own identical create-if-absent race (round 7, P0                            |
+//| finding 1) -- it narrows the race window from "every single lock                                    |
+//| acquisition attempt, forever" to "once, at EA startup," not a fully                                     |
+//| airtight fix.                                                                                             |
+//+------------------------------------------------------------------+
+void SM_EnsureAccountLockInitialized()
+  {
+   string lock_key = SM_AccountKey("lock");
+   if(!GlobalVariableCheck(lock_key))
+      GlobalVariableSet(lock_key, 0.0); // unlocked sentinel
+   if(!GlobalVariableCheck(lock_key + "__since"))
+      GlobalVariableSet(lock_key + "__since", 0.0);
+  }
+
+//+------------------------------------------------------------------+
 //| Acquire the account-wide write lock (compare-and-set).             |
 //| Returns true once acquired, false on timeout.                      |
 //| A lock held longer than SM_LOCK_STALE_SECONDS is treated as        |
 //| abandoned (its holder crashed without releasing it) and broken.    |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** this previously did its own "if(!GlobalVariableCheck) ... Set"      |
+//| bootstrap on EVERY call -- a check-then-unconditional-set that is NOT        |
+//| atomic as a unit. Two instances racing the very first ever call on this        |
+//| account+server could interleave so instance A's late, unconditional               |
+//| GlobalVariableSet(lock_key, 0.0) OVERWRITES instance B's own already-                 |
+//| legitimately-acquired lock (set to 1.0) back to "unlocked", letting a                    |
+//| THIRD instance also acquire it concurrently -- precisely the same class                     |
+//| of bug the intent-manager race fix (round 7, P0 finding 1) already closed                       |
+//| for a different lock. The bootstrap now runs exactly once, from OnInit                              |
+//| (SM_EnsureAccountLockInitialized), never from this hot path.**                                          |
 //+------------------------------------------------------------------+
 bool SM_AcquireAccountLock(const int timeout_ms = 500)
   {
    string lock_key = SM_AccountKey("lock");
-
-   if(!GlobalVariableCheck(lock_key))
-      GlobalVariableSet(lock_key, 0.0); // unlocked sentinel, created once
 
    ulong start_tick = GetTickCount64();
    while(true)
@@ -145,11 +177,28 @@ bool SM_SetAccountDouble(const string field, const double value,
 //| related fields (e.g. a baseline value alongside its own reset                    |
 //| timestamp, or a cash-flow-adjusted baseline alongside the cursor that                |
 //| tracks which deals have already been applied) leaves a real crash-window                |
-//| between those separate writes — a restart between them can leave the                       |
-//| account-wide state inconsistent (one field updated, a logically-paired                        |
-//| one not). This performs every (field, value) pair in 'fields'/'values' as                        |
-//| ONE lock hold, so a crash either sees none of them applied or all of                                 |
-//| them.                                                                                                    |
+//| between those separate writes.                                                                   |
+//|                                                                    |
+//| **Corrected, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** the claim this previously made here -- "a crash either sees none of       |
+//| them applied or all of them" -- is FALSE and has been removed. MQL5 native           |
+//| global variables have no multi-field transactional commit primitive: this               |
+//| lock only serializes against OTHER CONCURRENT WRITERS (no interleaving              |
+//| between two callers' field writes), it does NOT make the writes atomic                   |
+//| against THIS PROCESS crashing partway through the loop below -- a crash                     |
+//| after field 0 but before field 1 leaves field 0 updated and field 1 stale.                      |
+//| The real, honest guarantee callers get is weaker: EVERY CALLER OF THIS                            |
+//| FUNCTION MUST ORDER ITS OWN fields[]/values[] SO THE LAST ELEMENT IS THE                              |
+//| ONE A READER TREATS AS THE "IS THIS FRESH?" SIGNAL (e.g. a reset                                        |
+//| timestamp, or a cursor) -- a crash before that final write leaves the                                       |
+//| signal stale, so the next read naturally re-triggers an idempotent retry                                        |
+//| of the whole batch rather than silently trusting a half-applied one. Both                                           |
+//| existing callers (DailyWeeklyLimits.mqh's DWL_EnsureDailyBaseline/                                                     |
+//| DWL_EnsureWeeklyBaseline/DWL_ApplyCashFlowAdjustments) already follow this                                                 |
+//| convention. This is self-healing for THIS project's specific idempotent-                                                      |
+//| retry-driven callers, not general transactional atomicity -- a future                                                             |
+//| caller that is NOT idempotent-retry-safe must not assume this function                                                                |
+//| gives it a real all-or-nothing guarantee.                                                                                                |
 //+------------------------------------------------------------------+
 bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
                                  const int lock_timeout_ms = 500)
@@ -164,6 +213,39 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
 
    for(int i = 0; i < n; i++)
       GlobalVariableSet(SM_AccountKey(fields[i]), values[i]);
+
+   SM_ReleaseAccountLock();
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** atomically raises one account-wide double field to 'candidate' ONLY     |
+//| if it exceeds the field's current stored value (or the field has never          |
+//| been set) -- holds the account lock across the READ, COMPARE, and WRITE            |
+//| as one critical section. EquityPeakManager.mqh's peak-tracking functions               |
+//| previously did their own separate SM_GetAccountDouble() read followed by                   |
+//| a conditional SM_SetAccountDouble() call -- each individually lock-guarded,                    |
+//| but the read and the write were NOT under the same lock hold, so two                              |
+//| concurrent instances could interleave: both read the same (lower) current                            |
+//| peak, both compute "my equity is higher, write it", and whichever write                                  |
+//| lands SECOND wins even if its own equity reading was the LOWER of the two --                                 |
+//| silently losing a genuine peak update. Returns false only if the lock                                            |
+//| could not be acquired within timeout (fail-closed for the caller to treat                                            |
+//| as "peak state unknown this tick", never "no update needed").                                                        |
+//+------------------------------------------------------------------+
+bool SM_SetAccountDoubleIfGreater(const string field, const double candidate,
+                                   const int lock_timeout_ms = 500)
+  {
+   if(!SM_AcquireAccountLock(lock_timeout_ms))
+      return false;
+   SM_StampAccountLockHeld();
+
+   string key    = SM_AccountKey(field);
+   bool   exists = GlobalVariableCheck(key);
+   double current = exists ? GlobalVariableGet(key) : 0.0;
+   if(!exists || candidate > current)
+      GlobalVariableSet(key, candidate);
 
    SM_ReleaseAccountLock();
    return true;

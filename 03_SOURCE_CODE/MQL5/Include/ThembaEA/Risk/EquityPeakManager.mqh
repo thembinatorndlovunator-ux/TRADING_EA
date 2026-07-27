@@ -29,16 +29,26 @@
 //| Rebase the daily peak to current equity if the daily boundary has   |
 //| been crossed since EquityPeakManager's own last recorded reset.      |
 //| Idempotent within the same day.                                      |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** the two fields (peak equity, reset time) are now written under        |
+//| ONE SM_SetAccountDoublesBatch lock hold, with the reset time -- the           |
+//| field DWL-style callers key their "is this fresh?" retry decision on --          |
+//| written last, per that function's own corrected atomicity contract.               |
+//| Returns the write's success so callers can propagate a persistence               |
+//| failure as "peak state unknown", not "no reset needed" (see                          |
+//| EPM_UpdateDailyPeak's own header for the fail-closed callers).                          |
 //+------------------------------------------------------------------+
-void EPM_EnsureDailyPeakBaseline()
+bool EPM_EnsureDailyPeakBaseline()
   {
    datetime last_reset = (datetime)SM_GetAccountDouble("epm_daily_peak_reset_time", 0.0);
    if(last_reset != 0 && !SN_DailyBoundaryCrossed(last_reset))
-      return;
+      return true; // already rebased for today — no-op, not a failure
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   SM_SetAccountDouble("epm_daily_peak_equity", equity);
-   SM_SetAccountDouble("epm_daily_peak_reset_time", (double)SN_CurrentDailyBoundary());
+   string fields[2] = {"epm_daily_peak_equity", "epm_daily_peak_reset_time"};
+   double values[2] = {equity, (double)SN_CurrentDailyBoundary()};
+   return SM_SetAccountDoublesBatch(fields, values);
   }
 
 //+------------------------------------------------------------------+
@@ -46,15 +56,27 @@ void EPM_EnsureDailyPeakBaseline()
 //| EPM_EnsureDailyPeakBaseline() first (cheap — a single stored-value   |
 //| read) so this is always safe to call on every tick without a          |
 //| separate reset step elsewhere.                                       |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** now uses SM_SetAccountDoubleIfGreater, which holds the account          |
+//| lock across the read-compare-write as ONE critical section -- the                |
+//| previous separate SM_GetAccountDouble() read followed by a conditional               |
+//| SM_SetAccountDouble() call let two concurrent instances interleave so a                 |
+//| lower equity reading could overwrite an already-persisted higher peak.                     |
+//| Also fixed: this and EPM_UpdateAccountPeak were previously only invoked                       |
+//| from EvaluateAndJournal's own once-per-completed-bar path -- moved to run                         |
+//| every tick from OnTick directly, per section 8's own peak-tracking                                    |
+//| contract. Returns false if the peak state could not be verified/updated                                   |
+//| this tick (lock timeout) — callers must treat this as "unknown", never as                                    |
+//| "no update needed".                                                                                              |
 //+------------------------------------------------------------------+
-void EPM_UpdateDailyPeak()
+bool EPM_UpdateDailyPeak()
   {
-   EPM_EnsureDailyPeakBaseline();
+   if(!EPM_EnsureDailyPeakBaseline())
+      return false;
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double peak   = SM_GetAccountDouble("epm_daily_peak_equity", equity);
-   if(equity > peak)
-      SM_SetAccountDouble("epm_daily_peak_equity", equity);
+   return SM_SetAccountDoubleIfGreater("epm_daily_peak_equity", equity);
   }
 
 //+------------------------------------------------------------------+
@@ -97,13 +119,15 @@ bool EPM_IsDailyGivebackArmed(const double daily_start_equity, const double arm_
 //| Never auto-resets — only EPM_ExplicitResetAccountPeak() below         |
 //| changes it downward, and that is an explicit, logged operator        |
 //| action per section 8, never called by ordinary risk logic.           |
+//|                                                                    |
+//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 4):** same atomic read-compare-write and every-tick cadence fix as           |
+//| EPM_UpdateDailyPeak above — see that function's own header.                     |
 //+------------------------------------------------------------------+
-void EPM_UpdateAccountPeak()
+bool EPM_UpdateAccountPeak()
   {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double peak   = SM_GetAccountDouble("epm_account_peak_equity", 0.0);
-   if(peak <= 0.0 || equity > peak)
-      SM_SetAccountDouble("epm_account_peak_equity", equity);
+   return SM_SetAccountDoubleIfGreater("epm_account_peak_equity", equity);
   }
 
 //+------------------------------------------------------------------+

@@ -53,6 +53,12 @@ void CleanupTestFields()
 void OnStart()
   {
    Print("=== TASK-008 DailyWeeklyLimits / EquityPeakManager / DrawdownController test start ===");
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
+   // the lock's own creation is no longer bootstrapped lazily inside
+   // SM_AcquireAccountLock -- see Test_StateManager.mq5's identical fix.**
+   SM_EnsureAccountLockInitialized();
+
    CleanupTestFields(); // clean slate before testing
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
