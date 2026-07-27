@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,14 +30,14 @@ from analysis.csv_io import (
     assert_output_paths_distinct,
     assert_path_not_direct_child_of_directory,
     assert_path_not_same_file,
-    atomic_write_dataframe_csv,
     sanitize_for_csv,
+    write_dataframe_csv_to_temp,
 )
 from analysis.report_metadata import (
     ReportMetadata,
-    atomic_write_text,
     build_report_metadata,
     default_repo_root,
+    write_text_to_temp,
 )
 from data_collection.journal_reader import (
     JournalReadResult,
@@ -225,21 +226,36 @@ def run(
     # 16): output_csv/output_json/errors_json were previously written as
     # three separate calls, each individually atomic but NOT atomic as a
     # GROUP -- a fault injected during a later write left an earlier one
-    # genuinely present on disk with no (or only partial) provenance. All
-    # three are now written under one try/except that rolls back (removes)
-    # every file THIS call already wrote if a later write in the same group
-    # fails, so a caller never observes a partial publication: either every
-    # requested file exists, or none of them do.**
-    written_paths: list[Path] = []
+    # genuinely present on disk with no (or only partial) provenance.
+    #
+    # **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    # 12):** the "unlink whatever this call already wrote" rollback below
+    # was itself unsound on a REPUBLISH -- each atomic_write_* call
+    # OVERWRITES its own final path in place, so by the time a LATER write
+    # in the group failed, an EARLIER write's own pre-existing valid file
+    # (from a previous successful run) had already been replaced with this
+    # call's new content; the rollback then unlinked that (new) content
+    # entirely, destroying a file that was valid before this call started
+    # (see report_metadata.publish_dataframe_csv_and_json's own header for
+    # a reproduced probe of the identical bug). Every requested file is now
+    # written FULLY to a temp location first (no final path is touched
+    # while ANY write in the group is still in progress); only once every
+    # temp write has succeeded are they renamed into place. If any temp
+    # write raises, every temp file this call created is removed and NO
+    # final path is ever touched -- a pre-existing valid file group
+    # survives completely untouched. A literal process crash between two
+    # renames (not a normal exception) is a narrower, explicitly named
+    # residual risk this does not close, matching
+    # publish_dataframe_csv_and_json's own honestly-scoped disclosure.**
+    csv_tmp: Optional[Path] = None
+    output_json_tmp: Optional[Path] = None
+    errors_json_tmp: Optional[Path] = None
     try:
         if output_csv is not None:
-            output_csv.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_dataframe_csv(safe_df, output_csv)
-            written_paths.append(output_csv)
+            csv_tmp = write_dataframe_csv_to_temp(safe_df, output_csv)
 
         if output_json is not None:
-            output_json.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(
+            output_json_tmp = write_text_to_temp(
                 output_json,
                 json.dumps(
                     [r.model_dump(mode="json") for r in read_result.valid_records],
@@ -247,21 +263,28 @@ def run(
                     allow_nan=False,
                 ),
             )
-            written_paths.append(output_json)
 
         if errors_json is not None:
-            errors_json.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(
+            errors_json_tmp = write_text_to_temp(
                 errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False)
             )
-            written_paths.append(errors_json)
-    except BaseException:
-        for written_path in written_paths:
-            try:
-                written_path.unlink()
-            except OSError:
-                pass
-        raise
+
+        if output_json_tmp is not None and output_json is not None:
+            os.replace(output_json_tmp, output_json)
+            output_json_tmp = None
+        if errors_json_tmp is not None and errors_json is not None:
+            os.replace(errors_json_tmp, errors_json)
+            errors_json_tmp = None
+        if csv_tmp is not None and output_csv is not None:
+            os.replace(csv_tmp, output_csv)
+            csv_tmp = None
+    finally:
+        for tmp_path in (csv_tmp, output_json_tmp, errors_json_tmp):
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     return JoinTradeJournalResult(
         read_result=read_result,

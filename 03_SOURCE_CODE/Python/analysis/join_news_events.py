@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
@@ -51,14 +52,14 @@ from analysis.csv_io import (
     assert_path_not_direct_child_of_directory,
     assert_path_not_same_file,
     assert_unique_ids,
-    atomic_write_dataframe_csv,
     read_csv_with_required_columns_and_hash,
     sanitize_for_csv,
+    write_dataframe_csv_to_temp,
 )
 from analysis.report_metadata import (
-    atomic_write_text,
     build_report_metadata,
     combine_labeled_hashes,
+    write_text_to_temp,
 )
 from analysis.time_utils import TimezoneValidationError, parse_utc_series
 from data_collection.journal_reader import (
@@ -404,37 +405,50 @@ def run(
     # three separate calls, each individually atomic but NOT atomic as a
     # GROUP -- a fault injected during summary_json or errors_json left
     # output_csv genuinely present on disk with no (or only partial)
-    # provenance. All three are now written under one try/except that
-    # rolls back (removes) every file THIS call already wrote if a later
-    # write in the same group fails, so a caller never observes a partial
-    # publication: either every requested file exists, or none of them do.**
-    written_paths: list[Path] = []
+    # provenance.
+    #
+    # **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    # 12):** see join_trade_journal.py's own identical fix comment -- the
+    # "unlink whatever this call already wrote" rollback was itself
+    # unsound on a REPUBLISH (it destroyed a pre-existing valid file the
+    # moment ITS OWN write in the group succeeded before a LATER write
+    # failed). Every requested file is now written fully to a temp
+    # location first; only once every temp write has succeeded are they
+    # renamed into place. If any temp write raises, every temp file this
+    # call created is removed and no final path is ever touched.**
+    csv_tmp: Optional[Path] = None
+    summary_json_tmp: Optional[Path] = None
+    errors_json_tmp: Optional[Path] = None
     try:
         if output_csv is not None:
-            output_csv.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_dataframe_csv(safe_joined, output_csv)
-            written_paths.append(output_csv)
+            csv_tmp = write_dataframe_csv_to_temp(safe_joined, output_csv)
 
         if summary_json is not None:
-            summary_json.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(
+            summary_json_tmp = write_text_to_temp(
                 summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
             )
-            written_paths.append(summary_json)
 
         if errors_json is not None:
-            errors_json.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(
+            errors_json_tmp = write_text_to_temp(
                 errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False)
             )
-            written_paths.append(errors_json)
-    except BaseException:
-        for written_path in written_paths:
-            try:
-                written_path.unlink()
-            except OSError:
-                pass
-        raise
+
+        if summary_json_tmp is not None and summary_json is not None:
+            os.replace(summary_json_tmp, summary_json)
+            summary_json_tmp = None
+        if errors_json_tmp is not None and errors_json is not None:
+            os.replace(errors_json_tmp, errors_json)
+            errors_json_tmp = None
+        if csv_tmp is not None and output_csv is not None:
+            os.replace(csv_tmp, output_csv)
+            csv_tmp = None
+    finally:
+        for tmp_path in (csv_tmp, summary_json_tmp, errors_json_tmp):
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     return NewsJoinResult(
         joined=joined,

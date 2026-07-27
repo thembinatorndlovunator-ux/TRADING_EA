@@ -525,15 +525,21 @@ def sanitize_for_csv(value: object) -> object:
     return value
 
 
-def atomic_write_dataframe_csv(df: pd.DataFrame, path: Path) -> None:
-    """Writes 'df' to 'path' as CSV via write-to-temp-then-rename, so an
-    interrupted write (crash, kill, disk full) never leaves a partially
-    -written CSV at 'path'.
+def write_dataframe_csv_to_temp(df: pd.DataFrame, path: Path) -> Path:
+    """Writes 'df' as CSV to a new temp file in the SAME directory as
+    'path' (so a later os.replace stays on one filesystem), returning the
+    temp file's own Path WITHOUT renaming it into place -- the caller
+    commits (os.replace) or discards (os.remove) it.
 
-    **Added, 2026-07-22 Codex review finding (third round): JSON writes
-    already use this discipline (``report_metadata.atomic_write_text``),
-    but every CSV writer in this project remained a direct
-    ``df.to_csv(path)`` call.**
+    **Added, 2026-07-22 Codex review finding (ninth round, P1 finding
+    12):** split out of ``atomic_write_dataframe_csv`` so a caller
+    coordinating MULTIPLE output files as one atomic group
+    (``report_metadata.publish_dataframe_csv_and_json`` and the
+    three-output journal/news publishers) can fully prepare every file
+    in temp BEFORE committing any of them -- the previous "unlink
+    whatever this call already wrote" rollback policy destroyed a
+    pre-existing valid file the moment its own (successful) write in the
+    same group was followed by a LATER write's failure.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -549,10 +555,32 @@ def atomic_write_dataframe_csv(df: pd.DataFrame, path: Path) -> None:
         # rather than depend on the runtime's locale.
         with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
             df.to_csv(fh, index=False)
-        os.replace(tmp_name, path)
     except BaseException:
         try:
             os.remove(tmp_name)
+        except OSError:
+            pass
+        raise
+    return Path(tmp_name)
+
+
+def atomic_write_dataframe_csv(df: pd.DataFrame, path: Path) -> None:
+    """Writes 'df' to 'path' as CSV via write-to-temp-then-rename, so an
+    interrupted write (crash, kill, disk full) never leaves a partially
+    -written CSV at 'path'.
+
+    **Added, 2026-07-22 Codex review finding (third round): JSON writes
+    already use this discipline (``report_metadata.atomic_write_text``),
+    but every CSV writer in this project remained a direct
+    ``df.to_csv(path)`` call.**
+    """
+
+    tmp_path = write_dataframe_csv_to_temp(df, path)
+    try:
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
         except OSError:
             pass
         raise

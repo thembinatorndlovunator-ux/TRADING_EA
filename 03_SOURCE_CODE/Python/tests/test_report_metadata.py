@@ -166,37 +166,87 @@ def test_publish_dataframe_csv_and_json_writes_both_on_success(tmp_path):
     assert summary_json.read_text(encoding="utf-8").strip().startswith("{")
 
 
-def test_publish_dataframe_csv_and_json_rolls_back_csv_when_json_write_fails(tmp_path, monkeypatch):
-    """Regression for a Codex review finding (2026-07-22, eighth round, P1
-    finding 16): writing the result CSV and its mandatory provenance JSON
-    sidecar as two separate atomic_write_* calls was each individually
-    atomic but NOT atomic as a PAIR -- a fault injected during the JSON
-    write left the CSV genuinely present on disk with no accompanying
-    provenance ("Fault-injecting a sidecar write failure leaves the result
-    CSV present without its provenance," the review's own words). This
-    fault-injects exactly that scenario directly against
-    publish_dataframe_csv_and_json and asserts the CSV is rolled back
-    (removed), not left orphaned."""
+def test_publish_dataframe_csv_and_json_preserves_prior_valid_pair_when_json_write_fails(
+    tmp_path, monkeypatch
+):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 12): a probe starting from a COMPLETE, valid old-csv/old-json
+    pair and injecting a JSON-write failure previously produced
+    'csv_exists=False, json=old-json' -- the prior fix (write CSV, then
+    JSON, unlink the CSV on JSON failure) unlinked the CSV, but
+    atomic_write_dataframe_csv had ALREADY overwritten it in place with
+    this call's new content by then, so the unlink destroyed a file that
+    was genuinely valid BEFORE this call started, leaving no CSV at all
+    paired with the stale old JSON.
+
+    Both files are now fully prepared in TEMP first; neither final path is
+    touched until both temp writes succeed. A JSON-write failure must
+    leave the ORIGINAL old CSV and old JSON completely untouched, and no
+    temp files behind."""
 
     import analysis.report_metadata as report_metadata_module
 
-    def failing_atomic_write_text(path, content, encoding="utf-8"):
-        raise OSError("simulated disk failure writing the provenance sidecar")
-
-    monkeypatch.setattr(report_metadata_module, "atomic_write_text", failing_atomic_write_text)
-
-    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
     output_csv = tmp_path / "result.csv"
     summary_json = tmp_path / "result.summary.json"
+    output_csv.write_text("old-csv-content\n", encoding="utf-8")
+    summary_json.write_text("old-json-content", encoding="utf-8")
+
+    def failing_write_text_to_temp(path, content, encoding="utf-8"):
+        raise OSError("simulated disk failure writing the provenance sidecar")
+
+    monkeypatch.setattr(report_metadata_module, "write_text_to_temp", failing_write_text_to_temp)
+
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
 
     with pytest.raises(OSError, match="simulated disk failure"):
         publish_dataframe_csv_and_json(df, output_csv, {"n": 2}, summary_json)
 
-    assert not output_csv.exists(), (
-        "the result CSV must be rolled back (removed) when the provenance JSON sidecar fails "
-        "to write -- a result CSV must never exist on disk without its mandatory provenance"
+    assert output_csv.exists(), "the pre-existing valid CSV must survive a JSON-write failure"
+    assert output_csv.read_text(encoding="utf-8") == "old-csv-content\n", (
+        "the pre-existing CSV's own content must be completely untouched, not silently "
+        "overwritten with this call's new (never-committed) content"
     )
-    assert not summary_json.exists()
+    assert summary_json.exists()
+    assert summary_json.read_text(encoding="utf-8") == "old-json-content"
+
+    leftover_tmp_files = [
+        p for p in tmp_path.iterdir() if p.name not in {"result.csv", "result.summary.json"}
+    ]
+    assert leftover_tmp_files == [], f"unexpected leftover temp files: {leftover_tmp_files}"
+
+
+def test_publish_dataframe_csv_and_json_preserves_prior_valid_pair_when_csv_write_fails(
+    tmp_path, monkeypatch
+):
+    """Symmetric case: a CSV-write failure must equally leave a pre-existing
+    valid old-csv/old-json pair completely untouched (never a case where
+    the CSV's own preparation failure is allowed to reach or replace the
+    JSON side either)."""
+
+    output_csv = tmp_path / "result.csv"
+    summary_json = tmp_path / "result.summary.json"
+    output_csv.write_text("old-csv-content\n", encoding="utf-8")
+    summary_json.write_text("old-json-content", encoding="utf-8")
+
+    def failing_write_dataframe_csv_to_temp(df, path):
+        raise OSError("simulated disk failure writing the result CSV")
+
+    # publish_dataframe_csv_and_json imports write_dataframe_csv_to_temp
+    # locally (a deliberate lazy import -- see that function's own header),
+    # re-fetching it from analysis.csv_io's own namespace on every call, so
+    # the patch target must be csv_io itself, not report_metadata's module.
+    monkeypatch.setattr(
+        "analysis.csv_io.write_dataframe_csv_to_temp",
+        failing_write_dataframe_csv_to_temp,
+    )
+
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        publish_dataframe_csv_and_json(df, output_csv, {"n": 2}, summary_json)
+
+    assert output_csv.read_text(encoding="utf-8") == "old-csv-content\n"
+    assert summary_json.read_text(encoding="utf-8") == "old-json-content"
 
 
 def test_publish_dataframe_csv_and_json_only_csv_requested_no_rollback_logic_needed(tmp_path):

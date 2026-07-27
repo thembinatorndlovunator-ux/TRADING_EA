@@ -188,21 +188,43 @@ def compute_dataset_hash(paths: Sequence[Path], repo_root: Optional[Path] = None
     return combine_labeled_hashes(manifest)
 
 
-def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
-    """Writes 'content' to 'path' via write-to-temp-then-rename, so an
-    interrupted write (crash, kill, disk full) never leaves a partially-
-    written file at 'path' -- either the old contents remain untouched or
-    the new contents are complete, never a truncated mix of both."""
+def write_text_to_temp(path: Path, content: str, encoding: str = "utf-8") -> Path:
+    """Writes 'content' to a new temp file in the SAME directory as
+    'path', returning the temp file's own Path WITHOUT renaming it into
+    place -- the caller commits (os.replace) or discards (os.remove) it.
+
+    **Added, 2026-07-22 Codex review finding (ninth round, P1 finding
+    12):** split out of ``atomic_write_text`` for the same reason as
+    ``csv_io.write_dataframe_csv_to_temp`` -- see that function's own
+    header.
+    """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding=encoding) as fh:
             fh.write(content)
-        os.replace(tmp_name, path)
     except BaseException:
         try:
             os.remove(tmp_name)
+        except OSError:
+            pass
+        raise
+    return Path(tmp_name)
+
+
+def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Writes 'content' to 'path' via write-to-temp-then-rename, so an
+    interrupted write (crash, kill, disk full) never leaves a partially-
+    written file at 'path' -- either the old contents remain untouched or
+    the new contents are complete, never a truncated mix of both."""
+
+    tmp_path = write_text_to_temp(path, content, encoding)
+    try:
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
         except OSError:
             pass
         raise
@@ -234,44 +256,71 @@ def publish_dataframe_csv_and_json(
     (an invalid repo_path raised AFTER the CSV existed) but did not make
     the two writes atomic as a unit.
 
-    This function writes the CSV first (if requested), then the JSON (if
-    requested); if the JSON write fails and the CSV was just written by
-    THIS call, the CSV is removed (best-effort) before the original
-    exception propagates -- the review's own suggested "remove the staged
-    result on failure" policy, simpler than a full manifest/directory
-    transaction while giving the same guarantee this project actually
-    needs: never a result CSV on disk without its mandatory provenance
-    sidecar. If only one of output_csv/summary_json was requested, no
-    rollback is needed (that single write's own atomicity already
-    suffices) and none is attempted.
+    **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    12):** the previous fix (write CSV, then JSON, and unlink the CSV if
+    JSON fails) was itself unsound on a REPUBLISH: ``atomic_write_dataframe_csv``
+    overwrites 'output_csv' in place, so by the time the JSON write failed,
+    a pre-existing VALID CSV from an earlier successful run had already
+    been replaced with this call's new content -- the subsequent unlink
+    then destroyed that (new) CSV entirely, leaving no CSV at all paired
+    with the OLD JSON (a probe reproduced exactly this: starting from a
+    complete old-csv/old-json pair and injecting a JSON-write failure
+    produced ``csv_exists=False, json='old-json'``).
+
+    This now writes BOTH files fully to TEMP locations first (neither
+    final path is touched at all while either write is in progress); only
+    once both temp writes have fully succeeded are they renamed into
+    place (JSON first, then CSV). If either temp write raises, every temp
+    file this call created is removed and NEITHER final path is ever
+    touched -- a pre-existing valid CSV/JSON pair survives completely
+    untouched, closing the review's own primary complaint. If only one of
+    output_csv/summary_json was requested, this degrades to that single
+    file's own write-to-temp-then-rename atomicity.
+
+    **Residual risk, named honestly, not silently closed:** a literal
+    process crash (not a normal exception -- those are fully handled
+    above) landing between the JSON rename and the CSV rename is not
+    closed by this fix. JSON is renamed first specifically to make that
+    exact window's own surviving mismatch a genuinely complete OLD CSV
+    paired with a NEW json, rather than a missing/corrupt CSV -- the
+    project's own stated worse failure mode (round 8 P1 finding 2:
+    "apparently valid result with no provenance"). A full versioned-
+    directory-plus-manifest-pointer scheme (the review's own alternative
+    suggestion) would close this too but is materially larger design work,
+    not attempted here.
     """
 
-    wrote_csv_this_call = False
-    if output_csv is not None and df is not None:
-        # Local import (not at module top) to avoid a hard import-time
-        # dependency from this lightweight provenance module onto csv_io.py
-        # for every caller, even ones that never touch a DataFrame.
-        from analysis.csv_io import atomic_write_dataframe_csv
+    # Local import (not at module top) to avoid a hard import-time
+    # dependency from this lightweight provenance module onto csv_io.py for
+    # every caller, even ones that never touch a DataFrame.
+    from analysis.csv_io import write_dataframe_csv_to_temp
 
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(df, output_csv)
-        wrote_csv_this_call = True
+    csv_tmp: Optional[Path] = None
+    json_tmp: Optional[Path] = None
+    try:
+        if output_csv is not None and df is not None:
+            csv_tmp = write_dataframe_csv_to_temp(df, output_csv)
 
-    if summary_json is not None and payload is not None:
-        import json
+        if summary_json is not None and payload is not None:
+            import json
 
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            atomic_write_text(
+            json_tmp = write_text_to_temp(
                 summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
             )
-        except BaseException:
-            if wrote_csv_this_call and output_csv is not None:
+
+        if json_tmp is not None and summary_json is not None:
+            os.replace(json_tmp, summary_json)
+            json_tmp = None
+        if csv_tmp is not None and output_csv is not None:
+            os.replace(csv_tmp, output_csv)
+            csv_tmp = None
+    finally:
+        for tmp_path in (csv_tmp, json_tmp):
+            if tmp_path is not None:
                 try:
-                    output_csv.unlink()
+                    os.remove(tmp_path)
                 except OSError:
                     pass
-            raise
 
 
 @dataclass(frozen=True)
