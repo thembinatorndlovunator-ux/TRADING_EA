@@ -80,7 +80,18 @@ class TradeDecision(BaseModel):
     timestamp_utc: datetime
     symbol: str = Field(min_length=1)
     market_family: Literal["METAL", "FOREX", "SYNTHETIC_INDEX", "UNKNOWN"]
-    intraday_mode: Literal["SCALP", "DAY_TRADE"]
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding 12):
+    # IntradayModeRouter.mqh's own IMR_ApplyModeHysteresis legitimately
+    # returns INTRADAY_MODE_NONE (-> "NONE") for a gating regime, an
+    # invalid/undefined mode score, or the initial neutral state before any
+    # mode has ever been confirmed -- these are normal, fail-closed
+    # decisions, not producer bugs. Restricting this Literal to only
+    # SCALP/DAY_TRADE rejected every one of them at the schema boundary,
+    # right alongside JournalDataFailureDecision's own data-read-failure
+    # rows (which previously fabricated "SCALP" specifically to dodge this
+    # same rejection -- see that function's own corrected comment). "NONE"
+    # is now the real producer's third legitimate value, not an omission.**
+    intraday_mode: Literal["SCALP", "DAY_TRADE", "NONE"]
     regime: str
     regime_confidence: StrictFloat = Field(ge=0.0, le=100.0)
     direction: Literal["BUY", "SELL", "NONE"]
@@ -102,7 +113,16 @@ class TradeDecision(BaseModel):
     # probe was accepted even though the two-value producer contract was
     # already documented in this module's own comments. Restricted to
     # match the real producer's vocabulary exactly.**
-    news_state: Literal["CLEAR", "BLACKOUT"]
+    # **Extended, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 12): JournalDataFailureDecision previously fabricated "CLEAR" on a
+    # data-read failure ("unknown -- not evaluated this bar") specifically
+    # because this Literal had no legitimate "not evaluated" value to emit
+    # instead -- silently attributing a data-failure bar to a real "no
+    # news" reading it never actually confirmed, contaminating any
+    # analysis grouped by news_state. "UNKNOWN" is now that producer's
+    # real, honest third value ("BANANA"-style genuinely invalid input
+    # remains rejected -- see test_unknown_news_state_rejected).**
+    news_state: Literal["CLEAR", "BLACKOUT", "UNKNOWN"]
     session_state: str
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_rejected: list[str] = Field(default_factory=list)

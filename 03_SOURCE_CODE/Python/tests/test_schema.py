@@ -45,6 +45,36 @@ def test_both_real_news_state_values_accepted():
         assert record.news_state == value
 
 
+def test_unknown_news_state_literal_accepted():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 12): JournalDataFailureDecision (ThembaAdaptiveIntradayEA.mq5)
+    previously fabricated "CLEAR" on a data-read failure because this
+    schema had no legitimate "not evaluated" value -- "UNKNOWN" is now
+    that producer's real, honest third value, distinct from a genuinely
+    invalid probe like "BANANA" (still rejected, see
+    test_unknown_news_state_rejected)."""
+
+    record = validate_record(make_valid_record(news_state="UNKNOWN"))
+    assert record.news_state == "UNKNOWN"
+
+
+def test_none_intraday_mode_accepted():
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 12): IntradayModeRouter.mqh's own IMR_ApplyModeHysteresis
+    legitimately returns "NONE" for a gating regime, an invalid/undefined
+    mode score, or the initial neutral state -- these are normal,
+    fail-closed decisions the schema must accept, not reject alongside a
+    genuinely invalid mode string."""
+
+    record = validate_record(make_valid_record(intraday_mode="NONE"))
+    assert record.intraday_mode == "NONE"
+
+
+def test_invalid_intraday_mode_literal_rejected():
+    with pytest.raises(SchemaValidationError):
+        validate_record(make_valid_record(intraday_mode="SWING"))
+
+
 def test_unknown_regime_rejected():
     with pytest.raises(SchemaValidationError):
         validate_record(make_valid_record(regime="REGIME_MADE_UP"))

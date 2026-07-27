@@ -1758,13 +1758,25 @@ void JournalDataFailureDecision(const string failure_reason)
    decision.timestamp = DJ_ServerTimeToUtc(TimeCurrent());
    decision.symbol = g_symbol;
    decision.market_family = IMR_MarketFamilyToString(g_market_family);
-   decision.intraday_mode = IMR_IntradayModeToString(INTRADAY_MODE_SCALP); // unknown -- conservative default
+   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P1 finding
+   // 12): intraday_mode was previously fabricated as SCALP ("unknown --
+   // conservative default") and news_state as CLEAR ("unknown -- not
+   // evaluated this bar") -- neither was actually true; mode/news were
+   // never evaluated this bar at all (that is the entire reason this
+   // failure path exists). A downstream analysis grouping by either field
+   // would silently attribute a data-failure bar to a real mode/news
+   // state it never had, contaminating both. Both now emit their own
+   // schema's real "not evaluated" vocabulary (IMR_IntradayModeToString's
+   // own NONE for a gating/undefined mode, and "UNKNOWN" for news, added
+   // to TRADE_DECISION_SCHEMA.json/schema.py's own Literal alongside this
+   // fix) instead of fabricating a plausible-looking value.**
+   decision.intraday_mode = IMR_IntradayModeToString(INTRADAY_MODE_NONE);
    decision.regime = EnumToString(REGIME_TRANSITION_OR_UNCERTAIN);
    decision.regime_confidence = 0.0;
    decision.direction = "NONE";
    decision.strategy = "NoTrade";
    decision.setup = "data_failure";
-   decision.news_state = "CLEAR"; // unknown -- not evaluated this bar, never fabricate BLACKOUT
+   decision.news_state = "UNKNOWN";
    decision.session_state = "SESSION_TIME_REMAINING_UNKNOWN";
    decision.ea_version = THEMBA_EA_VERSION_STRING;
    decision.git_commit = THEMBA_EA_GIT_COMMIT;
@@ -2065,6 +2077,28 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    // incompatible with the confirmed mode (or whose mode is NONE --
    // gating override or undefined mode_score) is rejected outright, the
    // bar resolving to no-trade exactly like "no eligible candidate."**
+   //
+   // **Stated, honest deviation (Codex review finding, eighth round, P1
+   // finding 12): TASK-002_PHASE2_SPECIFICATION.md's approved pipeline is
+   // regime -> mode -> MODE-AWARE strategy generation (each family/mode
+   // pair using its own context/entry-timeframe table, a scalp-attempt/
+   // unchanged-level counter, and hysteresis confirmed across two closed
+   // M1 bars specifically) -> post-hoc consistency, as a final check only.
+   // This EA evaluates all five strategies against one shared M15 window,
+   // resolves the winner via StrategyRouter/ConflictResolver, and computes
+   // mode SEPARATELY -- mode then only VETOES the already-resolved winner
+   // by expected R here, exactly as IntradayModeRouter.mqh's own header
+   // already states for the hysteresis-cadence half of this same
+   // deviation. Reordering to genuine pre-strategy mode-aware generation
+   // (per-family/mode context tables, the scalp-attempt counter, a real
+   // M1-tick-independent hysteresis hook, and bounded bar cadence
+   // configurability instead of hard-coded formula weights) is a
+   // substantial, separate architectural task -- not attempted here under
+   // review-remediation time pressure, matching this project's own
+   // explicit precedent of stating a genuine deferral rather than
+   // silently reimplementing it as a smaller, misleadingly-labeled patch.
+   // The post-hoc veto below is real and does route decisions (it is not
+   // journal-only), it is simply not the approved STAGE ordering yet.**
    bool mode_consistent = false;
    if(has_decision)
      {
