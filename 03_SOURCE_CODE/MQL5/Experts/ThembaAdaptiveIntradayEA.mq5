@@ -59,6 +59,8 @@
 #include "../Include/ThembaEA/Risk/EquityPeakManager.mqh"
 #include "../Include/ThembaEA/Risk/DrawdownController.mqh"
 #include "../Include/ThembaEA/Risk/CooldownManager.mqh"
+#include "../Include/ThembaEA/Risk/NoStopGraceManager.mqh"
+#include "../Include/ThembaEA/Risk/DailyWeeklyBreachManager.mqh"
 #include "../Include/ThembaEA/Journal/DecisionJournal.mqh"
 #include "../Include/ThembaEA/Execution/IntradayCloseManager.mqh"
 #include "../Include/ThembaEA/Execution/OrderManager.mqh"
@@ -153,7 +155,12 @@ input bool   InpTimeStopUsesScalpMode      = true; // TASK-041: stand-in policy 
                                                      // for market_family before TASK-040 shipped it.
 
 input bool   InpEnableOrderSubmission     = false; // MASTER SAFETY TOGGLE — see file header
-input double InpRiskPercentTarget         = 0.3;   // per-trade target risk %, within section 8's
+// **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
+// 0.30% sat OUTSIDE section 8's own stated 0.25-0.50% metals/synthetics
+// range and above XAUUSD's own tighter 0.25% hard limit -- 0.25% is the one
+// value valid across EVERY listed asset category (XAUUSD 0.25%, other
+// metals/synthetics 0.25-0.50%), so it is the only safe blanket default.**
+input double InpRiskPercentTarget         = 0.25;  // per-trade target risk %, within section 8's
                                                     // stated 0.25-0.50% metals/synthetics range
 input double InpRiskCapPercent            = 1.0;   // hard per-trade/total-open-risk cap (section 8)
 input double InpDailyLossCapPercent       = 2.0;   // section 8 hard limit
@@ -164,6 +171,11 @@ input double InpStopFloorAtrMultiple      = 0.5;    // RiskManager default
 input double InpStopCapPricePercent       = 3.0;    // RiskManager default
 input double InpStopCapAtrMultiple        = 4.0;    // RiskManager default
 input double InpRiskCrossCheckTolerancePercent = 5.0; // section 8 default
+// **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
+// section 8's no-SL fallback worst-case formula and its mandatory-remediation
+// grace period -- see ComputeOwnMagicOpenRiskCash and EnforceNoStopGracePeriod.**
+input double InpNoStopWorstCaseATRMultiple = 10.0;  // section 8 no-SL fallback default
+input int    InpNoStopGraceSeconds        = 5;      // section 8: close immediately if unremediated
 
 CMarketData             g_md;
 CSymbolProfile          g_profile;
@@ -258,6 +270,21 @@ int OnInit()
      }
 
    g_symbol = (InpTradeSymbol == "") ? _Symbol : InpTradeSymbol;
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
+   // restart reconciliation for a daily/weekly breach closure that was still
+   // in flight when this instance last stopped -- per section 8, "on
+   // restart, a pending closure_pending record is the first thing
+   // reconciled." A single attempt here is enough to bring most restarts
+   // fully current; OnTick's own retry-until-closed loop (see OnTick) covers
+   // anything this attempt does not immediately finish.**
+   if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
+     {
+      string reconcile_reasons[];
+      bool reconciled = DWB_AttemptClosure(g_symbol, InpMagicNumber, reconcile_reasons);
+      PrintFormat("ThembaEA: restart reconciliation found a pending daily/weekly breach "
+                  "closure -- %s.", reconciled ? "fully closed" : "still retrying every tick");
+     }
 
    if(!g_profile.Load(g_symbol))
      {
@@ -421,6 +448,39 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       if(!HistoryDealSelect(trans.deal))
          return;
 
+      // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding
+      // 3): daily/weekly loss-cap breach detection, per section 8: "breach
+      // detection happens inside the OnTradeTransaction handler at the
+      // moment the filling deal is reported... the closure order is
+      // submitted synchronously from that same handler." Deliberately
+      // UNFILTERED by magic/symbol -- the caps are measured against total
+      // ACCOUNT equity change ("a loss is a loss regardless of which EA
+      // caused it"), so every deal on the account (this EA's own, a
+      // different EA's, or manual) can be the one that tips the account
+      // over the cap, and every one must be checked. ACCOUNT_EQUITY already
+      // reflects this deal's own fill by the time this handler runs. Skips
+      // if a closure is already pending -- OnTick's own retry loop is
+      // already driving that one to completion; re-arming here would just
+      // restate the same persisted flag redundantly.**
+      if(!DWB_IsClosurePending(g_symbol, InpMagicNumber))
+        {
+         double breach_daily_change, breach_weekly_change;
+         bool daily_breached  = g_daily_weekly_risk_state_valid &&
+                                 DWL_IsDailyLossBreached(InpDailyLossCapPercent, breach_daily_change);
+         bool weekly_breached = g_daily_weekly_risk_state_valid &&
+                                 DWL_IsWeeklyLossBreached(InpWeeklyLossCapPercent, breach_weekly_change);
+         if(daily_breached || weekly_breached)
+           {
+            string breach_reasons[];
+            bool breach_closed = DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_reasons);
+            PrintFormat("ThembaEA: daily/weekly loss cap breach detected on fill (deal #%I64u) -- "
+                        "daily_breached=%s weekly_breached=%s, closure %s.",
+                        trans.deal, daily_breached ? "true" : "false",
+                        weekly_breached ? "true" : "false",
+                        breach_closed ? "completed" : "pending (will retry every tick)");
+           }
+        }
+
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
 
       // **Fixed, 2026-07-22 (Codex review finding, seventh round, P1 finding
@@ -466,7 +526,14 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // life. Only clear it once the position is CONFIRMED gone.**
             ulong closed_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
             if(closed_position_id != 0 && !PositionStillOpenById(closed_position_id))
+              {
                PST_Clear(closed_position_id);
+               // **Added, 2026-07-22 (Codex review finding, eighth round, P0
+               // finding 3): stop tracking a confirmed-closed position's own
+               // no-SL grace-period timer too -- see NoStopGraceManager.mqh's
+               // own "clear once confirmed gone" contract.**
+               NSG_Clear(closed_position_id);
+              }
            }
          return;
         }
@@ -534,6 +601,27 @@ void OnTick()
       string closeReasons[];
       ICM_ExecuteIntradayClose(InpMagicNumber, closeReasons);
      }
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
+   // retry-until-closed for a daily/weekly loss-cap breach closure -- per
+   // section 8, "if the close fails (requote/error), the EA retries on
+   // every subsequent tick until confirmed closed." A fresh breach is armed
+   // from OnTradeTransaction (the required synchronous, same-handler
+   // submission); this only re-attempts a closure ALREADY marked pending,
+   // every tick, until DWB_AttemptClosure reports full success and clears
+   // the persisted record.**
+   if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
+     {
+      string breach_retry_reasons[];
+      DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_retry_reasons);
+     }
+
+   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
+   // section 8's no-SL fallback mandatory-remediation grace period -- runs
+   // every tick so a position that has been stopless for
+   // >= InpNoStopGraceSeconds is closed immediately (fail-closed), not just
+   // priced into ComputeOwnMagicOpenRiskCash's own risk figure.**
+   EnforceNoStopGracePeriod();
 
    // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
    // a persistent post-boundary entry lock. SN_IsPastIntradayBoundary() is a
@@ -774,6 +862,31 @@ bool ResolveNewsBlackout(const double current_atr, string &triggering_event_id_o
   }
 
 //+------------------------------------------------------------------+
+//| Best-effort current ATR for an arbitrary symbol (which may not be the  |
+//| chart symbol g_md is bound to), matching the Export_*.mq5 scripts' own    |
+//| iATR+CopyBuffer convention -- used only by the no-SL fallback below,          |
+//| where the stopless position may live on a different symbol than this              |
+//| instance's own g_symbol (own-magic risk is summed across every symbol,               |
+//| per this function's own header).                                                         |
+//+------------------------------------------------------------------+
+bool GetCurrentATRForSymbol(const string symbol, const ENUM_TIMEFRAMES timeframe,
+                             const int period, double &atr)
+  {
+   atr = 0.0;
+   int handle = iATR(symbol, timeframe, period);
+   if(handle == INVALID_HANDLE)
+      return false;
+   double buf[];
+   ArraySetAsSeries(buf, true);
+   bool ok = CopyBuffer(handle, 0, 0, 1, buf) > 0;
+   IndicatorRelease(handle);
+   if(!ok)
+      return false;
+   atr = buf[0];
+   return atr > 0.0;
+  }
+
+//+------------------------------------------------------------------+
 //| **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding    |
 //| 3):** sums risk_cash across every CURRENTLY OPEN position matching this      |
 //| EA's own InpMagicNumber, on ANY symbol -- per                                   |
@@ -786,12 +899,21 @@ bool ResolveNewsBlackout(const double current_atr, string &triggering_event_id_o
 //| is asking, so a single instance can already see every position sharing its                         |
 //| own magic number on a different symbol.                                                                |
 //|                                                                    |
-//| A position with no stop (POSITION_SL == 0) is skipped, not counted as        |
-//| zero risk -- this project's no-SL fallback risk formula                          |
-//| (`risk_cash_no_stop`, TASK-002 section 8) is a separate, not-yet-built              |
-//| path; skipping (rather than silently treating as zero) is a stated,                    |
-//| bounded limitation of this fix, not a claim that a stopless position is                    |
-//| risk-free.                                                                                     |
+//| **Extended, 2026-07-22 (Codex review finding, eighth round, P0 finding      |
+//| 3):** a position with no stop (POSITION_SL == 0) now applies section 8's          |
+//| no-SL fallback (`risk_cash_no_stop = ATR * InpNoStopWorstCaseATRMultiple *              |
+//| volume * tick_value / tick_size`) instead of being skipped -- skipping                       |
+//| understated total own-magic exposure whenever a stopless position existed                       |
+//| (EnforceNoStopGracePeriod, called every tick from OnTick, is what actually                          |
+//| CLOSES a stopless position once InpNoStopGraceSeconds elapses; this                                    |
+//| function only prices the risk it represents while it exists). Also now                                    |
+//| sums the worst-case risk_cash of every own-magic PENDING order,                                              |
+//| UNCONDITIONALLY (never max-of-two) -- per section 8's own correction: a                                        |
+//| hedging-only account allows opposite pending orders to BOTH independently                                          |
+//| fill and coexist, so there is no "only one can fill" assumption to justify                                            |
+//| taking the larger of two figures instead of their sum. A stopless pending                                                 |
+//| order is skipped here too (defensive completeness only -- the mandatory-                                                     |
+//| stop rule at submission should make this unreachable in practice).**                                                            |
 //+------------------------------------------------------------------+
 double ComputeOwnMagicOpenRiskCash()
   {
@@ -804,28 +926,127 @@ double ComputeOwnMagicOpenRiskCash()
       if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
          continue;
 
-      double sl = PositionGetDouble(POSITION_SL);
-      if(sl == 0.0)
-         continue; // no-SL fallback formula not yet built -- see header comment
-
       string pos_symbol = PositionGetString(POSITION_SYMBOL);
-      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
       double volume = PositionGetDouble(POSITION_VOLUME);
       bool pos_is_long = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
-
-      double loss_distance = pos_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
-      if(loss_distance <= 0.0)
-         continue;
 
       CSymbolProfile pos_profile;
       if(!pos_profile.Load(pos_symbol))
          continue;
 
+      double sl = PositionGetDouble(POSITION_SL);
       double risk_cash;
+      if(sl == 0.0)
+        {
+         double atr;
+         if(!GetCurrentATRForSymbol(pos_symbol, InpRegimeTimeframe, 14, atr))
+            continue; // ATR unavailable this tick -- EnforceNoStopGracePeriod
+                      // will still close this position once the grace period
+                      // elapses regardless of whether this pricing succeeds.
+         if(RM_ComputeNoStopRiskCash(pos_profile, atr, volume, risk_cash,
+                                      InpNoStopWorstCaseATRMultiple))
+            total += risk_cash;
+         continue;
+        }
+
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double loss_distance = pos_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
+      if(loss_distance <= 0.0)
+         continue;
+
       if(RM_ComputeRiskCash(pos_profile, loss_distance, volume, risk_cash))
          total += risk_cash;
      }
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber)
+         continue;
+
+      double sl = OrderGetDouble(ORDER_SL);
+      if(sl == 0.0)
+         continue; // mandatory-stop rule should make this unreachable — see header
+
+      string ord_symbol = OrderGetString(ORDER_SYMBOL);
+      double entry = OrderGetDouble(ORDER_PRICE_OPEN);
+      double volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      bool ord_is_long = (type == ORDER_TYPE_BUY || type == ORDER_TYPE_BUY_LIMIT ||
+                           type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_STOP_LIMIT);
+
+      double loss_distance = ord_is_long ? MathMax(0.0, entry - sl) : MathMax(0.0, sl - entry);
+      if(loss_distance <= 0.0)
+         continue;
+
+      CSymbolProfile ord_profile;
+      if(!ord_profile.Load(ord_symbol))
+         continue;
+
+      double risk_cash;
+      if(RM_ComputeRiskCash(ord_profile, loss_distance, volume, risk_cash))
+         total += risk_cash; // unconditional sum — see header comment
+     }
+
    return total;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
+//| 3):** section 8's no-SL fallback mandatory-remediation grace period,     |
+//| own-magic scope. Every own-magic position currently missing a stop is       |
+//| tracked (NoStopGraceManager.mqh, keyed by its durable position_id); once       |
+//| InpNoStopGraceSeconds have elapsed since it was FIRST observed stopless,          |
+//| it is closed immediately via OM_ClosePosition (fail-closed, per section              |
+//| 8's own wording, not a rejection this EA can defer). A position that              |
+//| regains a valid stop (a later ExitOrchestrator/manual action attaches                  |
+//| one) or that closes is un-tracked so it is never spuriously flagged                       |
+//| again.**                                                                                     |
+//+------------------------------------------------------------------+
+void EnforceNoStopGracePeriod()
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+
+      ulong position_id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      double sl = PositionGetDouble(POSITION_SL);
+      if(sl != 0.0)
+        {
+         NSG_Clear(position_id); // valid stop attached -- stop tracking
+         continue;
+        }
+
+      datetime first_seen = NSG_GetFirstSeen(position_id);
+      if(first_seen == 0)
+        {
+         NSG_SetFirstSeen(position_id, TimeCurrent());
+         continue; // just observed -- grace period starts now, not yet expired
+        }
+
+      if((TimeCurrent() - first_seen) < InpNoStopGraceSeconds)
+         continue; // still within the remediation grace period
+
+      string pos_symbol = PositionGetString(POSITION_SYMBOL);
+      PrintFormat("ThembaEA: position #%I64u (%s, position_id=%I64u) has had no stop for >= "
+                  "%d seconds -- closing immediately (fail-closed, section 8 no-SL grace period).",
+                  ticket, pos_symbol, position_id, InpNoStopGraceSeconds);
+
+      string close_rejection_reason;
+      if(!OM_ClosePosition(ticket, InpMagicNumber, close_rejection_reason))
+         PrintFormat("ThembaEA: no-SL grace-period close attempt for #%I64u failed (%s) -- "
+                     "will retry next tick.", ticket, close_rejection_reason);
+      // NSG_Clear happens once OnTradeTransaction confirms the position is
+      // actually gone (mirrors PST_Clear's own "clear once confirmed" rule,
+      // see OnTradeTransaction's DEAL_ENTRY_OUT handling) -- not here, since
+      // a requote/error leaves the position still open and still stopless.
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -909,6 +1130,19 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    if(already_open)
      {
       AppendReason(rejected, "position_already_open_no_add_on");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+
+   //--- 1b. Daily/weekly breach closure still in flight (Codex review -----
+   //--- finding, eighth round, P0 finding 3) ------------------------------
+   // Per section 8: a breach closure "blocks new entries on that symbol
+   // meanwhile" until DWB_AttemptClosure reports every own-magic position
+   // closed and every own-magic pending order cancelled.
+   if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
+     {
+      AppendReason(rejected, "daily_weekly_breach_closure_in_progress");
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
       return;
