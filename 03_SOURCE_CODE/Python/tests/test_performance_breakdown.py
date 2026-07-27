@@ -278,6 +278,69 @@ def test_compute_breakdown_accepts_unknown_news_state():
     assert result.iloc[0]["news_state"] == "UNKNOWN"
 
 
+def test_compute_breakdown_groups_canonicalized_news_state_not_raw_values():
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 18): validation normalized 'news_state' for its own vocabulary
+    check, but grouping used the ORIGINAL, un-normalized column -- the
+    review's own reproduced counterexample: "CLEAR", " clear " (whitespace
+    near-miss), and null previously produced THREE separate report groups.
+    "CLEAR" and " clear " both canonicalize to the SAME "CLEAR" group;
+    null canonicalizes to its own genuine "UNKNOWN" value (a real,
+    distinct producer token, not silently merged into CLEAR -- see
+    test_compute_breakdown_null_news_state_maps_to_unknown_not_a_separate_group
+    for that own contract) -- exactly two groups, never three."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2", "t3"],
+            "profit": [10.0, 20.0, 30.0],
+            "news_state": ["CLEAR", " clear ", None],
+        }
+    )
+    result = compute_breakdown(df, ["news_state"])
+    assert len(result) == 2, (
+        f"expected exactly two canonical groups (CLEAR from 'CLEAR'+'clear', UNKNOWN from "
+        f"null) -- never three -- got {len(result)}: {result['news_state'].tolist()}"
+    )
+    groups = dict(zip(result["news_state"], result["n_trades"]))
+    assert groups == {"CLEAR": 2, "UNKNOWN": 1}
+
+
+def test_compute_breakdown_null_news_state_maps_to_unknown_not_a_separate_group():
+    """A null news_state now canonicalizes to 'UNKNOWN' (the producer's own
+    real token for 'not evaluated'/'no claim') rather than remaining its
+    own separate, un-labelled group -- and is grouped together with rows
+    that are already explicitly 'UNKNOWN'."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1", "t2"],
+            "profit": [10.0, -5.0],
+            "news_state": [None, "UNKNOWN"],
+        }
+    )
+    result = compute_breakdown(df, ["news_state"])
+    assert len(result) == 1
+    assert result.iloc[0]["news_state"] == "UNKNOWN"
+    assert result.iloc[0]["n_trades"] == 2
+
+
+def test_compute_breakdown_does_not_mutate_callers_dataframe():
+    """Canonicalizing 'news_state' for grouping must operate on a copy --
+    the caller's own DataFrame (and its original, un-normalized values)
+    must be left untouched."""
+
+    df = pd.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "profit": [10.0],
+            "news_state": [" clear "],
+        }
+    )
+    compute_breakdown(df, ["news_state"])
+    assert df["news_state"].tolist() == [" clear "]
+
+
 def test_compute_breakdown_multi_dimension_hand_computed():
     result = compute_breakdown(_fixture_df(), ["strategy", "regime"])
     assert len(result) == 4  # every (strategy, regime) combination present

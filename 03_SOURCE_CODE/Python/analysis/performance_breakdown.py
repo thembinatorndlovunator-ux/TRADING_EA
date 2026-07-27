@@ -202,13 +202,25 @@ def derive_session_state(remaining_ratio: Optional[float]) -> str:
 
 
 def _normalize_news_state(value: object) -> object:
-    """Whitespace/case-normalizes a 'news_state' value for comparison
-    against the two canonical strings ONLY -- never mutates what is
-    actually grouped/returned to the caller, only what this consistency
-    check compares against. Non-string values (NaN, None) pass through
-    unchanged (blank/absent is this project's established "no claim"
-    convention, not a value to normalize)."""
+    """Whitespace/case-normalizes a 'news_state' value to one of the
+    canonical strings.
 
+    **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    18):** this previously only normalized for a COMPARISON check and
+    passed non-string values (NaN/None) through unchanged, on the theory
+    that blank/absent was this project's established "no claim"
+    convention -- stale reasoning now that the current producer/schema
+    (schema.TradeDecision.news_state) has an explicit, mandatory
+    "UNKNOWN" token for exactly this case (no legitimate reason remains
+    for a null news_state to mean anything different from UNKNOWN). A
+    null/NaN value now normalizes to "UNKNOWN" too, the SAME canonical
+    value ``compute_breakdown`` actually groups by (see that function's
+    own header) -- validation and grouping now agree on one
+    representation, never two.
+    """
+
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return _NEWS_STATE_UNKNOWN
     if not isinstance(value, str):
         return value
     return value.strip().upper()
@@ -252,10 +264,12 @@ def _assert_news_state_consistency(df: pd.DataFrame, path: object = "<in-memory>
 
     if "news_state" in df.columns:
         normalized = df["news_state"].apply(_normalize_news_state)
-        # Blank/absent (NaN/None) is this project's established "no claim"
-        # convention, not a value to validate against the vocabulary --
-        # only a genuinely present, non-canonical STRING is rejected.
-        out_of_vocab_mask = normalized.notna() & ~normalized.isin(_NEWS_STATE_CANONICAL_VALUES)
+        # **Fixed, 2026-07-27 Codex review finding (ninth round, P1 finding
+        # 18): a blank/absent (NaN/None) value now normalizes to "UNKNOWN"
+        # (see _normalize_news_state's own header), which IS one of the
+        # canonical values -- this mask no longer needs (or has) a
+        # separate null carve-out; every row is checked uniformly.
+        out_of_vocab_mask = ~normalized.isin(_NEWS_STATE_CANONICAL_VALUES)
         bad_values = df.loc[out_of_vocab_mask, "news_state"]
         if not bad_values.empty:
             raise CsvSchemaError(
@@ -357,6 +371,19 @@ def compute_breakdown(
     # corrupt any breakdown it appears in, not only one grouped by these
     # specific fields.
     _assert_news_state_consistency(df)
+
+    # **Fixed, 2026-07-27 Codex review finding (ninth round, P1 finding
+    # 18): validation above checked the CANONICALIZED news_state (via
+    # _normalize_news_state), but grouping below previously used the
+    # ORIGINAL, un-normalized column -- "CLEAR", " clear " (whitespace),
+    # and null all validate as the same canonical value but previously
+    # produced THREE separate report groups instead of one. The column
+    # actually grouped on is now replaced with its own canonicalized
+    # value (a copy -- the caller's own DataFrame is never mutated), so
+    # validation and grouping agree on exactly one representation.**
+    if "news_state" in df.columns:
+        df = df.copy()
+        df["news_state"] = df["news_state"].apply(_normalize_news_state)
 
     has_r_multiple = "r_multiple" in df.columns
 
