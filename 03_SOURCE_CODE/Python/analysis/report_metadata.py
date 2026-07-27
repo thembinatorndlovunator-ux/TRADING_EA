@@ -266,7 +266,7 @@ def publish_dataframe_csv_and_json(
                 summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
             )
         except BaseException:
-            if wrote_csv_this_call:
+            if wrote_csv_this_call and output_csv is not None:
                 try:
                     output_csv.unlink()
                 except OSError:

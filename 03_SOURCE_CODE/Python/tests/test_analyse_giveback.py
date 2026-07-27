@@ -938,8 +938,14 @@ def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
     not_a_repo.mkdir()
 
     with pytest.raises(GitMetadataError):
-        run(trades_path, bars_path, output_csv=out_csv, summary_json=summary_json, seed=1,
-            repo_path=not_a_repo)
+        run(
+            trades_path,
+            bars_path,
+            output_csv=out_csv,
+            summary_json=summary_json,
+            seed=1,
+            repo_path=not_a_repo,
+        )
 
     assert not out_csv.exists()
     assert not summary_json.exists()

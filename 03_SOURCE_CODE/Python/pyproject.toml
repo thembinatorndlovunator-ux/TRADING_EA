@@ -14,6 +14,21 @@ requires-python = ">=3.11"
 pythonpath = ["."]
 testpaths = ["tests"]
 
+# **Added, 2026-07-27 (Codex round-8 P1 finding 20): clean-kernel notebook
+# execution is a declared verification gate (see this task's own test plan)
+# but the exact tool/kernel to reproduce it was never written down anywhere
+# -- `nbconvert` itself was not even a pinned dependency (added to
+# requirements-lock.txt the same round). Every notebook under `notebooks/`
+# must execute with zero raised exceptions using the project's own
+# registered Jupyter kernel (NOT the bare system "python3" kernel, which has
+# no project dependencies installed) via:
+#   python -m nbconvert --to notebook --execute --inplace \
+#     --ExecutePreprocessor.kernel_name=themba-python-lab notebooks/<name>.ipynb
+# The "themba-python-lab" kernelspec itself (registered once via
+# `python -m ipykernel install --user --name themba-python-lab
+# --display-name "Themba Python Lab"`) points at this project's own
+# `.venv`, not a system Python.
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

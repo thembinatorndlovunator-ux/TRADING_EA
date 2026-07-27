@@ -340,9 +340,9 @@ def test_run_writes_no_files_when_git_metadata_capture_fails(tmp_path):
     journal_csv = tmp_path / "journal.csv"
     pd.DataFrame([{"order_id": "o1", "strategy": "SR_BOUNCE"}]).to_csv(journal_csv, index=False)
     trades_csv = tmp_path / "trades.csv"
-    pd.DataFrame(
-        [{"trade_id": "t1", "order_id": "o1", "deal_id": "d1", "profit": 30.0}]
-    ).to_csv(trades_csv, index=False)
+    pd.DataFrame([{"trade_id": "t1", "order_id": "o1", "deal_id": "d1", "profit": 30.0}]).to_csv(
+        trades_csv, index=False
+    )
 
     output_csv = tmp_path / "out" / "unified.csv"
     errors_json = tmp_path / "out" / "errors.json"

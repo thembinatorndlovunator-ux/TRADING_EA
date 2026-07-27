@@ -556,7 +556,9 @@ def test_transition_history_evicts_oldest_entry_at_capacity():
     assert len(history) == 2
 
     # A third transition exceeds capacity -- the OLDEST entry is evicted.
-    history.record_confirmed(3, Regime.TRENDING_DOWN, True)  # transition 3: COMPRESSION -> TRENDING_DOWN
+    history.record_confirmed(
+        3, Regime.TRENDING_DOWN, True
+    )  # transition 3: COMPRESSION -> TRENDING_DOWN
     assert len(history) == 2
     assert history.entries[0].from_regime == Regime.RANGING  # transition 1 evicted
     assert history.entries[0].to_regime == Regime.COMPRESSION

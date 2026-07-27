@@ -744,12 +744,10 @@ def run(
         # correctly flagging it) -- this is a coverage BOUND, not a claim
         # of uniform sampling.**
         "claimed_period_days": claimed_period_days,
-        "baseline_observed_days": (
-            baseline_period[1] - baseline_period[0]
-        ).total_seconds() / 86400.0,
-        "candidate_observed_days": (
-            candidate_period[1] - candidate_period[0]
-        ).total_seconds() / 86400.0,
+        "baseline_observed_days": (baseline_period[1] - baseline_period[0]).total_seconds()
+        / 86400.0,
+        "candidate_observed_days": (candidate_period[1] - candidate_period[0]).total_seconds()
+        / 86400.0,
         "baseline_period_coverage_ratio": (
             ((baseline_period[1] - baseline_period[0]).total_seconds() / 86400.0)
             / claimed_period_days

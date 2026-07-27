@@ -401,7 +401,7 @@ class RegimeTransitionHistory:
 
         if not has_confirmed:
             return  # nothing genuinely confirmed yet -- never seed from or transition from a
-                     # placeholder sentinel
+            # placeholder sentinel
 
         if (
             self._last_confirmed_regime is not None
