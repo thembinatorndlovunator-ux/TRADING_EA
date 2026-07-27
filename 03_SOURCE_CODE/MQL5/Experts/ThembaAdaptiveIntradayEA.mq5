@@ -731,6 +731,29 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       // bypassed the mandatory daily/weekly breach check entirely for that
       // fill event -- exactly the "fail-open on an unreadable component"
       // defect this same finding closes elsewhere in this function.**
+      // **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding
+      // 8): a cash-flow (deposit/withdrawal/credit) deal is itself a
+      // DEAL_ADD event reaching this same handler, but the daily/weekly
+      // baseline was previously only rebased for it on the NEXT completed
+      // bar's own EvaluateAndJournal cycle -- every deal in between
+      // (including this exact cash-flow deal) evaluated the breach check
+      // below against the STALE, pre-rebase baseline. A withdrawal can
+      // transiently look like a large trading loss against that stale
+      // baseline and force-close real exposure for no real reason
+      // (reviewer's own example: a 300 withdrawal against a 10,000
+      // baseline reads as -3% until rebased, after which it is 0%).
+      // DWL_ApplyCashFlowAdjustments is idempotent (a persisted cursor
+      // tracks the last-processed deal ticket) -- calling it again here,
+      // on every deal, is always safe and picks up THIS exact cash-flow
+      // deal (already in history by the time OnTradeTransaction fires)
+      // before the breach check below ever runs. Only ever moves
+      // g_daily_weekly_risk_state_valid to false on a failure here, never
+      // back to true -- that flag's own true state depends on the daily/
+      // weekly BASELINES too (EvaluateAndJournal's own per-bar check),
+      // which this call does not re-verify.**
+      if(!DWL_ApplyCashFlowAdjustments())
+         g_daily_weekly_risk_state_valid = false;
+
       if(!DWB_IsClosurePending(g_symbol, InpMagicNumber))
         {
          double breach_daily_change, breach_weekly_change;
