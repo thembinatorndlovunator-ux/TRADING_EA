@@ -344,21 +344,21 @@ round-2 doc-staleness findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — seven independent review rounds
-completed, an eighth in progress.** **Corrected, 2026-07-27 (Codex round-8
-P2 finding 22): this section previously said "six independent review
-rounds completed" and closed by saying "a seventh review round should be
-requested" -- both stale, since round 7 (2026-07-22) had already happened,
-returned 20 findings (10 P0/9 P1/1 P2), and been fully resolved (see
-`TASKS.md`'s own TASK-028 row and this file's own Round 7 history entry
-below, both already updated ahead of this paragraph). An eighth review
-round has since returned 22 further findings (10 P0/9 P1/2 P2) against
-that resolution; this session is actively resolving them now (P0s 1-10
-and P1s 11-20 resolved with regression tests per finding as of this
-paragraph's own edit; P1 finding 21 and P2 finding 22, this correction
-itself, remain in progress). This paragraph will be updated once more when
-round 8 is fully resolved, matching this section's own established
-per-round convention** (2026-07-21, 2026-07-22 x5; see
+**Codex, via `/code-review ultra` — eight independent review rounds
+completed.** **Corrected, 2026-07-27 (Codex round-8 P2 finding 22, updated
+in place a second time upon round 8's own full resolution): this section
+previously said "six independent review rounds completed" and closed by
+saying "a seventh review round should be requested" -- both stale, since
+round 7 (2026-07-22) had already happened, returned 20 findings (10 P0/9
+P1/1 P2), and been fully resolved. An eighth review round then returned 22
+further findings (10 P0/11 P1/1 P2) against that resolution -- all 22 are
+now resolved (see `TASKS.md`'s own TASK-028 row and this file's own Round
+8 history entry below), each with a real fix and either a regression test
+reproducing the exact reported counterexample or, for finding 21, a full,
+accurate, individually-hashed 41-target MetaEditor compile pass (see
+`09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt`).
+A ninth review round should be requested now that round 8 is fully
+resolved, not before.** (2026-07-21, 2026-07-22 x5; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
 round -- it always holds the LATEST round's text only, never a
 concatenation of all six; use the "Round 5"/"Round 6" entries in this
@@ -964,4 +964,55 @@ so this canonical file does not read as if history stopped at round 2.
   TASK-039's previously-unnamed remaining-chart-pattern owner under a
   concrete task number. See
   `09_HANDOVERS/claude_to_codex/TASK-028_round7_handover.md` for the full,
+  per-finding commit-by-commit account.
+
+- **Round 8 (2026-07-22), an eighth independent Codex review** (requested
+  per round 7's own handover, which stated it "is the request for the
+  next review round"): **22 findings (10 P0, 11 P1, 1 P2), disposition
+  CHANGES REQUESTED**, written to
+  `09_HANDOVERS/codex_to_claude/TASK-028_review.md` (commit `ed46ded`).
+  **All 22 are now resolved**, each with a real fix for its primary
+  defect, a regression test reproducing the exact reported counterexample
+  (or, for finding 21, a full 41-target MetaEditor compile pass in place
+  of a Python regression test), and either a clean MetaEditor compile (0
+  errors/0 warnings; full evidence retained at
+  `09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt`,
+  covering the EA, `EquityTickRecorder.mq5`, and all 39 `Test_*.mq5`/
+  `Export_*.mq5` scripts -- 41 targets, not just this round's own touched
+  files) or a passing Python test suite (718 passed as of the final
+  finding). All 10 P0s: account-mode guard exactly inverted (finding 1,
+  `af06cb8`), spread gate 20x too wide/unbounded (finding 2, `b719b94`),
+  incomplete hard-risk path (finding 3, `338bd3c`), risk-persistence
+  atomicity/fail-open (finding 4, `9e9dc1c`), durable-intent protocol gaps
+  (finding 5, `37b1f4d`), GlobalVariable key length overflow (finding 6,
+  `453cd77`), fail-open news-provider paths (finding 7, `29efe7e`), a
+  partial fill recorded as rejection instead of live exposure (finding 8,
+  `dd312cd`), a low-confidence bar not bypassing hysteresis immediately
+  (finding 9, `c534f85`), and the mandatory intraday close not guaranteed
+  across a no-tick boundary (finding 10, `95268e0`). All 11 P1s: order
+  identity/actual-fill journaling gaps (finding 11, `e352e7e`),
+  mode-routing's invalid NONE/UNKNOWN vocabulary (finding 12, `85dc773` --
+  the routing-ORDER half of this finding was explicitly, honestly deferred
+  as a substantial separate architectural task, not silently dropped, per
+  that commit's own message), position-lifecycle-unsafe close/cooldown
+  handling (finding 13, `b7c68c2`), stale sloped chart-pattern boundary
+  evaluation (finding 14, `b274a45`), csv_io.py's 500MB allocation causing
+  a pytest MemoryError (finding 15, `95cb591`), non-atomic error budgets
+  and multi-artifact report publication (finding 16, `87d93d1`), the
+  Python-vs-MQL5 pattern cross-check accepting a completely different
+  dataset (finding 17, `ead49e8`), equity analysis merging unrelated
+  runs/accounts into one artificial curve (finding 18, `79d21dd`),
+  several permissive/inconsistent schema and domain contracts including
+  a stale journal_reader.py assumption fixed as direct fallout (finding
+  19, `ca2cbe1`), two notebooks failing clean-kernel execution plus eight
+  files failing `ruff format --check` (finding 20, `47d4a56`), and
+  incomplete/misattributed MQL compile evidence including a
+  seven-commits-stale `THEMBA_EA_GIT_COMMIT` (finding 21, `c9b2298`,
+  resolved last so the compile evidence and build-commit macro reflect
+  the truly final round-8 state). The 1 P2 (finding 22, `990f32c`) is
+  this canonical-documentation-accuracy finding itself -- corrected
+  TASK-028_round7_handover.md's and this file's own "all resolved"
+  overclaims, `TASK-037`/`TASK-040`/`TASK-041`'s stale behavior
+  descriptions, and `TASKS.md`'s own stale counts/status mismatches. See
+  `09_HANDOVERS/claude_to_codex/TASK-028_round8_handover.md` for the full,
   per-finding commit-by-commit account.
