@@ -68,14 +68,14 @@ CSV_READ_CHUNK_BYTES = 1_048_576  # 1 MiB per chunk
 
 def _read_csv_bytes_checked(
     path: Path, required_columns: set[str], dtype: Optional[dict]
-) -> tuple[pd.DataFrame, bytes]:
+) -> tuple[pd.DataFrame, str]:
     """Shared core of ``read_csv_with_required_columns``/
     ``read_csv_with_required_columns_and_hash``: reads 'path' exactly
-    ONCE as raw bytes, then performs every check (duplicate header, parse,
-    required columns) against that SAME in-memory byte buffer -- never a
-    second file open. Returns (df, raw_bytes) so a caller wanting a
-    dataset-identity hash can hash 'raw_bytes' directly, guaranteed by
-    construction to be the exact bytes 'df' was parsed from.
+    ONCE as a byte stream, then performs every check (duplicate header,
+    parse, required columns) against that SAME data -- never a second
+    file open. Returns (df, file_sha256_hex), the hex SHA-256 digest
+    guaranteed by construction to be of the exact bytes 'df' was parsed
+    from.
 
     **Added, 2026-07-22 Codex review finding (fifth round): every prior
     caller of this module computed a dataset hash via a SEPARATE, LATER
@@ -86,7 +86,7 @@ def _read_csv_bytes_checked(
     the changed bytes, then restored the original bytes before a caller's
     own post-parse rehash ran -- the rehash matched the ORIGINAL hash
     despite the changed content being what was actually analyzed. Reading
-    once and hashing/parsing that same buffer makes this structurally
+    once and hashing/parsing that same data makes this structurally
     impossible: there is only one read, so there is no window for the
     file to change in between.**
 
@@ -104,14 +104,30 @@ def _read_csv_bytes_checked(
     MAX_CSV_FILE_BYTES + 1) call requested a huge buffer up front
     regardless of the file's real size, triggering a large allocation
     attempt (and real, reproducible MemoryError failures under pytest) for
-    even a tiny CSV -- see CSV_READ_CHUNK_BYTES' own header for the full
-    story. The read is now performed in bounded CSV_READ_CHUNK_BYTES (1
-    MiB) chunks: the running total is checked against the ceiling after
-    EVERY chunk, so a file that turns out to be oversized is rejected
-    (and stops reading) as soon as the ceiling is crossed, without ever
-    allocating a buffer anywhere near the full ceiling size for an
-    ordinary small file, and without reading the whole oversized file
-    first either.**
+    even a tiny CSV. Reading in bounded CSV_READ_CHUNK_BYTES (1 MiB)
+    chunks, checked against the ceiling after EVERY chunk, closed that.**
+
+    **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    19): a permitted near-500-MB file previously survived the chunked
+    ceiling check above only to then be held SIMULTANEOUSLY as a list of
+    chunks (never cleared), the joined ``raw_bytes``, a decoded Unicode
+    string, and one or more ``StringIO`` readers -- several live,
+    full-size copies of the same ~500 MB content at once, several times
+    the advertised ceiling, before pandas' own parser storage and the
+    resulting DataFrame are even counted. Every chunk is now written
+    directly into a ``tempfile.SpooledTemporaryFile`` (in-memory only up
+    to CSV_READ_CHUNK_BYTES; anything larger spills to a real temp file
+    on disk, per Python's own stdlib) while a SHA-256 hash is updated
+    INCREMENTALLY from the same chunk -- neither the raw bytes nor a
+    decoded string is ever materialized as one contiguous in-memory
+    object. pandas then reads directly from the spool (through one
+    ``TextIOWrapper``, reused for both the header-duplicate check and the
+    actual parse, never a separate ``StringIO`` copy of the text) --
+    pandas' own C parser streams from that file-like object incrementally,
+    the same way it would from a real file. The only remaining resident
+    copies are the spool itself (bounded, mostly on disk beyond 1 MiB) and
+    pandas' own DataFrame -- inherent to using pandas at all, not
+    duplicated by this function.**
     """
 
     file_size = path.stat().st_size
@@ -121,43 +137,54 @@ def _read_csv_bytes_checked(
             f"{MAX_CSV_FILE_BYTES} bytes -- refusing to load the whole file into memory"
         )
 
-    chunks: list[bytes] = []
-    total_read = 0
-    with path.open("rb") as fh:
-        while True:
-            chunk = fh.read(CSV_READ_CHUNK_BYTES)
-            if not chunk:
-                break
-            total_read += len(chunk)
-            if total_read > MAX_CSV_FILE_BYTES:
-                raise CsvSchemaError(
-                    f"{path}: file size (observed while reading) exceeds MAX_CSV_FILE_BYTES "
-                    f"ceiling of {MAX_CSV_FILE_BYTES} bytes -- refusing to load the rest into "
-                    f"memory"
-                )
-            chunks.append(chunk)
-    raw_bytes = b"".join(chunks)
-    # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
-    # leading BOM, identical to plain "utf-8" otherwise) without a second
-    # file open.
-    decoded = raw_bytes.decode("utf-8-sig")
+    hasher = hashlib.sha256()
+    spool = tempfile.SpooledTemporaryFile(max_size=CSV_READ_CHUNK_BYTES, mode="w+b")
+    try:
+        total_read = 0
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(CSV_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if total_read > MAX_CSV_FILE_BYTES:
+                    raise CsvSchemaError(
+                        f"{path}: file size (observed while reading) exceeds "
+                        f"MAX_CSV_FILE_BYTES ceiling of {MAX_CSV_FILE_BYTES} bytes -- refusing "
+                        f"to load the rest into memory"
+                    )
+                hasher.update(chunk)
+                spool.write(chunk)
 
-    raw_headers = next(csv.reader(io.StringIO(decoded, newline="")), [])
-    seen: set[str] = set()
-    dupe_set: set[str] = set()
-    for h in raw_headers:
-        if h in seen:
-            dupe_set.add(h)
-        seen.add(h)
-    dupes = sorted(dupe_set)
-    if dupes:
-        raise CsvSchemaError(f"{path}: duplicate column header(s) in raw file: {dupes}")
+        spool.seek(0)
+        # Mirrors "utf-8-sig" text-mode decoding (transparently strips a
+        # leading BOM, identical to plain "utf-8" otherwise) -- one
+        # TextIOWrapper reused for both checks below, never a second
+        # in-memory text copy.
+        text_stream = io.TextIOWrapper(spool, encoding="utf-8-sig", newline="")
 
-    df = pd.read_csv(io.StringIO(decoded), dtype=dtype)
-    missing = required_columns - set(df.columns)
-    if missing:
-        raise CsvSchemaError(f"{path}: missing required columns: {sorted(missing)}")
-    return df, raw_bytes
+        raw_headers = next(csv.reader(text_stream), [])
+        seen: set[str] = set()
+        dupe_set: set[str] = set()
+        for h in raw_headers:
+            if h in seen:
+                dupe_set.add(h)
+            seen.add(h)
+        dupes = sorted(dupe_set)
+        if dupes:
+            raise CsvSchemaError(f"{path}: duplicate column header(s) in raw file: {dupes}")
+
+        text_stream.seek(0)
+        df = pd.read_csv(text_stream, dtype=dtype)
+        missing = required_columns - set(df.columns)
+        if missing:
+            raise CsvSchemaError(f"{path}: missing required columns: {sorted(missing)}")
+        return df, hasher.hexdigest()
+    finally:
+        # Closes the TextIOWrapper (if created) and, through it, the
+        # underlying spool -- a bare spool.close() after text_stream
+        # already closed it would be a harmless no-op either way.
+        spool.close()
 
 
 def read_csv_with_required_columns(
@@ -199,7 +226,7 @@ def read_csv_with_required_columns(
     this was parsed from.
     """
 
-    df, _raw_bytes = _read_csv_bytes_checked(path, required_columns, dtype)
+    df, _file_sha256_hex = _read_csv_bytes_checked(path, required_columns, dtype)
     return df
 
 
@@ -218,8 +245,8 @@ def read_csv_with_required_columns_and_hash(
     **Added, 2026-07-22 Codex review finding (fifth round).**
     """
 
-    df, raw_bytes = _read_csv_bytes_checked(path, required_columns, dtype)
-    return df, hashlib.sha256(raw_bytes).hexdigest()
+    df, file_sha256_hex = _read_csv_bytes_checked(path, required_columns, dtype)
+    return df, file_sha256_hex
 
 
 def _same_file_identity(a: Path, b: Path) -> bool:

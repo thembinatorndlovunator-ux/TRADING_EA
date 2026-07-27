@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -163,6 +164,71 @@ def test_read_never_requests_a_single_huge_buffer_against_the_real_default_ceili
         f"bounded to CSV_READ_CHUNK_BYTES ({csv_io_module.CSV_READ_CHUNK_BYTES}), never anywhere "
         f"near MAX_CSV_FILE_BYTES ({csv_io_module.MAX_CSV_FILE_BYTES})"
     )
+
+
+def test_large_csv_spools_to_disk_not_one_in_memory_buffer(tmp_path):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 19): a permitted near-500-MB CSV previously survived the size
+    ceiling only to be held simultaneously as a list of chunks (never
+    cleared), the joined raw bytes, a decoded Unicode string, and one or
+    more StringIO readers -- several full-size copies of the same content
+    at once, several times the advertised ceiling. Reading is now spooled
+    via tempfile.SpooledTemporaryFile (in-memory only up to
+    CSV_READ_CHUNK_BYTES, spilling to a real temp file on disk beyond
+    that) -- this proves the spill actually happens for a file larger
+    than that threshold, i.e. content is NOT simply accumulated as one
+    growing in-memory Python object regardless of size."""
+
+    import analysis.csv_io as csv_io_module
+
+    captured_spools: list = []
+    real_spooled_temp_file = tempfile.SpooledTemporaryFile
+
+    class _CapturingSpooledTemporaryFile(real_spooled_temp_file):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            captured_spools.append(self)
+
+    monkeypatch_target = "analysis.csv_io.tempfile.SpooledTemporaryFile"
+    import unittest.mock as mock
+
+    with mock.patch(monkeypatch_target, _CapturingSpooledTemporaryFile):
+        path = tmp_path / "trades.csv"
+        # Larger than CSV_READ_CHUNK_BYTES (1 MiB) -- must roll over to disk.
+        n_rows = 70_000
+        with path.open("w", encoding="utf-8") as fh:
+            fh.write("trade_id,profit\n")
+            for i in range(n_rows):
+                fh.write(f"t{i:08d},{i * 1.5}\n")
+        assert path.stat().st_size > csv_io_module.CSV_READ_CHUNK_BYTES
+
+        df = read_csv_with_required_columns(path, {"trade_id", "profit"}, dtype={"trade_id": str})
+
+    assert len(df) == n_rows
+    assert len(captured_spools) == 1
+    # SpooledTemporaryFile exposes '_rolled' (CPython stdlib, stable
+    # across the versions this project targets) -- True once content
+    # has spilled past 'max_size' to a real file on disk.
+    assert captured_spools[0]._rolled is True, (
+        "expected the spool to have rolled over to a real temp file on disk for a file larger "
+        "than CSV_READ_CHUNK_BYTES -- content is not bounded if it stays memory-resident "
+        "regardless of size"
+    )
+
+
+def test_read_csv_with_required_columns_and_hash_matches_plain_sha256(tmp_path):
+    """The incrementally-computed hash (Codex round-9 P1 finding 19's own
+    streaming rewrite) must still equal a plain, whole-file SHA-256 --
+    correctness of the incremental computation, not just its memory
+    profile."""
+
+    import hashlib
+
+    path = tmp_path / "trades.csv"
+    path.write_text("trade_id,profit\nt1,10.0\nt2,-5.0\n", encoding="utf-8")
+
+    _df, file_hash = read_csv_with_required_columns_and_hash(path, {"trade_id", "profit"})
+    assert file_hash == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_quoted_multiline_duplicate_header_rejected(tmp_path):
