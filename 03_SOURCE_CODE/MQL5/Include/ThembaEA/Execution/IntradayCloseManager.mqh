@@ -270,6 +270,50 @@ bool ICM_IsCloseReconciliationPending(const string symbol, const long magic)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 6):    |
+//| true iff 'magic' currently owns ANY open position or pending order       |
+//| whose own open time predates TODAY's own daily boundary (server          |
+//| midnight) -- i.e. exposure that should already have been closed by an    |
+//| EARLIER day's own boundary but was not, because this EA was not running  |
+//| (or not ticking) through that entire boundary-crossing period. Closes    |
+//| the review's own reported gap: "if the terminal is offline before 23:45  |
+//| and restarts after midnight, no prior-day record exists and today's      |
+//| SN_IsPastIntradayBoundary() is false; the missed close cannot be         |
+//| reconstructed" -- this reconstructs it directly from OWNED EXPOSURE      |
+//| itself, independent of whether any persisted pending-close record was    |
+//| ever armed (it could not have been, if this EA was never running to     |
+//| arm it).                                                                  |
+//+------------------------------------------------------------------+
+bool ICM_HasExposureFromBeforeToday(const long magic)
+  {
+   datetime today_start = SN_CurrentDailyBoundary();
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magic)
+         continue;
+      if((datetime)PositionGetInteger(POSITION_TIME) < today_start)
+         return true;
+     }
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(OrderGetInteger(ORDER_MAGIC) != magic)
+         continue;
+      if((datetime)OrderGetInteger(ORDER_TIME_SETUP) < today_start)
+         return true;
+     }
+
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
 //| 10):** the full persisted-due/pending intraday-close check+execute,          |
 //| callable identically from OnInit (restart reconciliation -- "reconcile          |
@@ -285,18 +329,51 @@ bool ICM_IsCloseReconciliationPending(const string symbol, const long magic)
 //| overnight gap). Only clears the record once ICM_ExecuteIntradayClose                             |
 //| reports EVERY own-magic position closed and EVERY own-magic pending                                 |
 //| order cancelled.                                                                                        |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 6),    |
+//| two defects:**                                                            |
+//| 1. This previously discarded ICM_SetPendingCloseDate's own write success   |
+//|    -- if that persist failed, ICM_GetPendingCloseDate kept reading its     |
+//|    OLD (unset) value, ICM_IsCloseReconciliationPending then read false,    |
+//|    and this function returned "nothing owed" WITHOUT ever attempting the   |
+//|    close. 'boundary_reached_this_call' now tracks whether today's own      |
+//|    boundary was JUST observed reached on THIS call, regardless of          |
+//|    whether the persist succeeded, and still proceeds to attempt the       |
+//|    close in that case.                                                    |
+//| 2. ICM_HasExposureFromBeforeToday() is now also checked -- reconstructs    |
+//|    a missed boundary directly from owned exposure for the case where       |
+//|    this EA was not even running through an entire boundary-crossing        |
+//|    period (see that function's own header), which no persisted record     |
+//|    could ever have captured in the first place.**                         |
 //+------------------------------------------------------------------+
 bool ICM_ReconcileIntradayClose(const string symbol, const long magic,
                                  const int boundary_hour = 23, const int boundary_minute = 45)
   {
+   bool boundary_reached_this_call = false;
    if(SN_IsPastIntradayBoundary(boundary_hour, boundary_minute))
      {
       datetime todays_boundary = SN_CurrentDailyBoundary();
       if(ICM_GetPendingCloseDate(symbol, magic) != todays_boundary)
-         ICM_SetPendingCloseDate(symbol, magic, todays_boundary);
+        {
+         boundary_reached_this_call = true;
+         if(!ICM_SetPendingCloseDate(symbol, magic, todays_boundary))
+            PrintFormat("ThembaEA: IntradayCloseManager failed to persist the pending-close date "
+                        "for '%s' magic %I64d -- proceeding with the close attempt anyway this "
+                        "call (a crash before this succeeds would not be resumed correctly on "
+                        "restart, but this session's own retry loop is not blocked by it).",
+                        symbol, magic);
+        }
      }
 
-   if(!ICM_IsCloseReconciliationPending(symbol, magic))
+   bool stale_exposure = ICM_HasExposureFromBeforeToday(magic);
+   if(stale_exposure)
+      PrintFormat("ThembaEA: IntradayCloseManager found own-magic exposure from before today's "
+                  "own boundary for '%s' magic %I64d (reconstructed from owned positions/orders, "
+                  "not a persisted record) -- a boundary was likely missed while this EA was not "
+                  "running; attempting closure now.", symbol, magic);
+
+   if(!ICM_IsCloseReconciliationPending(symbol, magic) && !boundary_reached_this_call &&
+      !stale_exposure)
       return true; // nothing owed right now
 
    string reasons[];

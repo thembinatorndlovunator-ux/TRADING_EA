@@ -157,6 +157,19 @@ void OnStart()
       Check("exactly one owned position exists after opening",
             CountOwnedPositions(InpTestMagic) == 1);
 
+      //--- 2b. **Codex review finding, ninth round, P0 finding 6**: a ------
+      //--- position opened JUST NOW (today) must NOT be flagged as ---------
+      //--- pre-today stale exposure -- ICM_HasExposureFromBeforeToday's ----
+      //--- own POSITIVE case (a position genuinely opened on an EARLIER ----
+      //--- day) cannot be forced from a script (POSITION_TIME is assigned --
+      //--- by the broker at open time, not settable), so it remains part --
+      //--- of this project's batched runtime-verification backlog, same --
+      //--- as every other broker-timing-dependent path -- but this NEGATIVE
+      //--- case is real, verifiable evidence that the check does not -------
+      //--- over-fire on ordinary same-day exposure. -------------------------
+      Check("a position opened just now is NOT reported as exposure from before today",
+            ICM_HasExposureFromBeforeToday(InpTestMagic) == false);
+
       //--- 3. Open a far-away pending order under the same magic --------
       double point = profile.point;
       double pending_price = ask - 500 * point; // far from market, should

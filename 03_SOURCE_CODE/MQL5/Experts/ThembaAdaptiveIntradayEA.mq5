@@ -228,6 +228,12 @@ bool                    g_daily_weekly_risk_state_valid = false;
 // g_daily_weekly_risk_state_valid above.
 bool                    g_peak_state_valid = false;
 
+// **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 6):**
+// tracks whether EventSetTimer(30) (armed at OnInit) is currently active --
+// see OnInit's own comment for why its return value must not be discarded.
+// OnTick retries arming it every tick while this is false.
+bool                    g_timer_armed = false;
+
 int OnInit()
   {
    // **Superseded, 2026-07-27 (Codex review finding, ninth round, P0 finding
@@ -443,8 +449,21 @@ int OnInit()
    // first tick would silently reset SN_IsPastIntradayBoundary() to false
    // for the new day, discarding the unfulfilled obligation. 30 seconds is
    // frequent enough to close well within the boundary window without
-   // meaningful overhead.**
-   EventSetTimer(30);
+   // meaningful overhead.
+   //
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 6):
+   // this return value was previously discarded -- EventSetTimer can fail
+   // (e.g. transient resource exhaustion), which would silently remove the
+   // whole no-tick guarantee this fix exists for, with no record of it
+   // having happened. g_timer_armed now tracks the outcome; a failure is
+   // logged loudly and OnTick retries EventSetTimer on every tick until it
+   // succeeds (a cheap, idempotent registration call), so the guarantee is
+   // restored as soon as possible instead of never.**
+   g_timer_armed = EventSetTimer(30);
+   if(!g_timer_armed)
+      PrintFormat("ThembaEA: CRITICAL -- EventSetTimer(30) FAILED at OnInit (error=%d). The "
+                  "no-tick mandatory-close guarantee is NOT currently active; OnTick will retry "
+                  "arming the timer every tick until it succeeds.", GetLastError());
 
    if(InpEnableOrderSubmission)
       PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
@@ -992,6 +1011,14 @@ void OnTimer()
 
 void OnTick()
   {
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 6):
+   // retry arming the no-tick-boundary timer every tick until it succeeds --
+   // see OnInit's own comment for why EventSetTimer's return value must not
+   // be discarded. A cheap, idempotent registration call; harmless to retry
+   // even if the underlying cause of an earlier failure has not changed.
+   if(!g_timer_armed)
+      g_timer_armed = EventSetTimer(30);
+
    // **Reordered, 2026-07-22 (Codex review finding, seventh round, P0 finding
    // 8): mandatory boundary protection now runs FIRST, on EVERY tick, ahead
    // of any entry evaluation or position management -- previously it ran

@@ -53,8 +53,31 @@ string DWB_Key(const string symbol, const long magic)
    return KE_InstanceNamespace("ThembaEA_DWB", symbol, magic) + "__pending";
   }
 
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 6):** in-memory fallback, belt-and-suspenders alongside the persisted        |
+//| GlobalVariable below -- matching IntradayCloseManager.mqh's own                 |
+//| g_icm_close_done_today precedent for the identical class of problem.               |
+//| Closes the gap the review reported: if DWB_SetClosurePending(true)                     |
+//| itself fails to persist (a real GlobalVariableSet failure, not merely a                    |
+//| hypothetical), DWB_IsClosurePending() previously had NO other signal to                        |
+//| fall back on and read false -- so OnTick's own every-tick retry loop         |
+//| (see ThembaAdaptiveIntradayEA.mq5's own OnTick) would never call             |
+//| DWB_AttemptClosure again until an ENTIRELY SEPARATE deal happened to         |
+//| re-detect the breach. This flag is armed unconditionally the instant a       |
+//| closure is first attempted (before the persisted write is even tried)       |
+//| and cleared ONLY on a confirmed full success, so an in-session retry         |
+//| loop keeps working regardless of the persisted write's own success.         |
+//| Does not survive a restart (that residual gap needs the persisted flag      |
+//| to have succeeded, or exposure would need to be reconstructed the same      |
+//| way finding 6's other half does for IntradayCloseManager.mqh).              |
+//+------------------------------------------------------------------+
+bool g_dwb_closure_owed_inmemory = false;
+
 bool DWB_IsClosurePending(const string symbol, const long magic)
   {
+   if(g_dwb_closure_owed_inmemory)
+      return true;
    string key = DWB_Key(symbol, magic);
    if(!GlobalVariableCheck(key))
       return false;
@@ -93,6 +116,12 @@ bool DWB_SetClosurePending(const string symbol, const long magic, const bool pen
 bool DWB_AttemptClosure(const string symbol, const long magic, string &reasons[])
   {
    ArrayFree(reasons);
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 6):
+   // arm the in-memory fallback FIRST, unconditionally -- see
+   // g_dwb_closure_owed_inmemory's own header for the exact retry-loop gap
+   // this closes regardless of whether the persisted write below succeeds.**
+   g_dwb_closure_owed_inmemory = true;
+
    // Persisted BEFORE the close order submits, per section 8 -- proceeds to
    // close/cancel regardless of this write's own outcome (closing real
    // exposure now takes priority over the restart-recovery record of doing
@@ -100,8 +129,9 @@ bool DWB_AttemptClosure(const string symbol, const long magic, string &reasons[]
    // exact closure attempt would not be resumed correctly on restart.
    if(!DWB_SetClosurePending(symbol, magic, true))
       PrintFormat("ThembaEA: failed to persist closure_pending=true for '%s' magic %I64d before "
-                  "closing -- proceeding with the close anyway, but a crash during it would not "
-                  "be resumed correctly on restart.", symbol, magic);
+                  "closing -- proceeding with the close anyway (the in-memory fallback still "
+                  "guarantees this session's own retry loop keeps working), but a crash during it "
+                  "would not be resumed correctly on restart.", symbol, magic);
 
    string position_reasons[];
    string order_reasons[];
@@ -115,7 +145,10 @@ bool DWB_AttemptClosure(const string symbol, const long magic, string &reasons[]
 
    bool all_ok = positions_ok && orders_ok;
    if(all_ok)
+     {
       DWB_SetClosurePending(symbol, magic, false); // confirmed fully closed -- clear
+      g_dwb_closure_owed_inmemory = false; // clear ONLY on confirmed full success
+     }
 
    return all_ok;
   }
