@@ -29,18 +29,29 @@ was therefore the fastest way to unblock two open items at once.
    no recognizable keyword.
 2. **`intraday_mode`**: a first-pass SCALP/DAY_TRADE classifier using the
    section-5 inputs that are already computable from this project's
-   existing modules: regime, ATR percentile (`E`), trend persistence
-   (`T_final`), current-bar-vs-average range, spread/ATR, session time
-   remaining (`SessionManager.mqh`'s `SN_GetSessionMinutesRemaining`,
-   already built, previously unwired for this purpose), news proximity,
-   and — only once a decision has been routed this bar — the winning
-   candidate's own composite score as a coarse proxy for "pattern
-   quality"/"expected reward-to-risk" (neither is independently available
-   before order sizing). Section 5 does not specify exact weights anywhere
-   in this project's documents, so `IMR_ClassifyMode`'s scoring is a
-   stated, documented interpretation choice, not a spec-verbatim formula —
-   flagged in the module's own header exactly like
-   `MarketRegimeEngine.mqh`'s "interpretation choice" notes.
+   existing modules: regime persistence, ATR percentile (`E`),
+   current-bar-vs-average range, and session time remaining
+   (`SessionManager.mqh`'s `SN_GetSessionMinutesRemaining`, already built,
+   previously unwired for this purpose). Section 5 does not specify exact
+   weights anywhere in this project's documents, so `IMR_ComputeModeScore`'s
+   scoring is a stated, documented interpretation choice, not a
+   spec-verbatim formula — flagged in the module's own header exactly like
+   `MarketRegimeEngine.mqh`'s "interpretation choice" notes. **Corrected,
+   2026-07-27 (Codex round-8 P2 finding 22): this item previously said the
+   mode score also used "only once a decision has been routed this bar --
+   the winning candidate's own composite score," a genuine dependency on
+   the resolved winner that Codex round-8's own P1 finding 12 flagged as
+   making mode computation post-hoc rather than an independent,
+   regime-driven classification. `IMR_ComputeModeScore`'s four components
+   today are exactly the regime/ATR/range/session ones listed above, with
+   no `winner_score` input at all; a SEPARATE, later, explicitly-named
+   post-hoc consistency stage (TASK-002 section 1 stage 4, added round 7's
+   P0 finding 6) still vetoes the routed winner by expected R once mode is
+   known -- that veto stage is real and intentional, but the mode SCORE
+   itself no longer depends on the winner. Reordering this veto stage into
+   genuinely mode-AWARE strategy generation (this item's own remaining
+   scope, see Specification item 4) is still not done -- named there
+   honestly, not claimed complete here.**
 3. **Explicitly NOT done, a genuine named gap, not silently skipped**:
    section 5's "historical performance of the setup in the same
    symbol/regime, only after enough samples" input needs a persistent
@@ -85,10 +96,17 @@ No file under `01_BASELINE/` may be modified.
 - Historical-performance-conditioned mode scoring (Specification item 3)
   — TASK-032's territory, needs infra that doesn't exist yet.
 - Populating `DecisionJournal.mqh`'s own `market_family`/`intraday_mode`
-  schema fields — `STradeDecision` has no such fields yet; that remains
-  TASK-036's job. This task journals both via the existing free-form
-  `reasons_passed_json`/`reasons_rejected_json` string arrays in the
-  meantime (same interim pattern TASK-034 used for its own gate reasons).
+  schema fields was originally out of scope for this task (`STradeDecision`
+  had no such fields yet at the time this task was written; that was
+  TASK-036's job, journalling both via the existing free-form
+  `reasons_passed_json`/`reasons_rejected_json` string arrays as an interim
+  measure). **Corrected, 2026-07-27 (Codex round-8 P2 finding 22): TASK-036
+  has since shipped both real fields on `STradeDecision`
+  (`decision.market_family`/`decision.intraday_mode`, populated directly in
+  `EvaluateAndJournal`, matching `analysis/schema.py`'s own already-updated
+  `Literal`s) -- this bullet is retained only as a historical record of the
+  scope boundary at the time this task was written, not a statement of
+  current behavior.**
 
 ## Test plan
 
@@ -98,12 +116,15 @@ No file under `01_BASELINE/` may be modified.
 2. Hand-verified test script: `market_family` classification returns one
    of the four named values for the current chart's real symbol and never
    crashes; every enum value round-trips through `IMR_MarketFamilyToString`.
-3. Hand-verified test script: `IMR_ClassifyMode` — a strong-trend/high-
-   persistence/plenty-of-session-left case classifies DAY_TRADE; an
-   expansion/wide-bar/imminent-news/little-session-left case classifies
-   SCALP; a high-quality routed decision (`winner_score>=70`) raises the
-   day-trade score relative to an otherwise-identical no-decision case; a
-   low-quality decision (`winner_score<70`) gets no such nudge.
+3. Hand-verified test script: **corrected, 2026-07-27 (Codex round-8 P2
+   finding 22): this item previously named `IMR_ClassifyMode` and a
+   `winner_score`-dependent scenario -- both stale since round 8's own P1
+   finding 12 decoupled mode scoring from the routed winner (see
+   Specification item 2's own correction above); the function under test
+   today is `IMR_ComputeModeScore`/`IMR_ApplyModeHysteresis`, with no
+   `winner_score` input at all.** A strong-trend/high-persistence/plenty-
+   of-session-left case classifies DAY_TRADE; an expansion/wide-bar/
+   imminent-news/little-session-left case classifies SCALP.
 4. Runtime verification (attach to a real/demo chart, confirm
    `market_family`/`intraday_mode` values are sane for the actual traded
    symbol) — still batched project-wide.
@@ -111,8 +132,14 @@ No file under `01_BASELINE/` may be modified.
 ## Acceptance criteria
 
 - [x] `IMR_ClassifyMarketFamily` built, tested, wired at `OnInit`.
-- [x] `IMR_ClassifyMode` built, tested, wired into `EvaluateAndJournal`
-      (journal-only, per Specification item 4's stated scope boundary).
+- [x] `IMR_ComputeModeScore`/`IMR_ApplyModeHysteresis` (renamed/restructured
+      from this row's original `IMR_ClassifyMode`, corrected 2026-07-27,
+      Codex round-8 P2 finding 22 -- see Specification item 2's own
+      correction) built, tested, wired into `EvaluateAndJournal` (a
+      later post-hoc consistency stage now also vetoes the routed winner
+      by mode, per Specification item 2's correction; behavior-wiring
+      into strategy generation itself remains Specification item 4's
+      stated, deferred scope boundary).
 - [x] `TASK-034_LIVE_SAFETY_WIRING.md`'s previously-blocked synthetic-bypass
       acceptance item is unblocked: `ResolveNewsBlackout()` now auto-selects
       `NullNewsProvider` semantics for `MARKET_FAMILY_SYNTHETIC_INDEX`,

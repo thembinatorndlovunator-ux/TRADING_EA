@@ -294,18 +294,31 @@ own desktop MT5 session can do the latter.**
       not-yet-built export (see TASK-039's row in `TASKS.md` for the
       chart-pattern side's own status).**
 - [x] (built, not yet run/labelled) Predicted-regime export + labelling
-      protocol -- `Export_PredictedRegime.mq5` runs
-      `MarketRegimeEngine.mqh`'s own `MRE_ClassifyArray` (the live
-      classifier's pure core, not a reimplementation) against real
-      historical bars; `REGIME_LABELLING_PROTOCOL.md` defines the exact
-      human hand-labelling protocol and join for the independent `actual`
-      side. **The hand-labelling itself is a human task this sandbox
-      cannot perform.**
+      protocol -- **corrected, 2026-07-27 (Codex round-8 P2 finding 22):
+      this bullet previously described `Export_PredictedRegime.mq5` as
+      running only `MarketRegimeEngine.mqh`'s raw, stateless
+      `MRE_ClassifyArray` -- stale since round 7's own P1 finding 12
+      rewrote it as a two-pass chronological replay of the FULL gated
+      state machine (low-confidence override, historically-real
+      news-blackout check via `MT5CalendarProvider.mqh`, hysteresis), not
+      the raw classifier alone (the spread/liquidity gate remains a
+      stated, bounded limitation -- no historical spread series exists).**
+      `REGIME_LABELLING_PROTOCOL.md` defines the exact human hand-labelling
+      protocol and join for the independent `actual` side. **The
+      hand-labelling itself is a human task this sandbox cannot perform.**
 - [x] (documented, not verified against real data) Net-P/L aggregation
-      formula -- `net = profit + commission + swap + fee` per closing
-      deal, implemented and commented in `Export_TradeHistory.mq5`.
-      **Verifying it against a real MT5 Deals export remains the user's
-      own step.**
+      formula -- **corrected, 2026-07-27 (Codex round-8 P2 finding 22):
+      this bullet previously said `net = profit + commission + swap + fee`
+      per closing deal -- stale since round 7's own P0 finding 9 extracted
+      `TradeHistoryAggregator.mqh` (`TA_ProcessDeal`), which tracks each
+      `position_id` as a running leg and prorates ENTRY-side cost
+      (commission+swap+fee accumulated across potentially multiple `IN`
+      fills) across each partial close, not just the closing deal's own
+      cost: `row.profit = deal.raw_profit + deal_cost + entry_cost_alloc`
+      where `entry_cost_alloc = entry_cost_total * (close_volume /
+      entry_volume_total)`.** Implemented and commented in
+      `Export_TradeHistory.mq5`/`TradeHistoryAggregator.mqh`. **Verifying
+      it against a real MT5 Deals export remains the user's own step.**
 - [ ] **Explicitly deferred this sprint, per a scope decision matching
       TASK-041's own precedent (not silently skipped):** OHLC/close-bar +
       per-trade R-path export (Specification item 6), cost-scenario

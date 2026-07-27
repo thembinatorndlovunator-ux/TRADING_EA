@@ -23,12 +23,21 @@ directive called for.
 
 That review (round 7) returned **20 findings — 10 P0, 9 P1, 1 P2 —
 disposition CHANGES REQUESTED**, written to
-`09_HANDOVERS/codex_to_claude/TASK-028_review.md`. **All 20 are now
-resolved.** Every finding got: a real fix (never a workaround or a
-silenced check), a regression test reproducing the EXACT counterexample
-the review reported, and either a clean MetaEditor compile (0 errors, 0
-warnings) or a passing Python test run, verified before committing —
-matching this project's own established per-round discipline exactly.
+`09_HANDOVERS/codex_to_claude/TASK-028_review.md`. **Corrected, 2026-07-27
+(Codex round-8 P2 finding 22): the line below previously read "All 20 are
+now resolved" with no qualification, contradicting this same document's
+own findings 12/13/17 (each of which names a retained, bounded,
+deliberately-out-of-scope sub-item) and its own "What Claude did NOT do
+this round" section further down. The accurate claim is narrower: every
+finding's PRIMARY defect got a real fix, a regression test, and a verified
+compile/test run; several also retain a named, bounded follow-up
+explicitly NOT claimed closed here (see "What Claude did NOT do this
+round" below for the exhaustive list).** Every finding got: a real fix
+(never a workaround or a silenced check) for its primary defect, a
+regression test reproducing the EXACT counterexample the review reported,
+and either a clean MetaEditor compile (0 errors, 0 warnings) or a passing
+Python test run, verified before committing — matching this project's own
+established per-round discipline exactly.
 
 ## Verification evidence
 

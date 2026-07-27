@@ -46,11 +46,18 @@ momentum-failure as named follow-up work, not silently skipped.**
    trailing (through the never-widen invariant), time stop, and profit-
    lock into one per-tick decision (close, or modify-stop-to-X, or
    neither) for a single position. Live wrapper
-   (`ThembaAdaptiveIntradayEA.mq5`'s new `ManageOpenPositions()`) runs once
-   per completed bar, independent of `EvaluateAndJournal`'s own regime-
-   classification gates — an existing open position must still be
-   protected even on a bar where a NEW entry decision could not be
-   evaluated.
+   (`ThembaAdaptiveIntradayEA.mq5`'s new `ManageOpenPositions()`) runs
+   independent of `EvaluateAndJournal`'s own regime-classification gates —
+   an existing open position must still be protected even on a bar where a
+   NEW entry decision could not be evaluated. **Corrected, 2026-07-27
+   (Codex round-8 P2 finding 22): this bullet previously said
+   `ManageOpenPositions()` "runs once per completed bar" -- stale since
+   round 7's own P0 finding 8, which moved this call to run on EVERY tick
+   (unconditionally, in `OnTick`), specifically because the once-per-bar
+   cadence was losing intrabar responsiveness that `ExitOrchestrator.mqh`'s
+   own header already advertised. Only `EO_EvaluatePosition`'s internal
+   bar-count-based staleness clock still keys off the completed-bar
+   boundary; the CALL itself is per-tick.**
 4. **`InpTimeStopUsesScalpMode`** (new input, default `true`): which time-
    stop duration ceiling applies to every position this EA manages.
    Explicit, operator-set stand-in — same honest pattern as TASK-034's
@@ -84,8 +91,8 @@ momentum-failure as named follow-up work, not silently skipped.**
   `OM_ModifyStop` + `SOrderModifyResult`.
 - New `PositionStateTracker.mqh`, `ExitOrchestrator.mqh`.
 - `ThembaAdaptiveIntradayEA.mq5` — new `ManageOpenPositions()`, called
-  from `OnTick` once per completed bar; `OnTradeTransaction` now also
-  calls `PST_Clear` on confirmed closure; 9 new exit-config inputs.
+  from `OnTick` on every tick (see the correction above); `OnTradeTransaction`
+  now also calls `PST_Clear` on confirmed closure; 9 new exit-config inputs.
 - New `Test_PositionStateTracker.mq5`, `Test_ExitOrchestrator.mq5`;
   `Test_OrderManager.mq5` extended with `OM_ModifyStop` live-position
   checks (tests 9-10).
@@ -121,8 +128,9 @@ No file under `01_BASELINE/` may be modified.
 - [x] `PositionStateTracker.mqh` built and tested — durable, per-position,
       keyed by `position_id`.
 - [x] `ExitOrchestrator.mqh` built, tested (7 scenarios incl. a short-side
-      mirror), wired into `ManageOpenPositions()`, called once per
-      completed bar independent of entry-evaluation's own gates.
+      mirror), wired into `ManageOpenPositions()`, called on every tick
+      (round 7's own P0 finding 8, see the correction in Specification
+      item 3 above) independent of entry-evaluation's own gates.
 - [x] Target selection, exit-priority items 1-3, momentum-failure, and the
       giveback guard are named as explicit out-of-scope gaps (per the
       user's own approved scope-down), not silently skipped.

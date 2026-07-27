@@ -344,8 +344,21 @@ round-2 doc-staleness findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — six independent review rounds
-completed** (2026-07-21, 2026-07-22 x5; see
+**Codex, via `/code-review ultra` — seven independent review rounds
+completed, an eighth in progress.** **Corrected, 2026-07-27 (Codex round-8
+P2 finding 22): this section previously said "six independent review
+rounds completed" and closed by saying "a seventh review round should be
+requested" -- both stale, since round 7 (2026-07-22) had already happened,
+returned 20 findings (10 P0/9 P1/1 P2), and been fully resolved (see
+`TASKS.md`'s own TASK-028 row and this file's own Round 7 history entry
+below, both already updated ahead of this paragraph). An eighth review
+round has since returned 22 further findings (10 P0/9 P1/2 P2) against
+that resolution; this session is actively resolving them now (P0s 1-10
+and P1s 11-20 resolved with regression tests per finding as of this
+paragraph's own edit; P1 finding 21 and P2 finding 22, this correction
+itself, remain in progress). This paragraph will be updated once more when
+round 8 is fully resolved, matching this section's own established
+per-round convention** (2026-07-21, 2026-07-22 x5; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
 round -- it always holds the LATEST round's text only, never a
 concatenation of all six; use the "Round 5"/"Round 6" entries in this
@@ -899,9 +912,17 @@ so this canonical file does not read as if history stopped at round 2.
   should be requested once the 3 P0s have a resolution or an agreed
   disposition" condition): **20 findings (10 P0, 9 P1, 1 P2), disposition
   CHANGES REQUESTED**, written to
-  `09_HANDOVERS/codex_to_claude/TASK-028_review.md`. All 20 are now
-  resolved, each with a real fix, a regression test reproducing the exact
-  reported counterexample, and either a clean MetaEditor compile (0
+  `09_HANDOVERS/codex_to_claude/TASK-028_review.md`. **Corrected, 2026-07-27
+  (Codex round-8 P2 finding 22): "All 20 are now resolved" below previously
+  had no qualification, contradicting several findings' own retained,
+  named, bounded follow-up items (the pipeline-reorder half of finding 6,
+  the spread/liquidity-gate limitation in finding 12, the bar0-convention
+  unification and cost-sensitivity export explicitly NOT done per finding
+  17 -- see `09_HANDOVERS/claude_to_codex/TASK-028_round7_handover.md`'s
+  own "What Claude did NOT do this round" section for the exhaustive
+  list).** Every finding's PRIMARY defect is resolved, each with a real fix,
+  a regression test reproducing the exact reported counterexample, and
+  either a clean MetaEditor compile (0
   errors/0 warnings; full evidence retained in
   `09_HANDOVERS/compile_evidence/TASK-028_round7_full_compile_evidence_2026-07-22.txt`,
   covering the EA and all 38 `Test_*.mq5`/`Export_*.mq5` scripts, not just
