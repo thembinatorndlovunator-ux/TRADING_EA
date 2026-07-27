@@ -60,11 +60,14 @@ was therefore the fastest way to unblock two open items at once.
 4. **Journal-only, not yet behavior-wired**: none of the five existing
    strategies (`SRBounceStrategy.mqh` etc.) branch on `intraday_mode` to
    change entry timeframe, target sizing, or holding duration — they
-   remain single-timeframe M15 evaluations. Wiring `intraday_mode` into
-   actual strategy behavior (multi-timeframe entry selection, mode-specific
-   target/holding rules) is a separate, larger, explicitly-named future
-   task, mirroring how this EA itself started journal-only (TASK-025)
-   before order submission was wired in later (TASK-027).
+   remain single-timeframe M15 evaluations. **Corrected, 2026-07-27 (Codex
+   round-9 P1 finding 10): this item previously called the fix "a separate,
+   larger, explicitly-named future task" without a task number — round-7's
+   own P2 finding 20 already established that an unnumbered "future task"
+   is not a real owner. Wiring `intraday_mode` into actual mode-first
+   strategy generation (multi-timeframe entry selection per the family x
+   mode matrix, mode-specific target/holding rules) is now registered as
+   `TASK-043_MODE_FIRST_ROUTING_ARCHITECTURE.md`.**
 
 ## Files affected
 
@@ -92,7 +95,9 @@ No file under `01_BASELINE/` may be modified.
   (`TASK-031_REGIME_VALIDATION_COMPLETION.md`'s own disclosure) — that
   remains TASK-031's scope, not this task's.
 - Wiring `intraday_mode` into actual strategy behavior (see
-  Specification item 4) — a separate future task.
+  Specification item 4) — `TASK-043_MODE_FIRST_ROUTING_ARCHITECTURE.md`
+  (corrected 2026-07-27, Codex round-9 P1 finding 10 — previously an
+  unnumbered "future task").
 - Historical-performance-conditioned mode scoring (Specification item 3)
   — TASK-032's territory, needs infra that doesn't exist yet.
 - Populating `DecisionJournal.mqh`'s own `market_family`/`intraday_mode`
