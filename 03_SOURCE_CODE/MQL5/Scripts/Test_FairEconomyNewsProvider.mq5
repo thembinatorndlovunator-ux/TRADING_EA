@@ -98,8 +98,11 @@ void OnStart()
       "]";
 
    SNewsEvent events[];
-   int count = FEP_ParseFeedJson(sample, events);
+   bool sample_any_missing;
+   int count = FEP_ParseFeedJson(sample, events, sample_any_missing);
    Check("parses all 3 objects from the sample", count == 3);
+   Check("a fully well-formed sample reports any_required_field_missing_out == false",
+         sample_any_missing == false);
    Check("event 0 title parsed", events[0].event_name == "Non-Farm Employment Change");
    Check("event 0 currency parsed", events[0].currency == "USD");
    Check("event 0 importance mapped (High=3)", events[0].importance == 3);
@@ -119,10 +122,13 @@ void OnStart()
    //--- HTTP-200-but-garbage-body response as a verified-empty result. Test 8a ---
    //--- below exercises the NEW live-fetch-level guard that closes it.** ---------
    SNewsEvent empty_events[];
-   int empty_count = FEP_ParseFeedJson("", empty_events);
+   bool empty_any_missing;
+   int empty_count = FEP_ParseFeedJson("", empty_events, empty_any_missing);
    Check("empty input parses to 0 events", empty_count == 0);
    SNewsEvent garbage_events[];
-   int garbage_count = FEP_ParseFeedJson("not valid json at all {{{", garbage_events);
+   bool garbage_any_missing;
+   int garbage_count = FEP_ParseFeedJson("not valid json at all {{{", garbage_events,
+                                          garbage_any_missing);
    Check("malformed input parses to 0 events (no crash, no guessed data)", garbage_count == 0);
 
    //--- 8a. **Codex review finding, seventh round, P0 finding 5**: -----------
@@ -160,7 +166,8 @@ void OnStart()
    string objs_a[];
    int raw_count_a = FEP_SplitObjects(empty_object_array, objs_a);
    SNewsEvent parsed_a[];
-   int parsed_count_a = FEP_ParseFeedJson(empty_object_array, parsed_a);
+   bool any_missing_a;
+   int parsed_count_a = FEP_ParseFeedJson(empty_object_array, parsed_a, any_missing_a);
    Check("'[{}]' contains exactly 1 raw object", raw_count_a == 1);
    Check("'[{}]' parses to 0 usable events (no 'date' field) -- exactly the "
          "raw>0-but-parsed==0 mismatch FEP_FetchLive now fails closed on",
@@ -171,10 +178,84 @@ void OnStart()
    string objs_b[];
    int raw_count_b = FEP_SplitObjects(schema_drift_array, objs_b);
    SNewsEvent parsed_b[];
-   int parsed_count_b = FEP_ParseFeedJson(schema_drift_array, parsed_b);
+   bool any_missing_b;
+   int parsed_count_b = FEP_ParseFeedJson(schema_drift_array, parsed_b, any_missing_b);
    Check("a schema-drift array contains 2 raw objects", raw_count_b == 2);
    Check("a schema-drift array (no parseable 'date' field on any object) parses to 0 usable "
          "events -- the same raw>0-but-parsed==0 mismatch", parsed_count_b == 0);
+
+   //--- 8d. **Codex review finding, ninth round, P0 finding 5**: the -------
+   //--- EXACT counterexample the review reported -- a payload with ONE ----
+   //--- benign, fully-valid event plus ONE malformed event that STILL -----
+   //--- has a parseable date (so raw_count>0 AND parsed_count>0, meaning ---
+   //--- the round-8 "raw>0-but-parsed==0" guard alone does NOT catch it). --
+   string mixed_valid_and_malformed =
+      "[" +
+      "{\"title\":\"Benign Low-Impact Release\",\"country\":\"USD\"," +
+      "\"date\":\"2026-07-27T12:00:00Z\",\"impact\":\"Low\"," +
+      "\"forecast\":\"1.0\",\"previous\":\"0.9\"}," +
+      "{\"date\":\"2026-07-27T13:00:00Z\"}" + // malformed: missing title/country/impact entirely
+      "]";
+   SNewsEvent mixed_events[];
+   bool mixed_any_missing;
+   int mixed_count = FEP_ParseFeedJson(mixed_valid_and_malformed, mixed_events, mixed_any_missing);
+   Check("a mixed valid+malformed payload still parses 2 date-parseable events "
+         "(so the raw>0-but-parsed==0 guard alone would NOT catch this)",
+         mixed_count == 2);
+   Check("FEP_ParseFeedJson correctly flags any_required_field_missing_out == true "
+         "for a payload with ONE malformed event alongside a benign valid one "
+         "(the review's own exact counterexample)",
+         mixed_any_missing == true);
+
+   //--- 8e. **Codex review finding, ninth round, P0 finding 5**: the ------
+   //--- review's OTHER exact counterexample -- a bare {"date":...} object -
+   //--- with no title/country/impact at all becomes a "valid" zero-impact -
+   //--- event with no identity unless this is caught. ---------------------
+   string bare_date_only = "[{\"date\":\"2026-07-27T12:00:00Z\"}]";
+   SNewsEvent bare_events[];
+   bool bare_any_missing;
+   int bare_count = FEP_ParseFeedJson(bare_date_only, bare_events, bare_any_missing);
+   Check("a bare {\"date\":...} object with no other fields still parses as one event "
+         "(proving the identity gap the review reported actually exists in this parser)",
+         bare_count == 1);
+   Check("that same bare-date event is correctly flagged as missing required fields",
+         bare_any_missing == true);
+
+   //--- 8f. **Codex review finding, ninth round, P0 finding 5**: an -------
+   //--- unrecognized (schema-drifted) impact STRING on an otherwise -------
+   //--- complete object must also be flagged -- distinct from a genuinely -
+   //--- known zero-impact value like "Holiday"/"Non-Economic". ------------
+   string unknown_impact_array =
+      "[{\"title\":\"Some Release\",\"country\":\"EUR\"," +
+      "\"date\":\"2026-07-27T12:00:00Z\",\"impact\":\"Extreme\"}]"; // "Extreme" is not a known value
+   SNewsEvent unknown_impact_events[];
+   bool unknown_impact_any_missing;
+   FEP_ParseFeedJson(unknown_impact_array, unknown_impact_events, unknown_impact_any_missing);
+   Check("an otherwise-complete object with an UNRECOGNIZED impact string is flagged "
+         "(distinct from a genuinely known zero-impact value)",
+         unknown_impact_any_missing == true);
+   string known_zero_impact_array =
+      "[{\"title\":\"Bank Holiday\",\"country\":\"GBP\"," +
+      "\"date\":\"2026-07-27T12:00:00Z\",\"impact\":\"Holiday\"}]";
+   SNewsEvent known_zero_events[];
+   bool known_zero_any_missing;
+   FEP_ParseFeedJson(known_zero_impact_array, known_zero_events, known_zero_any_missing);
+   Check("a genuinely known zero-impact value ('Holiday') on an otherwise-complete object "
+         "is NOT flagged", known_zero_any_missing == false);
+
+   //--- 8g. **Codex review finding, ninth round, P0 finding 5**: FEP_FetchLive
+   //--- itself cannot be exercised against these exact malformed payloads --
+   //--- without a live network round-trip returning them for real (see -----
+   //--- test 9 below for the live path) -- but FEP_IsKnownImpact, the new --
+   //--- primitive FEP_FetchLive's own rejection decision is built on, is ---
+   //--- fully unit-testable here. ------------------------------------------
+   Check("FEP_IsKnownImpact accepts 'High'/'Medium'/'Low'/'Holiday'/'Non-Economic' "
+         "(case-insensitive)",
+         FEP_IsKnownImpact("HIGH") && FEP_IsKnownImpact("medium") && FEP_IsKnownImpact("Low") &&
+         FEP_IsKnownImpact("holiday") && FEP_IsKnownImpact("Non-Economic"));
+   Check("FEP_IsKnownImpact rejects an empty string", FEP_IsKnownImpact("") == false);
+   Check("FEP_IsKnownImpact rejects an unrecognized/schema-drifted value",
+         FEP_IsKnownImpact("Extreme") == false);
 
    //--- 9. LIVE fetch — expected to fail (URL not yet allowed in this ------
    //--- terminal), exercising the fail-closed path for real -----------------

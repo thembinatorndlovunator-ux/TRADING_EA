@@ -129,6 +129,25 @@ int FEP_MapImpact(const string impact)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 5):** true iff 'impact' is one of this feed's own KNOWN vocabulary          |
+//| values (case-insensitive) -- distinct from FEP_MapImpact, which               |
+//| tolerantly maps ANY unrecognized string to 0 (the same numeric result             |
+//| as the legitimate "holiday"/"non-economic" zero-impact values), so a                 |
+//| caller could not tell "genuinely a holiday" from "the feed's schema                     |
+//| drifted and this string is garbage" using FEP_MapImpact alone. Used by                    |
+//| FEP_FetchLive's own required-schema validation (see that function's own                       |
+//| header) to reject a response containing an impact value outside this                              |
+//| vocabulary, rather than silently treating it as zero-impact.                                          |
+//+------------------------------------------------------------------+
+bool FEP_IsKnownImpact(const string impact)
+  {
+   string s = impact;
+   StringToLower(s);
+   return s == "high" || s == "medium" || s == "low" || s == "holiday" || s == "non-economic";
+  }
+
+//+------------------------------------------------------------------+
 //| Best-effort, lenient numeric parse for forecast/previous strings        |
 //| (e.g. "1.2%", "-0.3", ""). Not safety-critical — these fields are          |
 //| informational only; NewsManager.mqh's blackout predicate never reads         |
@@ -215,10 +234,28 @@ datetime FEP_ParseIso8601ToUtc(const string iso, bool &ok_out)
 //| SNewsEvent[] shape. Pure — no network access — hand-testable against      |
 //| a captured feed sample. Skips (rather than guesses) any object            |
 //| missing a parseable "date" field.                                             |
+//|                                                                    |
+//| **Extended, 2026-07-27 (Codex review finding, ninth round, P0 finding      |
+//| 5): a new 'any_required_field_missing_out' output.** Previously an           |
+//| object was counted as usable purely because its "date" field parsed --            |
+//| title/country/impact could be BLANK, and an unrecognized impact string               |
+//| silently mapped to 0 (FEP_MapImpact's own tolerant fallback) -- so a                     |
+//| payload with one benign event plus one malformed HIGH-impact event                       |
+//| (e.g. a schema-drifted object FairEconomy itself never intended) was                     |
+//| accepted whole, silently DROPPING the very event that should have                        |
+//| blocked trading. This function still returns every event whose date                      |
+//| parsed (preserving its own existing behavior for any caller using it                      |
+//| standalone/offline), but now ALSO sets 'any_required_field_missing_out'                   |
+//| true if ANY date-parseable object is missing title, missing country, or                   |
+//| has an impact value outside FEP_IsKnownImpact's own known vocabulary --                    |
+//| the live wrapper (FEP_FetchLive) uses this to reject the ENTIRE fetch                       |
+//| rather than silently caching a result with a gap in it.**                                   |
 //+------------------------------------------------------------------+
-int FEP_ParseFeedJson(const string json_text, SNewsEvent &events_out[])
+int FEP_ParseFeedJson(const string json_text, SNewsEvent &events_out[],
+                       bool &any_required_field_missing_out)
   {
    ArrayFree(events_out);
+   any_required_field_missing_out = false;
    string objects[];
    int total = FEP_SplitObjects(json_text, objects);
 
@@ -242,6 +279,9 @@ int FEP_ParseFeedJson(const string json_text, SNewsEvent &events_out[])
       datetime scheduled_utc = FEP_ParseIso8601ToUtc(date_str, parsed_ok);
       if(!parsed_ok)
          continue;
+
+      if(title == "" || country == "" || impact == "" || !FEP_IsKnownImpact(impact))
+         any_required_field_missing_out = true;
 
       int n = ArraySize(events_out);
       ArrayResize(events_out, n + 1);
@@ -370,7 +410,8 @@ int FEP_FetchLive(SNewsEvent &events_out[])
 
    string raw_objects[];
    int raw_object_count = FEP_SplitObjects(json_text, raw_objects);
-   int parsed_count = FEP_ParseFeedJson(json_text, events_out);
+   bool any_required_field_missing;
+   int parsed_count = FEP_ParseFeedJson(json_text, events_out, any_required_field_missing);
 
    if(raw_object_count > 0 && parsed_count == 0)
      {
@@ -378,6 +419,26 @@ int FEP_FetchLive(SNewsEvent &events_out[])
                   "parsed into a usable event (schema drift or malformed content) -- treating as "
                   "a provider failure, NOT a verified-empty calendar; the caller applies the "
                   "fail-closed policy.", FEP_FEED_URL, raw_object_count);
+      return -1;
+     }
+
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 5):
+   // a response can have SOME valid, fully-schema-conformant objects AND
+   // at least one date-parseable-but-otherwise-malformed object (missing
+   // title/country/impact, or impact outside the known vocabulary) --
+   // raw_object_count>0/parsed_count==0 above only catches the "every
+   // single object is unusable" case. A response containing even ONE
+   // malformed event is itself evidence the feed's schema has drifted or
+   // this specific fetch is corrupted; the entire fetch is rejected rather
+   // than silently caching a result that may be missing the one event that
+   // should have blocked trading.**
+   if(any_required_field_missing)
+     {
+      PrintFormat("FairEconomyNewsProvider: response from '%s' contains at least one "
+                  "date-parseable event missing a required field (title/country/impact) or with "
+                  "an impact value outside the known vocabulary -- treating the ENTIRE fetch as a "
+                  "provider failure, NOT a partially-valid calendar; the caller applies the "
+                  "fail-closed policy.", FEP_FEED_URL);
       return -1;
      }
 
