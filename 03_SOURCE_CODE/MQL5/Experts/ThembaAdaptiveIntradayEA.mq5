@@ -218,15 +218,24 @@ long                    g_signal_counter = 0; // TASK-036: in-process counter fe
 // EvaluateAndJournal's own comment for the full failure mode this closes.
 bool                    g_daily_weekly_risk_state_valid = false;
 
+// **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):**
+// set every tick in OnTick from EPM_UpdateDailyPeak()/EPM_UpdateAccountPeak()'s
+// own return values -- see EvaluateAndJournal's own gate 3 for why an unknown
+// peak state (a lock-timeout write failure, or a peak that has genuinely
+// never been recorded yet) must fail closed rather than silently reading as
+// "zero drawdown, full risk size", same fail-closed pattern as
+// g_daily_weekly_risk_state_valid above.
+bool                    g_peak_state_valid = false;
+
 int OnInit()
   {
-   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
-   // creates the account-wide lock's own GlobalVariable exactly once, before
-   // any other StateManager call (including SM_EnsureAccountSchema below,
-   // which itself acquires the lock) can race its lazy, non-atomic
-   // check-then-set creation on the hot path -- see
-   // SM_EnsureAccountLockInitialized's own header for the full race this
-   // closes. Must run first, every OnInit, on every instance.**
+   // **Superseded, 2026-07-27 (Codex review finding, ninth round, P0 finding
+   // 2): SM_EnsureAccountLockInitialized is now a no-op. The account lock's
+   // bootstrap is folded directly into SM_AcquireAccountLock itself (race-
+   // free via GetLastError()'s ERR_GLOBALVARIABLE_NOT_FOUND signal), so
+   // every StateManager call below (including SM_EnsureAccountSchema) is
+   // already safe to call first, from any context -- this call is kept
+   // only so this line does not need to be deleted.**
    SM_EnsureAccountLockInitialized();
 
    // **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding
@@ -921,12 +930,22 @@ void OnTick()
    // large intrabar move that reverted before the bar closed was never
    // captured in either peak, understating both the daily giveback and the
    // all-time drawdown section 8's own downstream risk controls depend on.
-   // Return values are intentionally not gated on here (a single tick's
-   // lock-timeout failure self-heals on the very next tick, since both
-   // functions are idempotent "raise if greater" writes); downstream
-   // consumers read whatever peak is currently persisted.**
-   EPM_UpdateDailyPeak();
-   EPM_UpdateAccountPeak();
+   //
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // this previously discarded both return values with the reasoning "a
+   // single tick's lock-timeout failure self-heals on the very next tick" --
+   // true for THIS tick's own peak update, but EvaluateAndJournal's
+   // drawdown-based risk-multiplier gate (section 3) runs on THIS SAME
+   // tick's decision path when this is also a completed-bar tick, and it
+   // was reading whatever peak happened to already be persisted with no
+   // way to know this tick's own update had just failed -- an unlucky
+   // lock-timeout on exactly a decision bar silently let drawdown-based
+   // risk reduction fall through to "no reduction" instead of "unknown,
+   // block". g_peak_state_valid now makes that failure visible to this
+   // same bar's own gate, not just self-healing invisibly next tick.**
+   bool daily_peak_ok   = EPM_UpdateDailyPeak();
+   bool account_peak_ok = EPM_UpdateAccountPeak();
+   g_peak_state_valid = daily_peak_ok && account_peak_ok;
 
    // **Reordered, 2026-07-22 (Codex review finding, seventh round, P0
    // finding 8): tick-sensitive exit management (structure/ATR trailing,
@@ -1461,7 +1480,30 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    AppendReason(passed, "daily_weekly_loss_caps_clear");
 
    //--- 3. Drawdown-based risk reduction (never increase) ----------------
-   double current_drawdown = EPM_GetCurrentDrawdownPercent();
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // EPM_GetCurrentDrawdownPercent now reports its own validity separately
+   // from "zero drawdown" (see that function's own header) -- an unknown
+   // peak state (never recorded, or this bar's own EPM_Update*Peak calls
+   // failed to persist, see g_peak_state_valid below) must fail closed
+   // exactly like the daily/weekly risk-state gate above it, never fall
+   // through to the least-restrictive 1.0x multiplier.**
+   if(!g_peak_state_valid)
+     {
+      AppendReason(rejected, "equity_peak_state_persistence_failed");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+   double current_drawdown;
+   bool drawdown_valid;
+   EPM_GetCurrentDrawdownPercent(current_drawdown, drawdown_valid);
+   if(!drawdown_valid)
+     {
+      AppendReason(rejected, "equity_peak_never_recorded");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
    double risk_multiplier = DC_ComputeRiskMultiplier(current_drawdown,
                                                        InpDrawdownMaxReductionPercent,
                                                        InpDrawdownMinMultiplier);

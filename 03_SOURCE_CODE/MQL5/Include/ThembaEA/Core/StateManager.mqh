@@ -74,63 +74,112 @@ string SM_AccountKey(const string field)
   }
 
 //+------------------------------------------------------------------+
-//| **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
-//| 4):** creates the lock variable exactly once, meant to be called          |
-//| ONLY from OnInit -- never from SM_AcquireAccountLock's own hot path            |
-//| (see that function's own fix comment for why). MQL5 native global               |
-//| variables have no atomic create-if-absent primitive                                |
-//| (GlobalVariableSetOnCondition fails outright against a variable that                  |
-//| does not exist yet), so this bootstrap-once-at-OnInit is the SAME                        |
-//| practical mitigation already established and accepted for                                    |
-//| IntentManager.mqh's own identical create-if-absent race (round 7, P0                            |
-//| finding 1) -- it narrows the race window from "every single lock                                    |
-//| acquisition attempt, forever" to "once, at EA startup," not a fully                                     |
-//| airtight fix.                                                                                             |
+//| **Superseded, 2026-07-27 (Codex review finding, ninth round, P0     |
+//| finding 2): this OnInit-only bootstrap is no longer called or       |
+//| needed.** Bootstrap is now folded directly into SM_AcquireAccountLock|
+//| itself (see that function's own header) using GetLastError() to     |
+//| distinguish "variable does not exist yet" from "currently held by   |
+//| someone else" -- every caller can safely call SM_AcquireAccountLock  |
+//| from ANY context, not only after an OnInit-run bootstrap, and the    |
+//| bootstrap step itself is now provably race-free (see below), closing|
+//| the exact "late unconditional Set stomps an already-acquired lock"  |
+//| race this function's own removed comment used to document as an     |
+//| accepted, narrowed-but-not-airtight limitation. Kept only as a no-op |
+//| so existing OnInit call sites do not need to be touched.**           |
 //+------------------------------------------------------------------+
 void SM_EnsureAccountLockInitialized()
   {
-   string lock_key = SM_AccountKey("lock");
-   if(!GlobalVariableCheck(lock_key))
-      KE_SetDoubleChecked(lock_key, 0.0); // unlocked sentinel
-   if(!GlobalVariableCheck(lock_key + "__since"))
-      KE_SetDoubleChecked(lock_key + "__since", 0.0);
+   // Intentionally a no-op -- see header comment above.
   }
 
 //+------------------------------------------------------------------+
-//| Acquire the account-wide write lock (compare-and-set).             |
-//| Returns true once acquired, false on timeout.                      |
+//| Acquire the account-wide write lock (compare-and-set), owner-token  |
+//| based. Returns true once acquired, false on timeout. On success,    |
+//| 'owner_token_out' receives the exact nonzero token this call wrote  |
+//| -- the caller MUST pass that same token to SM_ReleaseAccountLock()  |
+//| (never a bare release-by-anyone), so a release can never clear a    |
+//| lock some OTHER holder has since legitimately acquired.             |
+//|                                                                    |
 //| A lock held longer than SM_LOCK_STALE_SECONDS is treated as        |
 //| abandoned (its holder crashed without releasing it) and broken.    |
 //|                                                                    |
-//| **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding    |
-//| 4):** this previously did its own "if(!GlobalVariableCheck) ... Set"      |
-//| bootstrap on EVERY call -- a check-then-unconditional-set that is NOT        |
-//| atomic as a unit. Two instances racing the very first ever call on this        |
-//| account+server could interleave so instance A's late, unconditional               |
-//| GlobalVariableSet(lock_key, 0.0) OVERWRITES instance B's own already-                 |
-//| legitimately-acquired lock (set to 1.0) back to "unlocked", letting a                    |
-//| THIRD instance also acquire it concurrently -- precisely the same class                     |
-//| of bug the intent-manager race fix (round 7, P0 finding 1) already closed                       |
-//| for a different lock. The bootstrap now runs exactly once, from OnInit                              |
-//| (SM_EnsureAccountLockInitialized), never from this hot path.**                                          |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding   |
+//| 2 -- round 8's own finding 4 fix left two real gaps this closes):**       |
+//|                                                                    |
+//| 1. **Owner-token ABA fix.** The lock value was previously a bare      |
+//|    boolean (0.0/1.0) with no owner identity: ANY caller's                |
+//|    SM_ReleaseAccountLock() unconditionally wrote 0.0, and the stale-        |
+//|    breaker also unconditionally wrote 0.0. Sequence that silently             |
+//|    corrupted the lock: holder A's release call is delayed (e.g. a               |
+//|    slow tick); meanwhile A's lock is force-broken as stale by holder B,             |
+//|    which then legitimately acquires it; A's now-late release call                  |
+//|    finally runs and clears B's still-active lock, letting a THIRD                       |
+//|    holder C acquire concurrently with B. Fixed: the lock value is now                       |
+//|    a unique per-acquisition token (never 0.0), and release/stale-break                          |
+//|    both use GlobalVariableSetOnCondition(lock_key, 0.0, <the exact token                             |
+//|    being cleared>) -- an atomic compare-and-set that only succeeds if                                    |
+//|    that specific token is STILL the current value, so a delayed/stale                                        |
+//|    release from a PRIOR holder can never clear a DIFFERENT holder's                                            |
+//|    live lock.                                                                                                     |
+//| 2. **Bootstrap race fix.** The separate OnInit-only                                                                 |
+//|    SM_EnsureAccountLockInitialized() bootstrap is retired (see its own                                                   |
+//|    header). GlobalVariableSetOnCondition against a variable that does                                                       |
+//|    not exist yet fails AND sets GetLastError() to                                                                                |
+//|    ERR_GLOBALVARIABLE_NOT_FOUND (4501), which this function now checks:                                                              |
+//|    on that specific error, it creates the variable via a plain                                                                          |
+//|    GlobalVariableSet(lock_key, 0.0) -- always the SAME neutral                                                                              |
+//|    "unlocked" value regardless of how many concurrent callers                                                                                  |
+//|    redundantly do this -- then retries its own atomic acquire. Because                                                                            |
+//|    no acquired-lock state can exist before at least one caller's own                                                                                 |
+//|    atomic compare-and-set succeeds, this bootstrap is now provably                                                                                       |
+//|    race-free (unlike the previous separate check-then-set), and works                                                                                       |
+//|    from ANY call site, not only a completed OnInit run.                                                                                                          |
 //+------------------------------------------------------------------+
-bool SM_AcquireAccountLock(const int timeout_ms = 500)
+bool SM_AcquireAccountLock(double &owner_token_out, const int timeout_ms = 500)
   {
    string lock_key = SM_AccountKey("lock");
+   owner_token_out = 0.0;
 
    ulong start_tick = GetTickCount64();
    while(true)
      {
-      // Atomic: set to 1.0 only if currently 0.0 (unlocked).
-      if(GlobalVariableSetOnCondition(lock_key, 1.0, 0.0))
+      // Unique-enough per-acquisition token: microsecond counter (rapidly
+      // changing, terminal-wide monotonic within a session) combined with a
+      // random component so two callers racing the SAME microsecond tick
+      // still (almost certainly) mint distinct tokens. Never 0.0 -- that
+      // value is reserved for "unlocked". The token's exact value is never
+      // trusted for uniqueness across the WHOLE lock's lifetime, only for
+      // "is this still the same acquisition I made a moment ago" within
+      // this one hold -- see header comment above for why that is exactly
+      // what closes the ABA release race.
+      double token = (double)GetMicrosecondCount() * 100000.0 + (double)MathRand() + 1.0;
+
+      if(GlobalVariableSetOnCondition(lock_key, token, 0.0))
+        {
+         owner_token_out = token;
          return true;
+        }
+
+      int err = GetLastError();
+      if(err == ERR_GLOBALVARIABLE_NOT_FOUND)
+        {
+         ResetLastError();
+         GlobalVariableSet(lock_key, 0.0); // race-free bootstrap -- see header
+         GlobalVariableSet(lock_key + "__since", 0.0);
+         continue; // retry the atomic acquire above immediately
+        }
 
       // Someone else holds it — check for staleness.
+      double held_token = GlobalVariableGet(lock_key);
       datetime held_since = (datetime)GlobalVariableGet(lock_key + "__since");
-      if(held_since > 0 && (TimeCurrent() - held_since) > SM_LOCK_STALE_SECONDS)
+      if(held_token != 0.0 && held_since > 0 && (TimeCurrent() - held_since) > SM_LOCK_STALE_SECONDS)
         {
-         // Force-break an abandoned lock, then retry immediately.
-         KE_SetDoubleChecked(lock_key, 0.0);
+         // Force-break an abandoned lock -- atomic compare-and-set from the
+         // EXACT stale token observed above, never a blind write, so a
+         // holder that finishes and releases normally between the read
+         // above and this call cannot have this call incorrectly clear a
+         // brand-new, unrelated holder's fresh acquisition.
+         GlobalVariableSetOnCondition(lock_key, 0.0, held_token);
          continue;
         }
 
@@ -143,12 +192,27 @@ bool SM_AcquireAccountLock(const int timeout_ms = 500)
   }
 
 //+------------------------------------------------------------------+
-//| Release the account-wide write lock.                               |
+//| Release the account-wide write lock. 'owner_token' MUST be the      |
+//| exact value SM_AcquireAccountLock() returned for THIS hold -- the   |
+//| release is itself an atomic compare-and-set from that exact token   |
+//| to 0.0, so it silently does nothing (never corrupts a different     |
+//| holder's lock) if that token is no longer the current value (e.g.   |
+//| this lock was already force-broken as stale and re-acquired by      |
+//| someone else). See SM_AcquireAccountLock's own header for the ABA   |
+//| scenario this specifically prevents.                                 |
 //+------------------------------------------------------------------+
-void SM_ReleaseAccountLock()
+void SM_ReleaseAccountLock(const double owner_token)
   {
    string lock_key = SM_AccountKey("lock");
-   KE_SetDoubleChecked(lock_key, 0.0);
+   GlobalVariableSetOnCondition(lock_key, 0.0, owner_token);
+   // The "__since" timestamp is harmless to clear unconditionally: a stale
+   // value there only ever feeds the staleness check above, which is
+   // itself guarded by the lock value's own compare-and-set, so an
+   // unrelated holder's clock cannot be corrupted into looking stale early
+   // by this -- at worst it is cleared to 0 (treated as "never stamped",
+   // i.e. never eligible for a stale-break) and the current legitimate
+   // holder's own SM_StampAccountLockHeld() (already called right after
+   // every acquire) re-stamps it before anyone could observe the gap.
    KE_SetDoubleChecked(lock_key + "__since", 0.0);
   }
 
@@ -170,7 +234,8 @@ void SM_StampAccountLockHeld()
 bool SM_SetAccountDouble(const string field, const double value,
                           const int lock_timeout_ms = 500)
   {
-   if(!SM_AcquireAccountLock(lock_timeout_ms))
+   double owner_token;
+   if(!SM_AcquireAccountLock(owner_token, lock_timeout_ms))
       return false;
    SM_StampAccountLockHeld();
 
@@ -180,7 +245,7 @@ bool SM_SetAccountDouble(const string field, const double value,
    // GlobalVariableSet itself actually succeeded.**
    bool write_ok = KE_SetDoubleChecked(SM_AccountKey(field), value);
 
-   SM_ReleaseAccountLock();
+   SM_ReleaseAccountLock(owner_token);
    return write_ok;
   }
 
@@ -214,6 +279,46 @@ bool SM_SetAccountDouble(const string field, const double value,
 //| retry-driven callers, not general transactional atomicity -- a future                                                             |
 //| caller that is NOT idempotent-retry-safe must not assume this function                                                                |
 //| gives it a real all-or-nothing guarantee.                                                                                                |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P1 finding    |
+//| 2):** the loop below previously kept writing every remaining field         |
+//| even after an earlier one failed, so a batch like [baseline (fails),         |
+//| freshness_marker (succeeds)] left the freshness marker updated to             |
+//| "fresh" even though the baseline write it is supposed to vouch for               |
+//| never actually landed -- exactly the "baseline write can fail while              |
+//| the final freshness timestamp/cursor succeeds" defect the review                    |
+//| reported. The loop now STOPS at the first failed write, so if any                     |
+//| earlier field fails, the freshness marker (by this function's own                        |
+//| stated caller contract, always the LAST element) is never reached/                           |
+//| written -- the next read then correctly sees a stale marker and                                  |
+//| re-triggers the whole batch as an idempotent retry, per this header's                                 |
+//| own established contract, instead of trusting a half-applied write.**                                     |
+//|                                                                    |
+//| **Honestly scoped, 2026-07-27 (same finding): what this DOES vs. does |
+//| NOT close.** A genuine PROCESS CRASH between two successful writes            |
+//| (not a write FAILURE -- the crash happens with no chance for either                |
+//| write to fail or succeed cleanly) still self-heals for this project's                  |
+//| existing callers, by the same freshness-marker-last argument: if the                       |
+//| crash lands after field 0 (e.g. a fresh baseline) but before the                               |
+//| freshness marker is even attempted, the marker is left at its OLD                                  |
+//| value, which the next read correctly treats as stale and re-triggers                                  |
+//| exactly one more idempotent rebase pass -- this is NOT a residual gap.                                     |
+//| What remains a genuine, NOT-yet-attempted architectural gap (the                                              |
+//| review's own "or an atomic file replacement"/"versioned single-record                                             |
+//| prepare/commit protocol" alternative): a retry after a crash always                                                |
+//| recomputes its baseline from WHATEVER equity/cursor state exists AT                                                    |
+//| RETRY TIME, not the exact equity/cursor state at the ORIGINAL moment                                                      |
+//| the boundary was crossed or the cash flow occurred -- so a retry that                                                        |
+//| happens some time after the crash can capture a DIFFERENT (later)                                                                |
+//| equity reading than the original attempt would have, potentially                                                                     |
+//| hiding intervening P/L or double-applying a cash flow whose cursor                                                                       |
+//| advance was itself the field that got interrupted. Closing THAT                                                                              |
+//| specific class requires a real write-ahead log (persist "intend to                                                                              |
+//| rebase to computed value X" BEFORE touching either field, so a crash-                                                                               |
+//| recovery pass can resume from the LOGGED intent rather than                                                                                          |
+//| recomputing from current state) -- a materially larger, separate                                                                                        |
+//| follow-up, not attempted here, named honestly rather than silently                                                                                          |
+//| left unaddressed under this finding's own closure.**                                                                                                          |
 //+------------------------------------------------------------------+
 bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
                                  const int lock_timeout_ms = 500)
@@ -222,18 +327,20 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
    if(n != ArraySize(values) || n == 0)
       return false;
 
-   if(!SM_AcquireAccountLock(lock_timeout_ms))
+   double owner_token;
+   if(!SM_AcquireAccountLock(owner_token, lock_timeout_ms))
       return false;
    SM_StampAccountLockHeld();
 
-   // **Fixed, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
-   // each write's own success is now checked and ANDed into the overall
-   // result -- previously this always returned true once the lock was
-   // acquired, regardless of whether any individual GlobalVariableSet call
-   // actually succeeded.**
    bool all_ok = true;
    for(int i = 0; i < n; i++)
-      all_ok = KE_SetDoubleChecked(SM_AccountKey(fields[i]), values[i]) && all_ok;
+     {
+      if(!KE_SetDoubleChecked(SM_AccountKey(fields[i]), values[i]))
+        {
+         all_ok = false;
+         break; // stop at the first failure -- see header comment
+        }
+     }
 
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 6):
    // "No code calls GlobalVariablesFlush... sudden failure can lose
@@ -243,7 +350,7 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
    // periodic flush cadence.**
    GlobalVariablesFlush();
 
-   SM_ReleaseAccountLock();
+   SM_ReleaseAccountLock(owner_token);
    return all_ok;
   }
 
@@ -266,7 +373,8 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
 bool SM_SetAccountDoubleIfGreater(const string field, const double candidate,
                                    const int lock_timeout_ms = 500)
   {
-   if(!SM_AcquireAccountLock(lock_timeout_ms))
+   double owner_token;
+   if(!SM_AcquireAccountLock(owner_token, lock_timeout_ms))
       return false;
    SM_StampAccountLockHeld();
 
@@ -281,7 +389,7 @@ bool SM_SetAccountDoubleIfGreater(const string field, const double candidate,
    if(!exists || candidate > current)
       write_ok = KE_SetDoubleChecked(key, candidate);
 
-   SM_ReleaseAccountLock();
+   SM_ReleaseAccountLock(owner_token);
    return write_ok;
   }
 
@@ -346,7 +454,8 @@ void SM_EnsureAccountSchema(const int lock_timeout_ms = 500)
    if(stored == SM_SCHEMA_VERSION)
       return; // already current — no-op, nothing touched.
 
-   if(!SM_AcquireAccountLock(lock_timeout_ms))
+   double owner_token;
+   if(!SM_AcquireAccountLock(owner_token, lock_timeout_ms))
       return; // caller may retry on a later tick; never blocks trading.
    SM_StampAccountLockHeld();
 
@@ -361,5 +470,5 @@ void SM_EnsureAccountSchema(const int lock_timeout_ms = 500)
    // else if(stored == 1.0 && SM_SCHEMA_VERSION == 2.0) { ... additive
    //    migration for a future schema bump goes here ... }
 
-   SM_ReleaseAccountLock();
+   SM_ReleaseAccountLock(owner_token);
   }

@@ -135,16 +135,34 @@ bool EPM_UpdateAccountPeak()
 //| current_equity) / account_peak, floored at 0 (equity above the      |
 //| still-stale peak — which EPM_UpdateAccountPeak should have already   |
 //| corrected — never reports a negative drawdown).                      |
+//|                                                                    |
+//| **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding    |
+//| 2): this previously returned a bare 0.0 both when the peak is         |
+//| genuinely absent/unknown AND when equity is legitimately AT the           |
+//| peak -- DC_ComputeRiskMultiplier's own caller could not tell "peak            |
+//| state unknown" from "zero drawdown, trade at full size", so an                    |
+//| unreadable/never-initialized peak silently produced the LEAST                        |
+//| restrictive multiplier instead of blocking. 'is_valid_out' now                            |
+//| distinguishes the two: false means the peak has never been recorded                           |
+//| (or is otherwise unreadable) and 'drawdown_percent_out' must not be                                |
+//| trusted -- callers must treat that as unknown state, per section 8's                                   |
+//| own "unknown state must never increase risk" requirement, not as a                                        |
+//| green light to trade at full size.**                                                                          |
 //+------------------------------------------------------------------+
-double EPM_GetCurrentDrawdownPercent()
+bool EPM_GetCurrentDrawdownPercent(double &drawdown_percent_out, bool &is_valid_out)
   {
+   drawdown_percent_out = 0.0;
+   is_valid_out = false;
+
    double peak = SM_GetAccountDouble("epm_account_peak_equity", 0.0);
    if(peak <= 0.0)
-      return 0.0;
+      return false; // never recorded -- genuinely unknown, not "zero drawdown"
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double dd = 100.0 * (peak - equity) / peak;
-   return dd < 0.0 ? 0.0 : dd;
+   drawdown_percent_out = dd < 0.0 ? 0.0 : dd;
+   is_valid_out = true;
+   return true;
   }
 
 //+------------------------------------------------------------------+

@@ -47,16 +47,24 @@ void CleanupTestFields()
    SM_DeleteAccountField("epm_daily_peak_equity");
    SM_DeleteAccountField("epm_daily_peak_reset_time");
    SM_DeleteAccountField("epm_account_peak_equity");
-   SM_ReleaseAccountLock();
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // SM_ReleaseAccountLock now requires the exact owner token its matching
+   // acquire returned (see that function's own header for the ABA race
+   // this closes) -- this cleanup helper never actually holds the lock
+   // itself, so a raw reset (never a real 'release' of anything this
+   // script legitimately holds) is the correct defensive action here, not
+   // a token-less release call.**
+   GlobalVariableSet(SM_AccountKey("lock"), 0.0);
+   GlobalVariableSet(SM_AccountKey("lock") + "__since", 0.0);
   }
 
 void OnStart()
   {
    Print("=== TASK-008 DailyWeeklyLimits / EquityPeakManager / DrawdownController test start ===");
 
-   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
-   // the lock's own creation is no longer bootstrapped lazily inside
-   // SM_AcquireAccountLock -- see Test_StateManager.mq5's identical fix.**
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // SM_EnsureAccountLockInitialized is now a no-op -- see
+   // Test_StateManager.mq5's identical fix.**
    SM_EnsureAccountLockInitialized();
 
    CleanupTestFields(); // clean slate before testing
@@ -180,9 +188,26 @@ void OnStart()
    Check("account peak set after first UpdateAccountPeak call",
          account_peak_1 >= equity - 0.01);
 
-   double dd_1 = EPM_GetCurrentDrawdownPercent();
+   double dd_1;
+   bool   dd_1_valid;
+   bool   dd_1_ok = EPM_GetCurrentDrawdownPercent(dd_1, dd_1_valid);
+   Check("EPM_GetCurrentDrawdownPercent reports valid once a peak exists",
+         dd_1_ok && dd_1_valid);
    Check("drawdown percent is ~0 immediately after the peak is set to current equity",
          dd_1 < 0.01);
+
+   // **Added, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // a peak that has NEVER been recorded must report invalid, not a bare
+   // 0.0 the caller cannot distinguish from a genuine zero-drawdown
+   // reading -- see that function's own header for why conflating the two
+   // previously let an unreadable peak silently produce the LEAST
+   // restrictive risk multiplier instead of blocking.**
+   SM_DeleteAccountField("epm_account_peak_equity");
+   double dd_2;
+   bool   dd_2_valid;
+   bool   dd_2_ok = EPM_GetCurrentDrawdownPercent(dd_2, dd_2_valid);
+   Check("EPM_GetCurrentDrawdownPercent reports INVALID when no peak has ever been recorded",
+         dd_2_ok == false && dd_2_valid == false);
 
    //--- 11. Explicit reset ---------------------------------------------
    EPM_ExplicitResetAccountPeak();

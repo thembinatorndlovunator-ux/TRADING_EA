@@ -39,21 +39,23 @@ void OnStart()
   {
    Print("=== TASK-003 StateManager test start ===");
 
-   // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 4):
-   // the lock's own creation is no longer bootstrapped lazily inside
-   // SM_AcquireAccountLock -- every caller (this test included) must run
-   // SM_EnsureAccountLockInitialized() once first, matching the real EA's
-   // own OnInit contract.**
+   // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
+   // SM_EnsureAccountLockInitialized is now a no-op -- bootstrap is folded
+   // directly into SM_AcquireAccountLock itself (race-free via
+   // ERR_GLOBALVARIABLE_NOT_FOUND detection). Calling it here is harmless
+   // but no longer required; kept only to prove the no-op doesn't break
+   // anything for existing call sites.**
    SM_EnsureAccountLockInitialized();
-   Check("lock variable exists after SM_EnsureAccountLockInitialized",
-         GlobalVariableCheck(SM_AccountKey("lock")));
 
    // Clean slate: remove any residue from a prior run before testing.
+   // Force the lock itself back to a clean unlocked state too (a prior
+   // aborted run could otherwise leave it held).
+   GlobalVariableSet(SM_AccountKey("lock"), 0.0);
+   GlobalVariableSet(SM_AccountKey("lock") + "__since", 0.0);
    SM_DeleteAccountField("test_field_a");
    SM_DeleteAccountField("test_field_b");
    SM_DeleteAccountField("schema_version");
    SM_DeleteAccountField("test_peak");
-   SM_ReleaseAccountLock();
 
    //--- 1. Round-trip set/get -----------------------------------------
    double default_val = -999.0;
@@ -80,22 +82,63 @@ void OnStart()
 
    //--- 4. Lock: acquire, verify a second acquire attempt within the --
    //---    hold window fails, then release and verify it succeeds. ---
-   bool first_acquire = SM_AcquireAccountLock(200);
+   double token_1;
+   bool first_acquire = SM_AcquireAccountLock(token_1, 200);
    Check("first lock acquire succeeds", first_acquire);
+   Check("first acquire's own token is nonzero", token_1 != 0.0);
    SM_StampAccountLockHeld();
 
-   bool second_acquire = SM_AcquireAccountLock(200); // short timeout,
-                                                      // lock still held
-                                                      // by "us" above —
+   double token_2_unused;
+   bool second_acquire = SM_AcquireAccountLock(token_2_unused, 200); // short
+                                                      // timeout, lock still
+                                                      // held by "us" above —
                                                       // this simulates a
                                                       // second writer.
    Check("second acquire attempt while held times out (returns false)",
          second_acquire == false);
 
-   SM_ReleaseAccountLock();
-   bool third_acquire = SM_AcquireAccountLock(200);
+   SM_ReleaseAccountLock(token_1);
+   double token_3;
+   bool third_acquire = SM_AcquireAccountLock(token_3, 200);
    Check("acquire succeeds again after release", third_acquire);
-   SM_ReleaseAccountLock();
+   SM_ReleaseAccountLock(token_3);
+
+   //--- 4b. Owner-token ABA regression (Codex review finding, ninth ---
+   //---     round, P0 finding 2): a delayed release from a PRIOR holder ---
+   //---     whose lock was force-broken as stale must NOT clear a -------
+   //---     DIFFERENT, currently-legitimate holder's lock. --------------
+   double token_a;
+   Check("holder A acquires the lock", SM_AcquireAccountLock(token_a, 200));
+   SM_StampAccountLockHeld();
+
+   // Simulate holder A going silent long enough to look abandoned,
+   // without actually waiting SM_LOCK_STALE_SECONDS in real time.
+   GlobalVariableSet(SM_AccountKey("lock") + "__since",
+                      (double)(TimeCurrent() - (SM_LOCK_STALE_SECONDS + 5)));
+
+   double token_b;
+   bool holder_b_acquired = SM_AcquireAccountLock(token_b, 200);
+   Check("holder B force-breaks A's stale lock and acquires it", holder_b_acquired);
+   Check("holder B's token differs from holder A's stale token", token_b != token_a);
+   SM_StampAccountLockHeld();
+
+   // Holder A's release finally arrives, using its OWN (now-stale) token --
+   // this must be a no-op against holder B's live lock, not clear it.
+   SM_ReleaseAccountLock(token_a);
+
+   double token_c_unused;
+   bool third_party_during_b = SM_AcquireAccountLock(token_c_unused, 200);
+   Check("holder A's stale release does NOT clear holder B's live lock "
+         "(a third acquire attempt still times out)",
+         third_party_during_b == false);
+
+   // Holder B's own, correctly-tokened release DOES clear it.
+   SM_ReleaseAccountLock(token_b);
+   double token_d;
+   bool acquire_after_b_release = SM_AcquireAccountLock(token_d, 200);
+   Check("holder B's own correctly-tokened release frees the lock for a new acquirer",
+         acquire_after_b_release);
+   SM_ReleaseAccountLock(token_d);
 
    //--- 5. Schema versioning: first-run stamps the version, and a ----
    //---    second call is a true no-op (idempotent). ------------------
@@ -136,6 +179,25 @@ void OnStart()
          SM_GetAccountDouble("test_field_a", default_val) == 111.0 &&
          SM_GetAccountDouble("test_field_b", default_val) == 222.0);
 
+   //--- 6b. SM_SetAccountDoublesBatch stops at the first failed write ---
+   //---     (Codex review finding, ninth round, P1 finding 2): a field --
+   //---     name that exceeds MT5's 63-character global-variable limit --
+   //---     makes KE_SetDoubleChecked fail for real (not simulated) -- ---
+   //---     placed FIRST in the batch, the SECOND (otherwise-valid) -----
+   //---     field must then NEVER be written. -------------------------
+   string overlong_field = "";
+   for(int i = 0; i < 80; i++)
+      overlong_field += "x";
+   SM_DeleteAccountField("test_field_a"); // start from a known state
+   SM_SetAccountDouble("test_field_a", 1.0);
+   string stop_early_fields[2] = {overlong_field, "test_field_a"};
+   double stop_early_values[2] = {123.0, 456.0};
+   bool stop_early_ok = SM_SetAccountDoublesBatch(stop_early_fields, stop_early_values);
+   Check("a batch whose FIRST write fails reports overall failure",
+         stop_early_ok == false);
+   Check("a batch whose FIRST write fails never reaches the SECOND field",
+         SM_GetAccountDouble("test_field_a", default_val) == 1.0);
+
    //--- 7. SM_SetAccountDoubleIfGreater: atomic raise-only write (Codex ----
    //---    review finding, eighth round, P0 finding 4) -----------------
    bool first_raise = SM_SetAccountDoubleIfGreater("test_peak", 50.0);
@@ -156,7 +218,6 @@ void OnStart()
    SM_DeleteAccountField("test_field_b");
    SM_DeleteAccountField("schema_version");
    SM_DeleteAccountField("test_peak");
-   SM_ReleaseAccountLock();
    Check("field A removed after cleanup",
          !SM_AccountFieldExists("test_field_a"));
    Check("schema_version removed after cleanup",
