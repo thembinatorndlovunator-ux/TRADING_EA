@@ -17,14 +17,33 @@ requesting the next review round per the user's standing directive
 done"). That request was fulfilled: an eighth independent review returned
 **22 findings — 10 P0, 11 P1, 1 P2 — disposition CHANGES REQUESTED**,
 written to `09_HANDOVERS/codex_to_claude/TASK-028_review.md` (recorded at
-commit `ed46ded`). **All 22 are now resolved**, each with a real fix for
-its primary defect (never a workaround or a silenced check), a regression
-test reproducing the EXACT counterexample the review reported (finding 21
-substitutes a full, individually-hashed 41-target MetaEditor compile pass
-for a Python regression test, since it concerns compile evidence itself),
-and either a clean MetaEditor compile (0 errors, 0 warnings) or a passing
-Python test run, verified before committing — matching this project's own
-established per-round discipline exactly.
+commit `ed46ded`, Git-timestamped 2026-07-27 -- **corrected, 2026-07-27,
+Codex round-9 P2 finding 22: this section's own surrounding date
+references had drifted to imply an earlier "2026-07-22" review date in
+other canonical docs; `ed46ded` and its entire 22-commit remediation range
+are all 2026-07-27**). Every one of the 22 findings received a real,
+committed fix for its own reported primary defect (never a workaround or
+a silenced check), with a regression test reproducing the EXACT
+counterexample the review reported (finding 21 substitutes a full,
+individually-hashed 41-target MetaEditor compile pass for a Python
+regression test, since it concerns compile evidence itself), and either a
+clean MetaEditor compile (0 errors, 0 warnings) or a passing Python test
+run, verified before committing.
+
+**Corrected, 2026-07-27 (Codex round-9 P2 finding 22): "All 22 are now
+resolved" above overclaimed scope as a blanket headline.** Two findings
+were explicitly, honestly disclosed at the time as PARTIAL, not silently
+dropped: finding 12's own commit message deferred its mode-first
+ROUTING-ORDER half (candidates are still generated before mode is
+computed, only vetoed post-hoc) as "a substantial separate architectural
+task"; finding 14's own fix left the chart-pattern lifecycle registry
+(FORMING/CONFIRMED/RETESTING/TRADED/INVALIDATED/EXPIRED, consumed-pattern
+suppression) unimplemented in source. Both gaps are named explicitly in
+"Findings resolved, by commit" below -- this correction exists because the
+SUMMARY headline above did not carry the same caveat, letting "all 22
+resolved" read as unqualified. Round 9's own remediation has since closed
+the chart-pattern lifecycle gap in full and formally registered the
+routing-order gap as `TASK-043_MODE_FIRST_ROUTING_ARCHITECTURE.md`.
 
 ## Verification evidence
 

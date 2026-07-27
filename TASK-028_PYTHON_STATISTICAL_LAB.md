@@ -344,21 +344,24 @@ round-2 doc-staleness findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — eight independent review rounds
-completed.** **Corrected, 2026-07-27 (Codex round-8 P2 finding 22, updated
-in place a second time upon round 8's own full resolution): this section
-previously said "six independent review rounds completed" and closed by
-saying "a seventh review round should be requested" -- both stale, since
-round 7 (2026-07-22) had already happened, returned 20 findings (10 P0/9
-P1/1 P2), and been fully resolved. An eighth review round then returned 22
-further findings (10 P0/11 P1/1 P2) against that resolution -- all 22 are
-now resolved (see `TASKS.md`'s own TASK-028 row and this file's own Round
-8 history entry below), each with a real fix and either a regression test
-reproducing the exact reported counterexample or, for finding 21, a full,
-accurate, individually-hashed 41-target MetaEditor compile pass (see
-`09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt`).
-A ninth review round should be requested now that round 8 is fully
-resolved, not before.** (2026-07-21, 2026-07-22 x5; see
+**Codex, via `/code-review ultra` — nine independent review rounds
+completed so far.** **Corrected, 2026-07-27 (Codex round-9 P2 finding 22,
+updated in place a third time): this section's own prior version claimed
+round 8 was "fully resolved" and that "a ninth review round should be
+requested now" -- true when written, but immediately superseded: a ninth
+review round WAS requested and returned, on the same date (2026-07-27,
+per commit timestamps -- not "2026-07-22," which was round 7's own date,
+not round 8's), 23 further findings (7 P0, 14 P1, 2 P2) against round 8's
+own resolution. That remediation is this document's own current work (see
+`TASKS.md`'s own TASK-028 row for the live per-finding status); a tenth
+review round should be requested once round 9 is fully resolved, not
+before.** Round 8 itself: an eighth review round returned 22 findings (10
+P0/11 P1/1 P2) against round 7's own resolution -- every one received a
+real fix, with two (finding 12's mode-first routing-order half, finding
+14's chart-pattern lifecycle registry) explicitly, honestly disclosed as
+PARTIAL at the time (see this file's own Round 8 history entry below for
+the full account) and since closed or formally registered by round 9's
+own remediation. (2026-07-21, 2026-07-22 x5; see
 `09_HANDOVERS/codex_to_claude/TASK-028_review.md`, updated in place each
 round -- it always holds the LATEST round's text only, never a
 concatenation of all six; use the "Round 5"/"Round 6" entries in this
@@ -966,16 +969,35 @@ so this canonical file does not read as if history stopped at round 2.
   `09_HANDOVERS/claude_to_codex/TASK-028_round7_handover.md` for the full,
   per-finding commit-by-commit account.
 
-- **Round 8 (2026-07-22), an eighth independent Codex review** (requested
-  per round 7's own handover, which stated it "is the request for the
-  next review round"): **22 findings (10 P0, 11 P1, 1 P2), disposition
-  CHANGES REQUESTED**, written to
-  `09_HANDOVERS/codex_to_claude/TASK-028_review.md` (commit `ed46ded`).
-  **All 22 are now resolved**, each with a real fix for its primary
-  defect, a regression test reproducing the exact reported counterexample
-  (or, for finding 21, a full 41-target MetaEditor compile pass in place
-  of a Python regression test), and either a clean MetaEditor compile (0
-  errors/0 warnings; full evidence retained at
+- **Round 8, an eighth independent Codex review** (requested per round
+  7's own handover, which stated it "is the request for the next review
+  round"): **22 findings (10 P0, 11 P1, 1 P2), disposition CHANGES
+  REQUESTED**, written to `09_HANDOVERS/codex_to_claude/TASK-028_review.md`
+  (commit `ed46ded`). **Corrected, 2026-07-27 (Codex round-9 P2 finding
+  22): this entry previously said "Round 8 (2026-07-22)" -- the review
+  commit `ed46ded` and its entire 22-commit remediation/handover range
+  are all Git-timestamped 2026-07-27, not 2026-07-22. Every date claim in
+  this project's canonical docs must be the Git-recorded date, not an
+  assumed/copy-pasted one.**
+  Every one of the 22 findings received a real, committed fix for its own
+  reported PRIMARY defect, with a regression test reproducing the exact
+  counterexample (or, for finding 21, a full 41-target MetaEditor compile
+  pass in place of a Python regression test) -- but **"all 22 resolved"
+  is not, by itself, an accurate summary of scope, and this entry no
+  longer states it that way (Codex round-9 P2 finding 22's own
+  complaint): finding 12's own commit message explicitly, honestly
+  deferred its ROUTING-ORDER half (mode computed before candidate
+  generation, not after) as "a substantial separate architectural task,"
+  and finding 14's own fix explicitly left the chart-pattern lifecycle
+  registry (FORMING/CONFIRMED/RETESTING/TRADED/INVALIDATED/EXPIRED,
+  consumed-pattern suppression) unimplemented in source -- both were
+  real, disclosed, PARTIAL fixes, not silently-dropped ones, but "all 22
+  resolved" as a blanket headline obscured that distinction. Round 9's
+  own remediation (this same document's next history entry) has SINCE
+  closed the chart-pattern lifecycle gap in full and formally registered
+  the mode-first routing-order gap as `TASK-043_MODE_FIRST_ROUTING_ARCHITECTURE.md`
+  (not yet implemented) rather than leaving it another unnumbered
+  "future task."** Full evidence retained at
   `09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt`,
   covering the EA, `EquityTickRecorder.mq5`, and all 39 `Test_*.mq5`/
   `Export_*.mq5` scripts -- 41 targets, not just this round's own touched
@@ -1016,3 +1038,39 @@ so this canonical file does not read as if history stopped at round 2.
   descriptions, and `TASKS.md`'s own stale counts/status mismatches. See
   `09_HANDOVERS/claude_to_codex/TASK-028_round8_handover.md` for the full,
   per-finding commit-by-commit account.
+
+- **Round 9 (2026-07-27), a ninth independent Codex review** (requested
+  per round 8's own handover): **23 findings (7 P0, 14 P1, 2 P2),
+  disposition CHANGES REQUESTED**, written to
+  `09_HANDOVERS/codex_to_claude/TASK-028_review.md` (commit `c70ee72`).
+  **In progress as of this entry** (this row is updated in place
+  as remediation continues, per this project's own established
+  discipline of never claiming a round "fully resolved" before it
+  genuinely is): all 7 P0s resolved (hard-risk cap still fail-open/
+  raceable/unenforced post-fill; risk persistence still non-transactional/
+  unsafe; durable intent race/wrong-order-correlation/premature-clear;
+  partial/async fill terminal-state handling still unsafe; FairEconomy
+  accepting partial/malformed calendar payload as safe; mandatory-close/
+  no-stop obligations silently stopping retry on write failure; `OnInit`
+  permitting settings that defeat hard limits) and all 14 P1s resolved
+  (cash-flow deals causing false daily/weekly breach before rebasing;
+  async fills absent from machine-readable journal evidence; mode-first
+  routing architecture registered as `TASK-043` rather than implemented
+  under time pressure; chart-pattern lifecycle registry built in full;
+  CSV+JSON publish rollback destroying a prior valid report; max_retained_errors
+  bypassed for excluded/non-file candidates; Python/MQL pattern comparator
+  accepting different/non-finite datasets; stale pattern-export docs +
+  notebook 09 self-comparison honestly re-labelled, not claimed a real
+  MQL cross-check; equity analysis accepting blank identity + wrong
+  daily-reset clock; journal schema still admitting blank/out-of-domain
+  provenance via whitespace; performance_breakdown validating normalized
+  news_state but grouping the unnormalized original; the nominal 500 MB
+  CSV ceiling still permitting multi-gigabyte peak memory; the three
+  incompatible bar-0 conventions registered as `TASK-044` rather than
+  unified under time pressure; compile-evidence false Git provenance
+  corrected, MQL runtime execution remains honestly disclosed as
+  sandbox-blocked, not fabricated). The 2 P2s (canonical docs contradicting
+  reality yet again -- this same history entry's own correction; committed
+  notebook output/diff hygiene) are addressed by this same remediation
+  pass. See `09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md`
+  (once written) for the full, per-finding commit-by-commit account.
