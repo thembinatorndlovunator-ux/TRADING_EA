@@ -51,6 +51,7 @@ utility for whichever exports exist.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -1383,6 +1384,15 @@ def detect_all_patterns(
     return pd.DataFrame(rows)
 
 
+# **Added, 2026-07-27 Codex review finding (ninth round, P1 finding 14):**
+# the complete bar-identity column set Export_PatternDetectorResults.mq5's
+# own row shape always carries (symbol, timestamp, OHLC, ATR) --
+# compare_to_mql5_export now requires ALL of these in 'python_identity',
+# not a caller-chosen subset (see that function's own header for why).
+REQUIRED_IDENTITY_COLUMNS = {"symbol", "timestamp", "open", "high", "low", "close", "atr"}
+NUMERIC_IDENTITY_COLUMNS = {"open", "high", "low", "close", "atr"}
+
+
 def compare_to_mql5_export(
     python_results: pd.DataFrame,
     mql5_export_csv: Path,
@@ -1429,19 +1439,53 @@ def compare_to_mql5_export(
     comparison is even attempted -- two tables that never actually
     analyzed the same underlying chart segment can no longer silently
     "agree" on booleans alone.
+
+    **Rewritten, 2026-07-27 Codex review finding (ninth round, P1 finding
+    14):** the "at minimum open/high/low/close" allowance let a caller
+    silently OMIT symbol/timestamp/atr from 'python_identity' -- since a
+    column that is simply absent is never compared at all, matching OHLC
+    against an MQL5 row carrying the WRONG symbol, a 1999 timestamp, and
+    atr=999 returned zero disagreements (the review's own reproduced
+    counterexample). 'python_identity' must now include the COMPLETE
+    exporter identity (symbol, timestamp, open, high, low, close, atr --
+    Export_PatternDetectorResults.mq5's own full row shape), not a
+    caller-chosen subset.
+
+    Also, numeric identity was never required to be FINITE: NaN
+    comparisons are always False in Python (``abs(nan - x) > tolerance``
+    is False), so a Python close=NaN against a finite MQL close silently
+    reported "no mismatch" -- the review's own second reproduced
+    counterexample. Every numeric identity column on BOTH sides is now
+    asserted finite (via ``csv_io.assert_finite_columns``, the same
+    non-finite/missing-value check this project's own CSV readers already
+    use) before any identity comparison runs. 'price_tolerance' itself is
+    now required to be finite and non-negative -- previously unchecked, so
+    a negative or NaN/inf tolerance could silently make every comparison
+    trivially pass or trivially fail.
     """
+
+    if not math.isfinite(price_tolerance) or price_tolerance < 0:
+        raise CsvSchemaError(
+            f"compare_to_mql5_export: price_tolerance must be finite and non-negative, got "
+            f"{price_tolerance!r}"
+        )
 
     pattern_columns = [c for c in python_results.columns if c != "k"]
     if python_results["k"].duplicated().any():
         raise CsvSchemaError("compare_to_mql5_export: python_results has duplicate 'k' values")
 
     identity_columns = [c for c in python_identity.columns if c != "k"]
-    if not {"open", "high", "low", "close"}.issubset(identity_columns):
+    missing_identity = REQUIRED_IDENTITY_COLUMNS - set(identity_columns)
+    if missing_identity:
         raise CsvSchemaError(
-            "compare_to_mql5_export: python_identity must include at minimum "
-            "open/high/low/close -- a bar's own defining numeric identity -- to prove both "
-            "sides actually analyzed the same underlying chart segment"
+            "compare_to_mql5_export: python_identity must include the COMPLETE exporter "
+            f"identity ({sorted(REQUIRED_IDENTITY_COLUMNS)}) -- missing: "
+            f"{sorted(missing_identity)}. A caller-chosen subset (e.g. OHLC only) previously "
+            "let symbol/timestamp/ATR mismatches against the MQL5 export go entirely unchecked."
         )
+    assert_finite_columns(
+        python_identity, sorted(NUMERIC_IDENTITY_COLUMNS), Path("python_identity")
+    )
     if python_identity["k"].duplicated().any():
         raise CsvSchemaError("compare_to_mql5_export: python_identity has duplicate 'k' values")
     if set(python_identity["k"]) != set(python_results["k"]):
@@ -1454,6 +1498,7 @@ def compare_to_mql5_export(
         mql5_export_csv, {"k", *pattern_columns, *identity_columns}
     )
     assert_unique_ids(mql5_results, "k", mql5_export_csv)
+    assert_finite_columns(mql5_results, sorted(NUMERIC_IDENTITY_COLUMNS), mql5_export_csv)
 
     merged = python_results.merge(
         mql5_results, on="k", how="outer", suffixes=("_python", "_mql5"), indicator=True

@@ -1249,8 +1249,61 @@ def test_run_writes_provenance_sidecar(tmp_path):
     assert payload["summary"]["n_bars"] == 2
 
 
-def _identity_df(k_values, opens, highs, lows, closes):
-    return pd.DataFrame({"k": k_values, "open": opens, "high": highs, "low": lows, "close": closes})
+def _identity_df(k_values, opens, highs, lows, closes, *, symbols=None, timestamps=None, atrs=None):
+    """Builds a python_identity DataFrame with the COMPLETE exporter
+    identity now required by compare_to_mql5_export (Codex round-9 P1
+    finding 14) -- symbol/timestamp/atr default to arbitrary-but-fixed
+    values when the caller doesn't care about them for a given test, so
+    existing OHLC-focused call sites don't all need to invent their own."""
+
+    n = len(k_values)
+    return pd.DataFrame(
+        {
+            "k": k_values,
+            "symbol": symbols if symbols is not None else ["TESTSYM"] * n,
+            "timestamp": timestamps
+            if timestamps is not None
+            else [f"2026-01-01T00:{i:02d}:00Z" for i in range(n)],
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "atr": atrs if atrs is not None else [1.0] * n,
+        }
+    )
+
+
+def _mql5_export_df(
+    k_values,
+    opens,
+    highs,
+    lows,
+    closes,
+    *,
+    symbols=None,
+    timestamps=None,
+    atrs=None,
+    **pattern_columns,
+):
+    """Builds an MQL5-export-shaped DataFrame carrying the SAME complete
+    identity columns as _identity_df, plus whichever pattern boolean
+    columns the caller passes as keyword arguments."""
+
+    n = len(k_values)
+    data = {
+        "k": k_values,
+        "symbol": symbols if symbols is not None else ["TESTSYM"] * n,
+        "timestamp": timestamps
+        if timestamps is not None
+        else [f"2026-01-01T00:{i:02d}:00Z" for i in range(n)],
+        "open": opens,
+        "high": highs,
+        "low": lows,
+        "close": closes,
+        "atr": atrs if atrs is not None else [1.0] * n,
+    }
+    data.update(pattern_columns)
+    return pd.DataFrame(data)
 
 
 def test_compare_to_mql5_export_reports_disagreements(tmp_path):
@@ -1261,16 +1314,14 @@ def test_compare_to_mql5_export_reports_disagreements(tmp_path):
         [0, 1], [100.0, 101.0], [102.0, 103.0], [99.0, 100.0], [101.0, 102.0]
     )
     mql5_export = tmp_path / "mql5_export.csv"
-    pd.DataFrame(
-        {
-            "k": [0, 1],
-            "open": [100.0, 101.0],
-            "high": [102.0, 103.0],
-            "low": [99.0, 100.0],
-            "close": [101.0, 102.0],
-            "bullish_engulfing": [False, False],
-            "bearish_engulfing": [False, False],
-        }
+    _mql5_export_df(
+        [0, 1],
+        [100.0, 101.0],
+        [102.0, 103.0],
+        [99.0, 100.0],
+        [101.0, 102.0],
+        bullish_engulfing=[False, False],
+        bearish_engulfing=[False, False],
     ).to_csv(mql5_export, index=False)
 
     disagreements = compare_to_mql5_export(
@@ -1280,17 +1331,123 @@ def test_compare_to_mql5_export_reports_disagreements(tmp_path):
     assert disagreements.iloc[0]["k"] == 0
 
 
-def test_compare_to_mql5_export_requires_ohlc_identity_columns():
+def test_compare_to_mql5_export_requires_complete_identity_columns():
     """Regression for a Codex review finding (2026-07-22, eighth round, P1
-    finding 17): python_identity must include at minimum open/high/low/
-    close -- a bar's own defining numeric identity -- or this check cannot
-    prove anything about which bars were actually analyzed."""
+    finding 17), tightened 2026-07-27 (ninth round, P1 finding 14):
+    python_identity must include the COMPLETE exporter identity (symbol,
+    timestamp, open, high, low, close, atr) -- an OHLC-only subset was
+    previously accepted as "at minimum enough," which let symbol/
+    timestamp/atr mismatches against the MQL5 export go entirely
+    unchecked (see test_compare_to_mql5_export_rejects_ohlc_only_identity_
+    against_wrong_symbol_timestamp_atr below for that exact scenario)."""
 
     python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
-    incomplete_identity = pd.DataFrame({"k": [0], "open": [100.0]})  # missing high/low/close
-    with pytest.raises(CsvSchemaError):
+    incomplete_identity = pd.DataFrame({"k": [0], "open": [100.0]})  # missing everything else
+    with pytest.raises(CsvSchemaError, match="COMPLETE exporter"):
         compare_to_mql5_export(
             python_results, Path("unused.csv"), python_identity=incomplete_identity
+        )
+
+
+def test_compare_to_mql5_export_rejects_ohlc_only_identity_against_wrong_symbol_timestamp_atr(
+    tmp_path,
+):
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 14): the review's own reproduced counterexample -- matching
+    OHLC against an MQL5 row carrying the WRONG symbol, a 1999 timestamp,
+    and atr=999 previously returned ZERO disagreements, because
+    'python_identity' only required OHLC and the caller simply never
+    included symbol/timestamp/atr, so those columns were never compared at
+    all. Now that the complete identity is required, this mismatch is
+    caught by the identity check itself, before any pattern comparison."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df(
+        [0],
+        [100.0],
+        [102.0],
+        [99.0],
+        [101.0],
+        symbols=["XAUUSD"],
+        timestamps=["2026-07-27T12:00:00Z"],
+        atrs=[1.5],
+    )
+    mql5_export = tmp_path / "mql5_export.csv"
+    _mql5_export_df(
+        [0],
+        [100.0],
+        [102.0],
+        [99.0],
+        [101.0],  # identical OHLC
+        symbols=["EURUSD"],  # wrong symbol
+        timestamps=["1999-01-01T00:00:00Z"],  # wrong (1999) timestamp
+        atrs=[999.0],  # wrong ATR
+        bullish_engulfing=[True],  # matching boolean flag
+    ).to_csv(mql5_export, index=False)
+
+    with pytest.raises(CsvSchemaError, match="does not describe the same underlying bars"):
+        compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
+
+
+def test_compare_to_mql5_export_rejects_non_finite_python_identity():
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 14): NaN comparisons are always False in Python
+    (``abs(nan - x) > tolerance`` is False), so a Python close=NaN against
+    a finite MQL close previously reported "no mismatch" -- a non-finite
+    identity value must now be rejected outright, before any comparison is
+    even attempted."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df([0], [100.0], [102.0], [99.0], [float("nan")])
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(python_results, Path("unused.csv"), python_identity=python_identity)
+
+
+def test_compare_to_mql5_export_rejects_non_finite_mql5_identity(tmp_path):
+    """Symmetric case: a non-finite identity value on the MQL5 SIDE must
+    equally be rejected, not silently compared against a finite Python
+    value via a NaN-tolerant comparison."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df([0], [100.0], [102.0], [99.0], [101.0])
+    mql5_export = tmp_path / "mql5_export.csv"
+    _mql5_export_df([0], [100.0], [102.0], [99.0], [float("nan")], bullish_engulfing=[True]).to_csv(
+        mql5_export, index=False
+    )
+
+    with pytest.raises(CsvSchemaError):
+        compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
+
+
+def test_compare_to_mql5_export_rejects_negative_price_tolerance():
+    """Regression for a Codex review finding (2026-07-27, ninth round, P1
+    finding 14): price_tolerance was previously entirely unchecked -- a
+    negative value would make every finite numeric identity comparison
+    trivially fail (a difference of 0.0 is never > a negative tolerance's
+    own... actually >, so this is the inverse risk: silently PASSING
+    everything). Either way, an invalid tolerance must be rejected
+    outright rather than silently changing the comparison's own meaning."""
+
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df([0], [100.0], [102.0], [99.0], [101.0])
+    with pytest.raises(CsvSchemaError, match="finite and non-negative"):
+        compare_to_mql5_export(
+            python_results,
+            Path("unused.csv"),
+            python_identity=python_identity,
+            price_tolerance=-1.0,
+        )
+
+
+def test_compare_to_mql5_export_rejects_non_finite_price_tolerance():
+    python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
+    python_identity = _identity_df([0], [100.0], [102.0], [99.0], [101.0])
+    with pytest.raises(CsvSchemaError, match="finite and non-negative"):
+        compare_to_mql5_export(
+            python_results,
+            Path("unused.csv"),
+            python_identity=python_identity,
+            price_tolerance=float("nan"),
         )
 
 
@@ -1367,16 +1524,9 @@ def test_compare_to_mql5_export_rejects_non_overlapping_keys(tmp_path):
     python_results = pd.DataFrame({"k": [1], "bullish_engulfing": [True]})
     python_identity = _identity_df([1], [100.0], [101.0], [99.0], [100.5])
     mql5_export = tmp_path / "mql5_export.csv"
-    pd.DataFrame(
-        {
-            "k": [0],
-            "open": [100.0],
-            "high": [101.0],
-            "low": [99.0],
-            "close": [100.5],
-            "bullish_engulfing": [True],
-        }
-    ).to_csv(mql5_export, index=False)
+    _mql5_export_df([0], [100.0], [101.0], [99.0], [100.5], bullish_engulfing=[True]).to_csv(
+        mql5_export, index=False
+    )
 
     with pytest.raises(CsvSchemaError):
         compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
@@ -1395,15 +1545,13 @@ def test_compare_to_mql5_export_rejects_duplicate_mql5_key(tmp_path):
     python_results = pd.DataFrame({"k": [0], "bullish_engulfing": [True]})
     python_identity = _identity_df([0], [100.0], [101.0], [99.0], [100.5])
     mql5_export = tmp_path / "mql5_export.csv"
-    pd.DataFrame(
-        {
-            "k": [0, 0],
-            "open": [100.0, 100.0],
-            "high": [101.0, 101.0],
-            "low": [99.0, 99.0],
-            "close": [100.5, 100.5],
-            "bullish_engulfing": [True, False],
-        }
+    _mql5_export_df(
+        [0, 0],
+        [100.0, 100.0],
+        [101.0, 101.0],
+        [99.0, 99.0],
+        [100.5, 100.5],
+        bullish_engulfing=[True, False],
     ).to_csv(mql5_export, index=False)
     with pytest.raises(CsvSchemaError):
         compare_to_mql5_export(python_results, mql5_export, python_identity=python_identity)
