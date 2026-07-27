@@ -68,10 +68,17 @@ before any bar has closed) -- but `analyse_giveback.py` builds its
 R-paths from bar CLOSE prices (its own index 0 already reflects the
 entry bar's close, not a pre-bar `0.0`), and notebook 02's synthetic
 fixtures begin a path at `+0.5R`. All three currently use a DIFFERENT
-convention for what "index/bar 0" means. Picking one canonical
-convention and updating the other two to match is a real, not-yet-done
-follow-up; do not assume R-paths from these three sources are
-interchangeable today.
+convention for what "index/bar 0" means; do not assume R-paths from
+these three sources are interchangeable today.
+
+**Corrected, 2026-07-27 (Codex review finding, ninth round, P1 finding
+20):** "a real, not-yet-done follow-up" above previously had no numbered
+owner -- round-7's own P2 finding 20 already established that an
+unnumbered "future task" is not a real owner. Registered as
+`TASK-044_BAR_ZERO_CONVENTION_UNIFICATION.md`, which recommends THIS
+module's own existing convention (index 0 == `0.0`, pre-bar) as the
+canonical one and names exactly what `analyse_giveback.py`/notebook 02
+each need to change to match it.
 """
 
 from __future__ import annotations
