@@ -517,6 +517,34 @@ def test_max_retained_errors_limit_raises(tmp_path):
         read_journal_directory(tmp_path, max_retained_errors=10)
 
 
+def test_max_retained_errors_limit_raises_mid_file_on_validation_errors(tmp_path):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 16): the budget check previously ran ONLY after an entire
+    file's records had all been schema-validated -- five syntactically
+    valid, schema-invalid records with max_retained_errors=1 were all
+    validated and retained (this test's own exact reported
+    counterexample) before JournalReaderLimitError ever raised, so the
+    claimed memory bound did not actually hold for validation errors
+    within one file. The fix checks the budget immediately after each
+    validation-error append, inside the loop, so it now raises on the
+    SECOND schema-invalid record (the first is within budget; the second
+    exceeds max_retained_errors=1), never having validated/retained a
+    third, fourth, or fifth."""
+
+    from data_collection.journal_reader import JournalReaderLimitError
+
+    # Five syntactically VALID JSON lines, each schema-INVALID (blank
+    # market_family/intraday_mode/etc., per make_schema_invalid_record's
+    # own fixture shape) -- never a parse error, so this exercises the
+    # VALIDATION-error budget specifically, not the already-correctly-
+    # bounded parse-error one.
+    lines = "\n".join(json.dumps(make_schema_invalid_record()) for _ in range(5))
+    (tmp_path / "decisions_20260721.jsonl").write_text(lines + "\n", encoding="utf-8")
+
+    with pytest.raises(JournalReaderLimitError):
+        read_journal_directory(tmp_path, max_retained_errors=1)
+
+
 def test_glob_traversal_outside_directory_is_reported_not_silently_skipped(tmp_path):
     """Regression for a Codex review finding (2026-07-22, sixth round): a
     candidate path resolving outside 'directory' was previously silently

@@ -336,17 +336,16 @@ def run(
     joined["in_news_blackout"] = in_blackout_flags
     joined["triggering_event_id"] = triggering_ids
 
+    safe_joined = None
     if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
         # Sanitize caller-controlled journal strings against spreadsheet-
         # formula injection before export -- same fix as join_trade_journal.py.
         safe_joined = joined.copy()
         for col in safe_joined.select_dtypes(include=["object", "str"]).columns:
             safe_joined[col] = safe_joined[col].map(sanitize_for_csv)
-        atomic_write_dataframe_csv(safe_joined, output_csv)
 
+    payload = None
     if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -361,7 +360,6 @@ def run(
                 "min_importance": min_importance,
             },
         }
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
     # **Fixed, 2026-07-22 Codex review finding (third round): row-level
     # invalid-journal details were previously persisted ONLY if the
@@ -372,8 +370,8 @@ def run(
     # check -- fourth-round finding), whenever any other output is
     # requested, matching join_trade_journal.py's own fix for the
     # identical gap.**
+    error_payload = None
     if errors_json is not None:
-        errors_json.parent.mkdir(parents=True, exist_ok=True)
         error_payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -400,9 +398,43 @@ def run(
                 for e in read_result.validation_errors
             ],
         }
-        atomic_write_text(
-            errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False)
-        )
+
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): output_csv/summary_json/errors_json were previously written as
+    # three separate calls, each individually atomic but NOT atomic as a
+    # GROUP -- a fault injected during summary_json or errors_json left
+    # output_csv genuinely present on disk with no (or only partial)
+    # provenance. All three are now written under one try/except that
+    # rolls back (removes) every file THIS call already wrote if a later
+    # write in the same group fails, so a caller never observes a partial
+    # publication: either every requested file exists, or none of them do.**
+    written_paths: list[Path] = []
+    try:
+        if output_csv is not None:
+            output_csv.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_dataframe_csv(safe_joined, output_csv)
+            written_paths.append(output_csv)
+
+        if summary_json is not None:
+            summary_json.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
+            )
+            written_paths.append(summary_json)
+
+        if errors_json is not None:
+            errors_json.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False)
+            )
+            written_paths.append(errors_json)
+    except BaseException:
+        for written_path in written_paths:
+            try:
+                written_path.unlink()
+            except OSError:
+                pass
+        raise
 
     return NewsJoinResult(
         joined=joined,

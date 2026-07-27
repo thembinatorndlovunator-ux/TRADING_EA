@@ -18,7 +18,10 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 PIPELINE_VERSION = "0.3.0"  # bump when a pipeline's OUTPUT SHAPE changes,
 # not on every code edit -- matches this
@@ -203,6 +206,72 @@ def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None
         except OSError:
             pass
         raise
+
+
+def publish_dataframe_csv_and_json(
+    df: Optional[pd.DataFrame],
+    output_csv: Optional[Path],
+    payload: Optional[dict],
+    summary_json: Optional[Path],
+) -> None:
+    """Publishes an optional result CSV and an optional provenance/summary
+    JSON sidecar as ONE atomic unit whenever BOTH are requested together.
+
+    **Added, 2026-07-22 Codex review finding (eighth round, P1 finding
+    16):** every pipeline in this layer that produces a result CSV plus a
+    mandatory provenance JSON sidecar (pattern_validation.py cited as the
+    review's own representative example; the identical shape recurs in
+    analyse_baseline.py, analyse_giveback.py, calculate_mfe_mae.py,
+    join_news_events.py, join_signal_to_outcome.py, join_trade_journal.py,
+    parameter_stability.py, performance_breakdown.py, walk_forward.py)
+    wrote the result CSV via atomic_write_dataframe_csv, THEN the summary
+    JSON via atomic_write_text -- each individually atomic (write-to-temp-
+    then-rename), but NOT atomic as a PAIR: a fault injected during the
+    second (JSON) write left the first (CSV) file genuinely, durably
+    present on disk with no accompanying provenance at all, exactly the
+    "apparently valid result with no provenance" failure mode round 7's
+    own P1 finding 16 fix already closed for one specific ordering bug
+    (an invalid repo_path raised AFTER the CSV existed) but did not make
+    the two writes atomic as a unit.
+
+    This function writes the CSV first (if requested), then the JSON (if
+    requested); if the JSON write fails and the CSV was just written by
+    THIS call, the CSV is removed (best-effort) before the original
+    exception propagates -- the review's own suggested "remove the staged
+    result on failure" policy, simpler than a full manifest/directory
+    transaction while giving the same guarantee this project actually
+    needs: never a result CSV on disk without its mandatory provenance
+    sidecar. If only one of output_csv/summary_json was requested, no
+    rollback is needed (that single write's own atomicity already
+    suffices) and none is attempted.
+    """
+
+    wrote_csv_this_call = False
+    if output_csv is not None and df is not None:
+        # Local import (not at module top) to avoid a hard import-time
+        # dependency from this lightweight provenance module onto csv_io.py
+        # for every caller, even ones that never touch a DataFrame.
+        from analysis.csv_io import atomic_write_dataframe_csv
+
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_dataframe_csv(df, output_csv)
+        wrote_csv_this_call = True
+
+    if summary_json is not None and payload is not None:
+        import json
+
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            atomic_write_text(
+                summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
+            )
+        except BaseException:
+            if wrote_csv_this_call:
+                try:
+                    output_csv.unlink()
+                except OSError:
+                    pass
+            raise
 
 
 @dataclass(frozen=True)

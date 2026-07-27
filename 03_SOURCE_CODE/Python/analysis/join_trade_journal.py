@@ -163,8 +163,8 @@ def run(
     dup_signal_id = find_duplicate_signal_ids(df)
     dup_timestamp_symbol = find_duplicate_timestamp_symbol(df)
 
+    safe_df = None
     if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
         # **Fixed, 2026-07-22 Codex review finding:** caller-controlled
         # journal strings (strategy/setup/pattern names, etc.) were
         # written directly to CSV; a value like "=CMD(...)" could become
@@ -174,18 +174,6 @@ def run(
         safe_df = df.copy()
         for col in safe_df.select_dtypes(include=["object", "str"]).columns:
             safe_df[col] = safe_df[col].map(sanitize_for_csv)
-        atomic_write_dataframe_csv(safe_df, output_csv)
-
-    if output_json is not None:
-        output_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(
-            output_json,
-            json.dumps(
-                [r.model_dump(mode="json") for r in read_result.valid_records],
-                indent=2,
-                allow_nan=False,
-            ),
-        )
 
     # **Fixed, 2026-07-22 Codex review finding (third round): provenance
     # was previously written ONLY into the optional errors_json report --
@@ -195,8 +183,8 @@ def run(
     # the collision check -- fourth-round finding) and always written
     # whenever ANY output is requested, even if the caller never asks for
     # errors_json explicitly.**
+    error_report = None
     if errors_json is not None:
-        errors_json.parent.mkdir(parents=True, exist_ok=True)
         error_report = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -232,9 +220,48 @@ def run(
             "duplicate_signal_id_records": dup_signal_id.to_dict(orient="records"),
             "duplicate_timestamp_symbol_records": dup_timestamp_symbol.to_dict(orient="records"),
         }
-        atomic_write_text(
-            errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False)
-        )
+
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): output_csv/output_json/errors_json were previously written as
+    # three separate calls, each individually atomic but NOT atomic as a
+    # GROUP -- a fault injected during a later write left an earlier one
+    # genuinely present on disk with no (or only partial) provenance. All
+    # three are now written under one try/except that rolls back (removes)
+    # every file THIS call already wrote if a later write in the same group
+    # fails, so a caller never observes a partial publication: either every
+    # requested file exists, or none of them do.**
+    written_paths: list[Path] = []
+    try:
+        if output_csv is not None:
+            output_csv.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_dataframe_csv(safe_df, output_csv)
+            written_paths.append(output_csv)
+
+        if output_json is not None:
+            output_json.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                output_json,
+                json.dumps(
+                    [r.model_dump(mode="json") for r in read_result.valid_records],
+                    indent=2,
+                    allow_nan=False,
+                ),
+            )
+            written_paths.append(output_json)
+
+        if errors_json is not None:
+            errors_json.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False)
+            )
+            written_paths.append(errors_json)
+    except BaseException:
+        for written_path in written_paths:
+            try:
+                written_path.unlink()
+            except OSError:
+                pass
+        raise
 
     return JoinTradeJournalResult(
         read_result=read_result,

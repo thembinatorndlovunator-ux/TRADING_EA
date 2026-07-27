@@ -37,7 +37,6 @@ as if it aligned with actual price data.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from dataclasses import dataclass
@@ -54,7 +53,6 @@ from analysis.csv_io import (
     assert_path_not_same_file,
     assert_unique_composite_key,
     assert_unique_ids,
-    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
@@ -68,9 +66,9 @@ from analysis.metrics import (
     win_rate,
 )
 from analysis.report_metadata import (
-    atomic_write_text,
     build_report_metadata,
     combine_labeled_hashes,
+    publish_dataframe_csv_and_json,
 )
 from analysis.time_utils import parse_iso8601_utc, parse_utc_series
 from analysis.trade_math import (
@@ -415,16 +413,14 @@ def run(
             dataset_hash_override=combined_hash,
         )
 
+    out_df = None
     if output_csv is not None:
         # trade_id is a caller-controlled string -- sanitized against
         # spreadsheet-formula injection (Codex review finding,
-        # 2026-07-22, third round). Written atomically (temp-then-rename).
-        atomic_write_dataframe_csv(
-            sanitize_dataframe_for_csv(pd.DataFrame([c.__dict__ for c in comparisons])), output_csv
-        )
+        # 2026-07-22, third round).
+        out_df = sanitize_dataframe_for_csv(pd.DataFrame([c.__dict__ for c in comparisons]))
 
     if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
         summary = {
             "metadata": metadata.to_dict(),
             "n_trades_compared": len(comparisons),
@@ -569,7 +565,14 @@ def run(
             except InsufficientSampleError:
                 pass
             summary[model] = model_summary
-        atomic_write_text(summary_json, json.dumps(summary, indent=2, default=str, allow_nan=False))
+
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        out_df, output_csv, summary if summary_json is not None else None, summary_json
+    )
 
     return GivebackRunResult(comparisons=comparisons, row_errors=row_errors)
 

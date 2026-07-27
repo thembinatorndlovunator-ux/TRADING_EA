@@ -51,7 +51,6 @@ utility for whichever exports exist.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -67,11 +66,10 @@ from analysis.csv_io import (
     assert_output_paths_distinct,
     assert_path_not_same_file,
     assert_unique_ids,
-    atomic_write_dataframe_csv,
     read_csv_with_required_columns,
     read_csv_with_required_columns_and_hash,
 )
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import build_report_metadata, publish_dataframe_csv_and_json
 
 CP_BODY_EPSILON = 0.00001
 CP_PIN_BAR_MIN_WICK_TO_BODY = 2.0
@@ -1547,6 +1545,7 @@ def run(
     # output_csv is written, not after -- previously, an invalid repo_path
     # raised AFTER the result CSV already existed on disk, leaving an
     # apparently-valid result with no provenance sidecar at all.**
+    payload = None
     if summary_json is not None:
         metadata = build_report_metadata(
             [ohlc_csv],
@@ -1570,13 +1569,14 @@ def run(
             },
         }
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result, output_csv)
-
-    if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- a fault injected
+    # during the summary_json write left output_csv genuinely present on
+    # disk with no accompanying provenance. publish_dataframe_csv_and_json
+    # writes the CSV first, then the JSON, and removes the just-written CSV
+    # if the JSON write fails -- see that function's own docstring.**
+    publish_dataframe_csv_and_json(result, output_csv, payload, summary_json)
 
     return result
 

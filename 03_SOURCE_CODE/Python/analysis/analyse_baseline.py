@@ -51,7 +51,6 @@ rather than verified.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from pathlib import Path
@@ -68,7 +67,6 @@ from analysis.csv_io import (
     assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
-    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
@@ -82,7 +80,7 @@ from analysis.metrics import (
     profit_factor,
     win_rate,
 )
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import build_report_metadata, publish_dataframe_csv_and_json
 from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
@@ -536,8 +534,8 @@ def run(
         evaluation_period_days=evaluation_period_days,
     )
 
+    payload = None
     if output_json is not None:
-        output_json.parent.mkdir(parents=True, exist_ok=True)
         metadata = build_report_metadata(
             [trades_csv],
             symbol=symbol,
@@ -551,14 +549,20 @@ def run(
             dataset_hash_override=trades_csv_hash,
         )
         payload = {"metadata": metadata.to_dict(), "summary": summary}
-        atomic_write_text(output_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
 
-    if per_trade_csv is not None:
-        per_trade_csv.parent.mkdir(parents=True, exist_ok=True)
-        # symbol/trade_id are caller-controlled strings -- sanitized
-        # against spreadsheet-formula injection (Codex review finding,
-        # 2026-07-22, third round).
-        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(trades_sorted), per_trade_csv)
+    # symbol/trade_id are caller-controlled strings -- sanitized against
+    # spreadsheet-formula injection (Codex review finding, 2026-07-22,
+    # third round).
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_json then per_trade_csv as two separate calls
+    # was each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        sanitize_dataframe_for_csv(trades_sorted) if per_trade_csv is not None else None,
+        per_trade_csv,
+        payload,
+        output_json,
+    )
 
     return summary
 

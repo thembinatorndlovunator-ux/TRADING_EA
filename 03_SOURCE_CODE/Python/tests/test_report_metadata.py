@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import pandas as pd
+
 from analysis.report_metadata import (
     PIPELINE_VERSION,
     GitMetadataError,
@@ -13,6 +15,7 @@ from analysis.report_metadata import (
     combine_labeled_hashes,
     compute_dataset_hash,
     compute_file_sha256,
+    publish_dataframe_csv_and_json,
 )
 
 
@@ -146,3 +149,69 @@ def test_build_report_metadata(tmp_path):
     from datetime import datetime
 
     datetime.fromisoformat(metadata.generated_at_utc)
+
+
+# --- publish_dataframe_csv_and_json (atomic CSV+JSON pair) ------------------
+
+
+def test_publish_dataframe_csv_and_json_writes_both_on_success(tmp_path):
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+    output_csv = tmp_path / "result.csv"
+    summary_json = tmp_path / "result.summary.json"
+
+    publish_dataframe_csv_and_json(df, output_csv, {"n": 2}, summary_json)
+
+    assert output_csv.exists()
+    assert summary_json.exists()
+    assert summary_json.read_text(encoding="utf-8").strip().startswith("{")
+
+
+def test_publish_dataframe_csv_and_json_rolls_back_csv_when_json_write_fails(tmp_path, monkeypatch):
+    """Regression for a Codex review finding (2026-07-22, eighth round, P1
+    finding 16): writing the result CSV and its mandatory provenance JSON
+    sidecar as two separate atomic_write_* calls was each individually
+    atomic but NOT atomic as a PAIR -- a fault injected during the JSON
+    write left the CSV genuinely present on disk with no accompanying
+    provenance ("Fault-injecting a sidecar write failure leaves the result
+    CSV present without its provenance," the review's own words). This
+    fault-injects exactly that scenario directly against
+    publish_dataframe_csv_and_json and asserts the CSV is rolled back
+    (removed), not left orphaned."""
+
+    import analysis.report_metadata as report_metadata_module
+
+    def failing_atomic_write_text(path, content, encoding="utf-8"):
+        raise OSError("simulated disk failure writing the provenance sidecar")
+
+    monkeypatch.setattr(report_metadata_module, "atomic_write_text", failing_atomic_write_text)
+
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+    output_csv = tmp_path / "result.csv"
+    summary_json = tmp_path / "result.summary.json"
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        publish_dataframe_csv_and_json(df, output_csv, {"n": 2}, summary_json)
+
+    assert not output_csv.exists(), (
+        "the result CSV must be rolled back (removed) when the provenance JSON sidecar fails "
+        "to write -- a result CSV must never exist on disk without its mandatory provenance"
+    )
+    assert not summary_json.exists()
+
+
+def test_publish_dataframe_csv_and_json_only_csv_requested_no_rollback_logic_needed(tmp_path):
+    """When summary_json is not requested at all, only the CSV is written
+    -- no pairing/rollback concern applies (matches every pipeline's own
+    optional-output_csv-without-summary_json calling convention)."""
+
+    df = pd.DataFrame({"a": [1]})
+    output_csv = tmp_path / "result.csv"
+
+    publish_dataframe_csv_and_json(df, output_csv, None, None)
+
+    assert output_csv.exists()
+
+
+def test_publish_dataframe_csv_and_json_neither_requested_is_a_no_op(tmp_path):
+    df = pd.DataFrame({"a": [1]})
+    publish_dataframe_csv_and_json(df, None, None, None)  # must not raise

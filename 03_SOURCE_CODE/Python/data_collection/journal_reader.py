@@ -611,6 +611,20 @@ def read_journal_directory(
         total_bytes_seen += bytes_read
         per_file_hashes.append((source_label, file_hash))
 
+        # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+        # 16): the budget check previously ran ONLY after this ENTIRE file's
+        # records had all been schema-validated -- the remaining_error_budget
+        # computed above bounds PARSE errors within _read_lines_from_file,
+        # but nothing bounded VALIDATION errors appended in this loop until
+        # the file was fully processed. Five syntactically valid,
+        # schema-invalid records with max_retained_errors=1 were all
+        # validated and retained (this loop ran to completion) before the
+        # (then-only) post-loop check ever raised -- the claimed memory
+        # bound did not actually hold for validation errors within one
+        # file. The check now runs inside the loop, immediately after each
+        # append, so it fails fast the INSTANT the combined budget is
+        # exceeded, mid-file, exactly like _read_lines_from_file's own
+        # per-line parse-error bound already does.**
         for line_number, raw_record in parsed:
             try:
                 all_valid.append(validate_record(raw_record))
@@ -623,12 +637,20 @@ def read_journal_directory(
                         error=str(exc),
                     )
                 )
+                if len(all_parse_errors) + len(all_validation_errors) > max_retained_errors:
+                    raise JournalReaderLimitError(
+                        f"{directory}: retained parse/validation error count exceeds "
+                        f"max_retained_errors budget of {max_retained_errors} -- refusing to "
+                        f"retain any more error records"
+                    )
 
-        # **Added, 2026-07-22 Codex review finding (sixth round):** checked
-        # after each file (each file's own error count is already
-        # implicitly bounded by max_records) so a directory of many
-        # heavily-malformed files cannot retain an unbounded number of
-        # (up to 2000-char each) error records in memory.
+        # **Added, 2026-07-22 Codex review finding (sixth round):** a
+        # defensive, redundant re-check after each file -- the in-loop
+        # check above already fails fast on every validation error, but
+        # this also catches the (already correctly bounded) parse-error
+        # count from _read_lines_from_file itself, so a directory of many
+        # heavily-malformed files still cannot retain an unbounded number
+        # of (up to 2000-char each) error records in memory.
         if len(all_parse_errors) + len(all_validation_errors) > max_retained_errors:
             raise JournalReaderLimitError(
                 f"{directory}: retained parse/validation error count exceeds max_retained_errors "

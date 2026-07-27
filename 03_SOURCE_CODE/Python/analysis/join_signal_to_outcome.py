@@ -169,7 +169,6 @@ run the moment one does.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from pathlib import Path
@@ -181,15 +180,14 @@ from analysis.csv_io import (
     CsvSchemaError,
     assert_output_paths_distinct,
     assert_path_not_same_file,
-    atomic_write_dataframe_csv,
     read_csv_with_required_columns_and_hash,
     sanitize_dataframe_for_csv,
 )
 from analysis.metrics import InsufficientSampleError
 from analysis.report_metadata import (
-    atomic_write_text,
     build_report_metadata,
     combine_labeled_hashes,
+    publish_dataframe_csv_and_json,
 )
 
 REQUIRED_JOURNAL_COLUMNS = {"order_id"}
@@ -566,12 +564,8 @@ def run(
             dataset_hash_override=combined_hash,
         )
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(sanitize_dataframe_for_csv(joined_df), output_csv)
-
+    payload = None
     if errors_json is not None:
-        errors_json.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "metadata": metadata.to_dict(),
             "summary": {
@@ -582,7 +576,17 @@ def run(
             },
             "row_errors": row_errors,
         }
-        atomic_write_text(errors_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then errors_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        sanitize_dataframe_for_csv(joined_df) if output_csv is not None else None,
+        output_csv,
+        payload,
+        errors_json,
+    )
 
     return joined_df, row_errors
 

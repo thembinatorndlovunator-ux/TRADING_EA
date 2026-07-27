@@ -42,7 +42,6 @@ parameter genuinely selected on the train window.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,7 +58,6 @@ from analysis.csv_io import (
     assert_path_not_same_file,
     assert_unique_ids,
     assert_valid_stop_geometry,
-    atomic_write_dataframe_csv,
     parse_is_long,
     read_csv_with_required_columns_and_hash,
 )
@@ -70,7 +68,7 @@ from analysis.metrics import (
     expectancy,
     win_rate,
 )
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import build_report_metadata, publish_dataframe_csv_and_json
 from analysis.time_utils import parse_utc_series
 from analysis.trade_math import compute_r_multiple
 
@@ -438,13 +436,14 @@ def run(
             },
         }
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result_df, output_csv)
-
-    if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring for the full
+    # "result CSV present without its provenance" failure mode this closes.**
+    publish_dataframe_csv_and_json(
+        result_df, output_csv, payload if summary_json is not None else None, summary_json
+    )
 
     return result_df
 

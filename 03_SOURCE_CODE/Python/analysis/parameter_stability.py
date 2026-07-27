@@ -77,7 +77,6 @@ interchangeable today.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from dataclasses import dataclass
@@ -92,12 +91,11 @@ from analysis.csv_io import (
     assert_output_paths_distinct,
     assert_path_not_same_file,
     assert_unique_composite_key,
-    atomic_write_dataframe_csv,
     read_csv_with_required_columns_and_hash,
 )
 from analysis.exit_simulation import simulate_giveback_path
 from analysis.metrics import MAX_N_RESAMPLES, MIN_N_RESAMPLES, bootstrap_confidence_interval
-from analysis.report_metadata import atomic_write_text, build_report_metadata
+from analysis.report_metadata import build_report_metadata, publish_dataframe_csv_and_json
 
 REQUIRED_COLUMNS = {"path_id", "bar_index", "r_value"}
 # ExitManager.mqh's EM_ShouldGivebackCloseV637 silently clamps giveback_percent
@@ -767,13 +765,13 @@ def run(
             },
         }
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result, output_csv)
-
-    if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        result, output_csv, payload if summary_json is not None else None, summary_json
+    )
 
     return result
 
@@ -849,13 +847,13 @@ def run_v811_sweep(
             },
         }
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result, output_csv)
-
-    if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        result, output_csv, payload if summary_json is not None else None, summary_json
+    )
 
     return result
 
@@ -933,13 +931,13 @@ def run_v637_2d_sweep(
             },
         }
 
-    if output_csv is not None:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_dataframe_csv(result, output_csv)
-
-    if summary_json is not None:
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False))
+    # **Fixed, 2026-07-22 Codex review finding (eighth round, P1 finding
+    # 16): writing output_csv then summary_json as two separate calls was
+    # each individually atomic but NOT atomic as a PAIR -- see
+    # publish_dataframe_csv_and_json's own docstring.**
+    publish_dataframe_csv_and_json(
+        result, output_csv, payload if summary_json is not None else None, summary_json
+    )
 
     return result
 
