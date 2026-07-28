@@ -207,6 +207,60 @@ void OnStart()
          "(the review's own exact counterexample)",
          mixed_any_missing == true);
 
+   //--- 8d2. **Codex review finding, tenth round, P0 finding 5**: the -----
+   //--- review's NEW exact counterexample -- a mixed payload where the -----
+   //--- malformed object's DATE ITSELF is missing (round-9's own mixed ------
+   //--- test above used a date-parseable-but-otherwise-malformed object, ----
+   //--- which the round-9 fix already caught; this is the DIFFERENT gap -----
+   //--- round-9 left open). raw_object_count=2, parsed_count=1 (the ---------
+   //--- malformed object is skipped for lacking a date) -- the round-8 -------
+   //--- "raw>0-but-parsed==0" guard does NOT catch this either, since ---------
+   //--- parsed_count is 1, not 0. -----------------------------------------------
+   string mixed_missing_date =
+      "[" +
+      "{\"title\":\"Benign Low-Impact Release\",\"country\":\"USD\"," +
+      "\"date\":\"2026-07-27T12:00:00Z\",\"impact\":\"Low\"," +
+      "\"forecast\":\"1.0\",\"previous\":\"0.9\"}," +
+      "{\"title\":\"Undated High-Impact Release\",\"country\":\"USD\"," +
+      "\"impact\":\"High\"}" + // malformed: no "date" field at all
+      "]";
+   string objs_missing_date[];
+   int raw_count_missing_date = FEP_SplitObjects(mixed_missing_date, objs_missing_date);
+   SNewsEvent mixed_missing_date_events[];
+   bool mixed_missing_date_any_missing;
+   int mixed_missing_date_count = FEP_ParseFeedJson(mixed_missing_date, mixed_missing_date_events,
+                                                      mixed_missing_date_any_missing);
+   Check("a mixed valid+missing-date payload contains 2 raw objects",
+         raw_count_missing_date == 2);
+   Check("a mixed valid+missing-date payload parses only the 1 date-having event "
+         "(so the raw>0-but-parsed==0 guard alone would NOT catch this either)",
+         mixed_missing_date_count == 1);
+   Check("FEP_ParseFeedJson correctly flags any_required_field_missing_out == true "
+         "when a missing-date object is mixed with a benign valid one (round-10's own "
+         "exact counterexample -- the specific gap round-9's own fix left open)",
+         mixed_missing_date_any_missing == true);
+
+   //--- 8d3. **Codex review finding, tenth round, P0 finding 5**: the -----
+   //--- same counterexample, but with an UNPARSEABLE (not merely absent) ---
+   //--- date string -- a distinct code path (FEP_ParseIso8601ToUtc's own ---
+   //--- parsed_ok==false branch) from the missing-date test above. ---------
+   string mixed_bad_date =
+      "[" +
+      "{\"title\":\"Benign Low-Impact Release\",\"country\":\"USD\"," +
+      "\"date\":\"2026-07-27T12:00:00Z\",\"impact\":\"Low\"}," +
+      "{\"title\":\"Malformed-Date High-Impact Release\",\"country\":\"USD\"," +
+      "\"date\":\"not-a-real-date\",\"impact\":\"High\"}" + // malformed: unparseable date
+      "]";
+   SNewsEvent mixed_bad_date_events[];
+   bool mixed_bad_date_any_missing;
+   int mixed_bad_date_count = FEP_ParseFeedJson(mixed_bad_date, mixed_bad_date_events,
+                                                 mixed_bad_date_any_missing);
+   Check("a mixed valid+unparseable-date payload parses only the 1 valid event",
+         mixed_bad_date_count == 1);
+   Check("FEP_ParseFeedJson correctly flags any_required_field_missing_out == true "
+         "when an unparseable-date object is mixed with a benign valid one",
+         mixed_bad_date_any_missing == true);
+
    //--- 8e. **Codex review finding, ninth round, P0 finding 5**: the ------
    //--- review's OTHER exact counterexample -- a bare {"date":...} object -
    //--- with no title/country/impact at all becomes a "valid" zero-impact -

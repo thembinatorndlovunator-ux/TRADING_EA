@@ -250,6 +250,16 @@ datetime FEP_ParseIso8601ToUtc(const string iso, bool &ok_out)
 //| has an impact value outside FEP_IsKnownImpact's own known vocabulary --                    |
 //| the live wrapper (FEP_FetchLive) uses this to reject the ENTIRE fetch                       |
 //| rather than silently caching a result with a gap in it.**                                   |
+//|                                                                    |
+//| **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 5):    |
+//| 'any_required_field_missing_out' is now ALSO set for an object with a         |
+//| MISSING or UNPARSEABLE date (previously these `continue`d before the             |
+//| flag was ever touched) -- a payload with one valid benign event and one              |
+//| high-impact object whose date was absent/malformed used to report                       |
+//| parsed_count=1 with the flag still false, so FEP_FetchLive's own "reject                     |
+//| on any malformed object" check never fired and the partial calendar was                         |
+//| accepted and cached as complete, silently hiding the one event that                                 |
+//| should have blocked trading.**                                                                          |
 //+------------------------------------------------------------------+
 int FEP_ParseFeedJson(const string json_text, SNewsEvent &events_out[],
                        bool &any_required_field_missing_out)
@@ -272,13 +282,31 @@ int FEP_ParseFeedJson(const string json_text, SNewsEvent &events_out[],
       string forecast_str = FEP_ExtractStringField(objects[i], "forecast");
       string previous_str = FEP_ExtractStringField(objects[i], "previous");
 
+      // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding
+      // 5):** a missing or unparseable date previously `continue`d BEFORE
+      // 'any_required_field_missing_out' was ever set -- a payload with one
+      // valid benign event and one high-impact object whose date was absent
+      // or malformed reported parsed_count=1 and the missing-field flag
+      // still false, so FEP_FetchLive's own (correct) "reject on any
+      // malformed object" check below never fired, and the entire partial
+      // calendar was accepted and cached as though it were complete. The
+      // flag is now set for EVERY structural defect -- missing date,
+      // unparseable date, or (unchanged) a date-parseable object missing
+      // title/country/impact -- before any `continue`, so no malformed
+      // object of any kind can escape detection.
       if(date_str == "")
+        {
+         any_required_field_missing_out = true;
          continue;
+        }
 
       bool parsed_ok;
       datetime scheduled_utc = FEP_ParseIso8601ToUtc(date_str, parsed_ok);
       if(!parsed_ok)
+        {
+         any_required_field_missing_out = true;
          continue;
+        }
 
       if(title == "" || country == "" || impact == "" || !FEP_IsKnownImpact(impact))
          any_required_field_missing_out = true;
