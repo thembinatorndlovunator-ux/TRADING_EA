@@ -143,17 +143,32 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
     "trade-server local time, never UTC").
     """
 
-    df, file_hash = read_csv_with_required_columns_and_hash(path, REQUIRED_COLUMNS)
+    # **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding
+    # 13):** this module's own docstring already claimed identity columns
+    # are read explicitly as strings, but 'dtype' was never actually passed
+    # to pandas here -- run_id/account_login/broker_server were inferred as
+    # whatever numeric/text type pandas guessed BEFORE the .apply(str)
+    # normalization below ever ran, so identities "001"/"0123" and "1"/"123"
+    # were already collapsed to 1/123 by the time that normalization saw
+    # them (the review's own reproduced counterexample: two genuinely
+    # different identities silently merged into one). dtype=str now forces
+    # pandas to preserve every identity column's own exact original text.
+    identity_cols = ["run_id", "account_login", "broker_server"]
+    df, file_hash = read_csv_with_required_columns_and_hash(
+        path, REQUIRED_COLUMNS, dtype={col: str for col in identity_cols}
+    )
     if df.empty:
         raise CsvSchemaError(f"{path}: zero rows")
 
     df = df.copy()
-    identity_cols = ["run_id", "account_login", "broker_server"]
     for col in identity_cols:
         # **Note:** ``Series.astype(str)`` does NOT reliably stringify a
         # NaN cell to the literal "nan" across pandas versions/dtypes (it
         # can leave the original float NaN object untouched) -- explicit
         # ``pd.isna`` handling below is required, not a stylistic choice.
+        # Still needed even with dtype=str above: a genuinely blank CSV
+        # cell is read as NaN regardless of the column's own dtype, and
+        # this also strips incidental whitespace.
         df[col] = df[col].apply(lambda v: "" if pd.isna(v) else str(v).strip())
         if (df[col] == "").any():
             raise CsvSchemaError(

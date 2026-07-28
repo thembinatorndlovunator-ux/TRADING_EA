@@ -186,6 +186,58 @@ def test_read_equity_ticks_csv_rejects_mixed_run_ids(tmp_path):
         read_equity_ticks_csv(path)
 
 
+def test_read_equity_ticks_csv_preserves_leading_zero_identity(tmp_path):
+    """Regression for a Codex review finding (2026-07-28, tenth round, P1
+    finding 13): identity columns were read WITHOUT dtype=str, so pandas'
+    own numeric inference discarded a leading zero (e.g. "001" -> 1)
+    before the later str() normalization ever ran. A single, consistent
+    "001" run_id must round-trip as the literal string "001", not be
+    silently collapsed to "1"."""
+    path = tmp_path / "equity_ticks.csv"
+    _write_equity_ticks_csv(path, run_id=["001"] * len(TIMESTAMPS))
+    df, _ = read_equity_ticks_csv(path)
+    assert (df["run_id"] == "001").all(), (
+        f"leading zero was discarded -- run_id values are {df['run_id'].unique().tolist()}"
+    )
+
+
+def test_read_equity_ticks_csv_distinguishes_leading_zero_from_bare_integer_identity(tmp_path):
+    """The review's own exact counterexample: identities "001"/"0123" and
+    "1"/"123" were previously accepted as ONE identity (numeric inference
+    collapsed both forms to the same value before comparison). They must
+    now be treated as genuinely DIFFERENT identities and rejected by the
+    single-identity-per-file check, not silently merged."""
+    path = tmp_path / "equity_ticks.csv"
+    df = pd.DataFrame(
+        {
+            "timestamp_utc": ["2026-07-21T10:00:00Z", "2026-07-21T11:00:00Z"],
+            "timestamp_server": ["2026-07-21T10:00:00", "2026-07-21T11:00:00"],
+            "run_id": ["001", "1"],  # same NUMERIC value, different TEXT identity
+            "account_login": ["12345", "12345"],
+            "broker_server": ["Deriv-Demo", "Deriv-Demo"],
+            "equity": [10000.0, 10500.0],
+            "balance": [10000.0, 10500.0],
+        }
+    )
+    df.to_csv(path, index=False)
+    with pytest.raises(CsvSchemaError, match="distinct.*run_id.*account_login.*broker_server"):
+        read_equity_ticks_csv(path)
+
+
+def test_read_equity_ticks_csv_preserves_large_integer_account_login(tmp_path):
+    """A large account_login value that would lose precision if inferred
+    as float64 (pandas' fallback for a numeric column containing no
+    explicit dtype) must round-trip exactly, digit for digit."""
+    path = tmp_path / "equity_ticks.csv"
+    large_login = "9007199254740993"  # 2**53 + 1 -- not exactly representable as float64
+    _write_equity_ticks_csv(path, account_login=[large_login] * len(TIMESTAMPS))
+    df, _ = read_equity_ticks_csv(path)
+    assert (df["account_login"] == large_login).all(), (
+        f"large integer identity lost precision -- account_login values are "
+        f"{df['account_login'].unique().tolist()}"
+    )
+
+
 def test_read_equity_ticks_csv_rejects_mixed_accounts(tmp_path):
     """Same finding as test_read_equity_ticks_csv_rejects_mixed_run_ids --
     a different account_login (or broker_server) sharing the same file
