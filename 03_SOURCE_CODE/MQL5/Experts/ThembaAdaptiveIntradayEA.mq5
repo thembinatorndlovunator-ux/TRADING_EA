@@ -34,7 +34,7 @@
 //| purpose.                                                                        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.02"
+#property version   "1.03"
 #property description "Themba Adaptive Intraday Engine — decision pipeline; order submission is OFF by default (TASK-027, InpEnableOrderSubmission)."
 
 // **Added, 2026-07-22 (Codex review finding, seventh round, P1 finding 18):
@@ -60,8 +60,16 @@
 // macro-update commit's own parent, containing every round-8 fix) was
 // compiled from, not the macro-update commit itself, which changes only
 // this string literal and no behavior.**
-#define THEMBA_EA_VERSION_STRING "1.02-task028-round8"
-#define THEMBA_EA_GIT_COMMIT     "990f32c17327"
+// **Updated again, 2026-07-28 (round-9 remediation, all 23 findings
+// resolved): value now references 2e71e38, the last real content commit
+// before this evidence pass -- round-9's own review (finding 21) found
+// the PROSE DESCRIPTION of this same convention was wrong in round-8's
+// evidence file (claimed the parent's tree was compiled when the child's
+// actually was); the convention itself is unchanged and correct, only
+// this round's own compile-evidence file's prose is written correctly
+// from the start this time (see that file's own header).**
+#define THEMBA_EA_VERSION_STRING "1.03-task028-round9"
+#define THEMBA_EA_GIT_COMMIT     "2e71e38"
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
 #include "../Include/ThembaEA/Risk/BrokerValidator.mqh"

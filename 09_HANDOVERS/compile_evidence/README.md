@@ -59,3 +59,19 @@ here now (`c9b2298`, not its parent `990f32c`) and corrected in the
 evidence file's own header directly; see that file's own correction note
 for the full `git show`-verified account of exactly which commit's
 `THEMBA_EA_GIT_COMMIT` value is which.
+
+`TASK-028_round9_full_compile_evidence_2026-07-28.txt` -- generated after
+all 23 round-9 findings were resolved, against the tree at THIS EVIDENCE
+FILE'S OWN COMMIT (never described as its parent's tree this time, per
+round-9 P1 finding 21's own lesson, applied from the start rather than
+corrected after the fact). `THEMBA_EA_GIT_COMMIT` in
+`ThembaAdaptiveIntradayEA.mq5` is set to `2e71e38` (the last real content
+commit before this evidence pass), matching this project's own stated
+build-tag convention exactly. Covers all 46 `.mq5` programs that exist in
+Git at that point: the 2 Experts (`ThembaAdaptiveIntradayEA.mq5`,
+`EquityTickRecorder.mq5`) and all 44 `Test_*.mq5`/`Export_*.mq5` scripts
+(up from round-8's 41 -- round 9 added `Test_ChartPatternLifecycle.mq5`
+and `Test_ExecutionEventJournal.mq5`, plus scripts touched by other
+findings), each listed individually with its own SHA-256 source hash and
+its own COMPLETE raw MetaEditor log text. MetaEditor version: 5.0.0.5833.
+Every target compiles with 0 errors, 0 warnings.

@@ -1,0 +1,2294 @@
+TASK-028 round-9 remediation -- full MetaEditor compile evidence
+Generated: 2026-07-28 (this session, after all round-9 P0/P1/P2 findings 1-23 resolved)
+MetaEditor invocation (per target):
+  "C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe" /compile:"<absolute path to .mq5>" /log:"<absolute path to .log>"
+MetaEditor executable: C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe
+MetaEditor version (Get-Item ... .VersionInfo): FileVersion 5.0.0.5833, ProductVersion 5.0.0.5833, SpecialBuild MQL5
+
+Repo tree compiled: the working tree as of THIS EVIDENCE FILE'S OWN COMMIT
+  (not that commit's parent -- see below for why this distinction matters).
+  THEMBA_EA_GIT_COMMIT (ThembaAdaptiveIntradayEA.mq5) is set to "2e71e38",
+  the last real content commit BEFORE this evidence pass, per this
+  project's own stated build-tag convention (this evidence-file commit
+  itself changes only that macro string, THEMBA_EA_VERSION_STRING, and
+  this evidence file -- no compiled behavior). **Stated precisely, per
+  Codex round-9 P1 finding 21's own correction of the IDENTICAL confusion
+  in round-8's evidence file: the TREE actually fed to MetaEditor for
+  every result below is THIS FILE'S OWN COMMIT's tree, not commit
+  2e71e38's own tree.** THEMBA_EA_GIT_COMMIT's VALUE (what the macro
+  literally holds) references commit 2e71e38; the SOURCE BYTES actually
+  compiled are this evidence commit's own (identical to 2e71e38's source
+  for every file except ThembaAdaptiveIntradayEA.mq5 itself, whose only
+  change from 2e71e38 is this same macro/version-string update -- verify
+  against the per-target SHA-256 hashes below, which are this commit's
+  own, not 2e71e38's).
+Total targets compiled: 46 (2 Experts + 44 Test_*.mq5/Export_*.mq5 Scripts)
+  -- up from round-8's 41 (round 9 added Test_ChartPatternLifecycle.mq5,
+  Test_ExecutionEventJournal.mq5, and net new/renamed scripts from this
+  round's own remediation; see TASKS.md/the round-9 handover for exactly
+  which findings introduced which new test scripts).
+  Every target below is compiled individually; source SHA-256 recorded
+  alongside its own result so this evidence can be verified against the
+  exact file content it was generated from, not just its path.
+
+============================================================
+TARGET: Experts\EquityTickRecorder.mq5
+SHA-256: 844263AED82543070EB4FBD1555588CF44D0B4057B130E379A03BC7615B9DCA3
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\EquityTickRecorder.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\EquityTickRecorder.mq5
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 612 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Experts\ThembaAdaptiveIntradayEA.mq5
+SHA-256: 378FB56E1EC3EBDA56FD94F46DA738A65C61983CA879E7664F1639C052FC3672
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\ConflictResolver.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\ConflictResolver.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\StrategyRouter.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\StrategyRouter.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SupportResistance.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\PostExpansionRetestStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\BrokerValidator.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\BrokerValidator.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SymbolProfile.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SessionManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\EquityPeakManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DrawdownController.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\CooldownManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\NoStopGraceManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyBreachManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyBreachManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\StdLibErr.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\OrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\HistoryOrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\PositionInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\DealInfo.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\CloseInFlightTracker.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskReservationManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\DecisionJournal.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\ExecutionEventJournal.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntentManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\PositionStateTracker.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\AsyncFillCorrelator.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\RegimeGateComposer.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\IntradayModeRouter.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NewsManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NullNewsProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Experts\ThembaAdaptiveIntradayEA.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\FairEconomyNewsProvider.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 8337 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_NewsCalendar.mq5
+SHA-256: 27DFBF66309554F04DB6913171E595728A2C701AF20A8A0E3E34B5050F3138F5
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_NewsCalendar.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_NewsCalendar.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_NewsCalendar.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NewsManager.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 673 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_PatternDetectorResults.mq5
+SHA-256: D0C16157B719047C93D18267AFAE3D0CF9CC060EC0BEDD9E169730E8903B1894
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PatternDetectorResults.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PatternDetectorResults.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PatternDetectorResults.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 762 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_PredictedRegime.mq5
+SHA-256: AFD87138CD8EC83898AF965FA23F351C002386B9E3205487A2B899EB04C01A04
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PredictedRegime.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PredictedRegime.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PredictedRegime.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\RegimeGateComposer.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\RegimeGateComposer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_PredictedRegime.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NewsManager.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 758 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_TradeHistory.mq5
+SHA-256: 05CB1B255FC20CFA8F74803035A149FB34ED1DF6DF2EEE4737E1B28E9643EF30
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_TradeHistory.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_TradeHistory.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Export_TradeHistory.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\TradeHistoryAggregator.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 527 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_AsyncFillCorrelator.mq5
+SHA-256: CC43367F4D3DB31143692437DE26EC6C47EA291DAFA8687DF3278D960E1DB082
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_AsyncFillCorrelator.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_AsyncFillCorrelator.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_AsyncFillCorrelator.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\AsyncFillCorrelator.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 491 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CandlestickPatternEngine.mq5
+SHA-256: F29F6775456D9393EAFC8A752343EF9F61D892884F3C54AC3675876590FC6660
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CandlestickPatternEngine.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CandlestickPatternEngine.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CandlestickPatternEngine.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 638 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternEngine.mq5
+SHA-256: 1500BAC8DCD60E895D60660521D98FD7070B82F04862A512B192DE16C73B9C95
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternEngine.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternEngine.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternEngine.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 793 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternLifecycle.mq5
+SHA-256: C6CDFDDE9B0595A0EA8DBB1DF582C6261853CC31F7039FB18E392117877631DF
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternLifecycle.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternLifecycle.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternLifecycle.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternLifecycle.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 729 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternStrategy.mq5
+SHA-256: A7F112A0C577A6EFE57DC69370E07B7FB52B5178DD8C46A155AC8584D8D22CF9
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternStrategy.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternStrategy.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ChartPatternStrategy.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 1089 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CloseInFlightTracker.mq5
+SHA-256: 0538B31AD1D2B46DE52901CD6C0D2585C331A5AAED22F24A4DA5C9CA27D21D10
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CloseInFlightTracker.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CloseInFlightTracker.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CloseInFlightTracker.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\CloseInFlightTracker.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 438 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CooldownManager.mq5
+SHA-256: 88A117CAA2D85887D35A896518DB291E74FC32FF09F50452247ABFC57397C566
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CooldownManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CooldownManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_CooldownManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\CooldownManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\CooldownManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 547 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DailyWeeklyBreachManager.mq5
+SHA-256: 936C89833FFCC2D4128B24C3829FFA390E7E1209DDBD2A6353A3DF6CF5630E50
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyBreachManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyBreachManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyBreachManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyBreachManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyBreachManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyBreachManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\StdLibErr.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\OrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\HistoryOrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\PositionInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\DealInfo.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SessionManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\CloseInFlightTracker.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 509 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DailyWeeklyLimits.mq5
+SHA-256: 355BF8530E496DFE0DBB7183403DF7177B777CCA699813C99AA916873012E213
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyLimits.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyLimits.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyLimits.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DailyWeeklyLimits.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SessionManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyLimits.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\EquityPeakManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DailyWeeklyLimits.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\DrawdownController.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 602 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DecisionJournal.mq5
+SHA-256: 475992F232AB8713C50B492AA34B5F1000518E43444B6B794AD29AA729EBA95A
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DecisionJournal.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DecisionJournal.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_DecisionJournal.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\DecisionJournal.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 888 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExecutionEventJournal.mq5
+SHA-256: 8CDB2174824131D81288A6CF5F1BBC9C1412A9A06975322DDB1174C8C2D0A128
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExecutionEventJournal.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExecutionEventJournal.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExecutionEventJournal.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\ExecutionEventJournal.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\ExecutionEventJournal.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\DecisionJournal.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 799 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExitManager.mq5
+SHA-256: CE4F96F860ACC0512D33196ECAF3F1FE0CB0E514920A34356D73521731A0A822
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 464 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExitOrchestrator.mq5
+SHA-256: 34526CD613C06300E28EF29F6CA59B13933951545C21C2B42C1E2D24358C7BA9
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitOrchestrator.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitOrchestrator.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ExitOrchestrator.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\ExitOrchestrator.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\PositionStateTracker.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\PositionStateTracker.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 535 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_FairEconomyNewsProvider.mq5
+SHA-256: CE7707E4F4EE1DC91D86F19A2C09B2F78091B0287525F7B4BFFC8B524FF770DF
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_FairEconomyNewsProvider.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_FairEconomyNewsProvider.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_FairEconomyNewsProvider.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\FairEconomyNewsProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\FairEconomyNewsProvider.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NewsManager.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 956 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ICTSMCGeometry.mq5
+SHA-256: BA7F849AF902A5F72FF48A3CF26FA265F70B073384CC41A73E0A8FD23B5B5E56
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ICTSMCGeometry.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ICTSMCGeometry.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_ICTSMCGeometry.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 706 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntentManager.mq5
+SHA-256: 99054CEF98AC42FDA15D43A32FD4A564345031AF48DB0E2D1C14F84CD49C34B8
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntentManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntentManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntentManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntentManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntentManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 647 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntradayCloseManager.mq5
+SHA-256: 643A282E0B6555EFC01F0503BC90D572B9C89A13BDDE19156D94FDFF018991F0
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayCloseManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayCloseManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayCloseManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\StdLibErr.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\OrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\HistoryOrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\PositionInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\DealInfo.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SessionManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\IntradayCloseManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\CloseInFlightTracker.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayCloseManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SymbolProfile.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 851 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntradayModeRouter.mq5
+SHA-256: 56790E9B731CBDFAE381F6F043395E3263663CCD03A216DC1C6BB8D250579259
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayModeRouter.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayModeRouter.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_IntradayModeRouter.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\IntradayModeRouter.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\IntradayModeRouter.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 576 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_KeyEncoding.mq5
+SHA-256: 2D87CA4B0E135806BDC0FB05E69609372E69274442003F6E36D4D0F5D54565B6
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_KeyEncoding.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_KeyEncoding.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_KeyEncoding.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 639 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketData.mq5
+SHA-256: EA1D3106412421FB0E7634C32696F6509CB0AE07C37D6D0DAA36A4B6D95CCC5C
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketData.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketData.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketData.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 508 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketRegimeEngine.mq5
+SHA-256: F7422D239F42F5B00EF17F02B576EEA9D3B3044997254A919B46EF5438C18CC2
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketRegimeEngine.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketRegimeEngine.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketRegimeEngine.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 710 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketStructure.mq5
+SHA-256: FC128A245945FF96F60A5815C3313C41EC6763F20687CEC79A20C15C770C3224
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketStructure.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketStructure.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_MarketStructure.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 568 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_NewsManager.mq5
+SHA-256: 79761120A93DF61A6F126BE09DF5F60F8365FC95F94B012C99E8D0E3260AB0B6
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NewsManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NewsManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NewsManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\MT5CalendarProvider.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NewsManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NewsManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\News\NullNewsProvider.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 561 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_NoStopGraceManager.mq5
+SHA-256: 981C4663A638A81009167106DB8B47E15D3742B6D61EE22C8481FD61CA02D8F6
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NoStopGraceManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NoStopGraceManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_NoStopGraceManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\NoStopGraceManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\NoStopGraceManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 585 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_OrderManager.mq5
+SHA-256: 5136202D5D2229E188DAD077A937FCB3E62F18BFFC458BE6B5A38905E12B2996
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_OrderManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_OrderManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_OrderManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Object.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\StdLibErr.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\OrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\HistoryOrderInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\PositionInfo.mqh
+C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\Trade.mqh : information: including C:\Users\THEMBA NDLOVU\AppData\Roaming\MetaQuotes\Terminal\C734FF1CA4CACD5026FF92845253E847\MQL5\Include\Trade\DealInfo.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SymbolProfile.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\OrderManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\CloseInFlightTracker.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 792 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_PositionStateTracker.mq5
+SHA-256: 03140A8BAABEB27D17430B6ACEE0B994CD9C4F5B4A4BB990ABE7BE5546432376
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PositionStateTracker.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PositionStateTracker.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PositionStateTracker.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\PositionStateTracker.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Execution\PositionStateTracker.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 549 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_PostExpansionRetestStrategy.mq5
+SHA-256: EA7FB14C9AC82A9254CDB49BECDB8DF378CE74C7035CA18F1A56DCEEE66437C1
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PostExpansionRetestStrategy.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PostExpansionRetestStrategy.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_PostExpansionRetestStrategy.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\PostExpansionRetestStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\PostExpansionRetestStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\PostExpansionRetestStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 795 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RegimeGateComposer.mq5
+SHA-256: 89F7C9BCFB0014CAE6BBDD9CA59245EBCB38A7256BC198D8580BFE64450F4DA5
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RegimeGateComposer.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RegimeGateComposer.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RegimeGateComposer.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\RegimeGateComposer.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\RegimeGateComposer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 487 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RiskManager.mq5
+SHA-256: EAE060A9120A4D288ACDC5A18ABDBECA1BD24C6AB587ADD37F82CF3354CC47AF
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SymbolProfile.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 530 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RiskReservationManager.mq5
+SHA-256: 2FD38706C365CE6FA9A98FD8F858F711A83ED153459F45C549F569247873D2E2
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskReservationManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskReservationManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_RiskReservationManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskReservationManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\RiskReservationManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 787 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SessionManager.mq5
+SHA-256: 76F7AADB3AD452EF3A3F4E23218959E16F326B95D681F6E63A689AECE5F67FFE
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SessionManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SessionManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SessionManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SessionManager.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 535 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SMCStrategy.mq5
+SHA-256: 487B45C3BE3F64C2CDEE0FAB1F0CD6F0C4E599100CC9609789DB03499DB3A14B
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SMCStrategy.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SMCStrategy.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SMCStrategy.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 848 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SRBounceStrategy.mq5
+SHA-256: 03FD45C4E13B0D898A79CFDDA1CB645DFE5A9DAC45C695117DD151E3F32150EF
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SRBounceStrategy.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SRBounceStrategy.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SRBounceStrategy.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SupportResistance.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 808 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_StateManager.mq5
+SHA-256: 84A96D71BC5322F887239616DABEC3E7C78EB5CD7646CB8C82B3775A7A32DA7D
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StateManager.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StateManager.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StateManager.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\StateManager.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 602 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_StrategyRouter.mq5
+SHA-256: 7C60A720C4E85A48F10AE961D295AA13EB090B895533B9DA51B3E12DC2A231C5
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StrategyRouter.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StrategyRouter.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_StrategyRouter.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\ConflictResolver.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\ConflictResolver.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\StrategyRouter.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\StrategyRouter.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SupportResistance.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SRBounceStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\SMCStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\ICTSMCGeometry.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\ChartPatternStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternLifecycle.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Core\KeyEncoding.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Routing\SignalScorer.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\PostExpansionRetestStrategy.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 625 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SupportResistance.mq5
+SHA-256: 73D995B49C4D8C64602CFCB5C2F76DEDE53A6A45E2AF6AD3A36DA75BDC79828F
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SupportResistance.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SupportResistance.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SupportResistance.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SupportResistance.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SupportResistance.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 598 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SwingEngine.mq5
+SHA-256: 06A5693528DCCE96D01E34DEC0E5C7662FCEC195F3CD0759308DD9EB567A1131
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SwingEngine.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SwingEngine.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SwingEngine.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 561 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SymbolProfile_BrokerValidator.mq5
+SHA-256: 413253AC0C1F7575C2D6B8951F37F4BE21C19FA03F5FE42BAE308DEFF8664CEA
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SymbolProfile_BrokerValidator.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SymbolProfile_BrokerValidator.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SymbolProfile_BrokerValidator.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\SymbolProfile.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_SymbolProfile_BrokerValidator.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Risk\BrokerValidator.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 610 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_TradeHistoryAggregator.mq5
+SHA-256: B31A9BC7D11EB1FC781DC22D26707C5A7AB7303F9325E9D2916BA201AB1CADF0
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TradeHistoryAggregator.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TradeHistoryAggregator.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TradeHistoryAggregator.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Journal\TradeHistoryAggregator.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 612 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_TrendFollowingStrategy.mq5
+SHA-256: 453F072A6C1FBC8E552DC030D0FAD99FF165441D026A519F9644F338738784BF
+--- MetaEditor log (complete) ---
+
+
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TrendFollowingStrategy.mq5 : information: compiling C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TrendFollowingStrategy.mq5
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Scripts\Test_TrendFollowingStrategy.mq5 : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketRegimeEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\MarketStructure.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Structure\SwingEngine.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Market\MarketData.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\ChartPatternEngine.mqh
+C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Strategies\TrendFollowingStrategy.mqh : information: including C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaEA\Patterns\CandlestickPatternEngine.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 808 ms elapsed, cpu='X64 Regular'
