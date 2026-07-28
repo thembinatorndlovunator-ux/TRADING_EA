@@ -2003,4 +2003,3 @@ C:\TradingProjects\Themba_EA_Improvement_Lab\03_SOURCE_CODE\MQL5\Include\ThembaE
  : information: generating code 100%
  : information: code generated
 Result: 0 errors, 0 warnings, 906 ms elapsed, cpu='X64 Regular'
-
