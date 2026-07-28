@@ -89,6 +89,22 @@ void OnStart()
          intent_id_3 != intent_id_1);
    IM_ClearIntent(InpTestSymbol, InpTestMagic);
 
+   //--- 3b. Bootstrap-path regression (Codex review finding, tenth round, --
+   //---     P0 finding 4 -- same pattern/scope note as ---------------------
+   //---     Test_StateManager.mq5's own 4c): a caller reaching the ------------
+   //---     ERR_GLOBALVARIABLE_NOT_FOUND bootstrap branch on the very ------------
+   //---     first-ever call for this symbol+magic must claim ownership with -----
+   //---     its OWN unique token and verify by readback, never the previous ------
+   //---     bare 1.0 sentinel a second racing caller could not distinguish -------
+   //---     itself from. -----------------------------------------------------------
+   IM_ResetInstance(InpTestSymbol, InpTestMagic);
+   string intent_id_bootstrap;
+   bool began_bootstrap = IM_BeginIntent(InpTestSymbol, InpTestMagic, true, 0.10, now + 3,
+                                          intent_id_bootstrap);
+   Check("first-ever-use acquire succeeds via the bootstrap path", began_bootstrap);
+   Check("bootstrap claim leaves the intent active", IM_HasActiveIntent(InpTestSymbol, InpTestMagic));
+   IM_ClearIntent(InpTestSymbol, InpTestMagic);
+
    //--- 4. Restart reconciliation: no active intent -> nothing to do -------
    bool was_filled, still_pending, abandoned;
    ulong pending_ticket;

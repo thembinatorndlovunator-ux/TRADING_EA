@@ -170,15 +170,26 @@ string IM_GetIntentId(const string symbol, const long magic)
 //| the bootstrap ("create the 'active' key if this is the very first call        |
 //| ever for this symbol+magic") is now folded directly into THIS function's       |
 //| own atomic acquire, exactly like StateManager.mqh's SM_AcquireAccountLock          |
-//| fix (round 9, P0 finding 2): GlobalVariableSetOnCondition against a               |
-//| variable that does not exist yet fails with GetLastError() ==                        |
-//| ERR_GLOBALVARIABLE_NOT_FOUND, which is now checked -- on that specific                    |
-//| error, the key is created (always to the SAME neutral "inactive" value,                       |
-//| however many callers redundantly do it) and the atomic acquire is                             |
-//| retried immediately. This is provably race-free regardless of how many                        |
-//| instances race the very first-ever call for a given symbol+magic,                             |
-//| unlike the previous separate, non-atomic IM_EnsureInitialized bootstrap                        |
-//| it replaces (now a no-op, see that function's own header).**                                  |
+//| fix (round 9, P0 finding 2).**                                                       |
+//|                                                                    |
+//| **Fixed again, 2026-07-28 (Codex review finding, tenth round, P0 finding  |
+//| 4): the round-9 fix above still bootstrapped via an UNCONDITIONAL             |
+//| GlobalVariableSet(active_key, 0.0) -- a blind overwrite, not a create-if-        |
+//| absent, exactly the same destructive race StateManager.mqh's own              |
+//| SM_AcquireAccountLock had (round-10 P0 finding 1, see that function's              |
+//| header for the full counterexample). A second, merely-delayed caller               |
+//| reaching that same line AFTER a first caller had already raced through                 |
+//| bootstrap-then-CAS and legitimately begun an intent (active_key == 1.0)                    |
+//| would stomp it back to 0.0, letting a SECOND caller also begin an intent                        |
+//| for the same symbol+magic -- exactly the duplicate-order risk this                                 |
+//| module exists to prevent. Fixed with the same technique as                                             |
+//| SM_AcquireAccountLock: on ERR_GLOBALVARIABLE_NOT_FOUND, write a caller-                                     |
+//| unique nonzero token directly (never the neutral 0.0 value), then verify                                       |
+//| by readback whether this caller's own write survived. IM_HasActiveIntent                                          |
+//| only ever tests "!= 0.0" (never "== 1.0" specifically -- confirmed by                                                 |
+//| grep across the whole codebase), so a unique nonzero token is a drop-in                                                   |
+//| replacement for the bare 1.0 sentinel with no other call site changes                                                        |
+//| needed.**                                                                                                                        |
 //+------------------------------------------------------------------+
 bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
                      const double volume, const datetime now, string &intent_id_out)
@@ -189,7 +200,15 @@ bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
    bool acquired = false;
    while(true)
      {
-      if(GlobalVariableSetOnCondition(active_key, 1.0, 0.0))
+      // Caller-unique nonzero claim token -- see header. Only used to make
+      // the bootstrap's readback-verify step meaningful; IM_HasActiveIntent
+      // and every other reader only ever test "!= 0.0".
+      long   now_sec  = (long)TimeCurrent();
+      long   tiebreak = ((long)GetMicrosecondCount() + (long)MathRand()) % 1000000L;
+      double claim    = (double)(now_sec * 1000000L + tiebreak + 1L);
+
+      ResetLastError();
+      if(GlobalVariableSetOnCondition(active_key, claim, 0.0))
         {
          acquired = true;
          break;
@@ -197,11 +216,19 @@ bool IM_BeginIntent(const string symbol, const long magic, const bool is_long,
       int err = GetLastError();
       if(err == ERR_GLOBALVARIABLE_NOT_FOUND)
         {
-         ResetLastError();
-         GlobalVariableSet(active_key, 0.0); // race-free bootstrap -- see header
-         continue; // retry the atomic acquire above immediately
+         // Race-free first-ever-use bootstrap -- see header. Writes THIS
+         // caller's own claim token directly, never the neutral 0.0 value,
+         // then verifies by readback whether this caller's own write was
+         // the one that actually survived.
+         GlobalVariableSet(active_key, claim);
+         if(GlobalVariableGet(active_key) == claim)
+           {
+            acquired = true;
+            break;
+           }
+         continue; // lost the bootstrap race to a concurrent first-time caller
         }
-      break; // genuinely already active (CAS failed against a real 1.0) -- fall through
+      break; // genuinely already active (CAS failed against a real nonzero value) -- fall through
      }
    if(!acquired)
       return false; // an intent is already active — refuse a second one
