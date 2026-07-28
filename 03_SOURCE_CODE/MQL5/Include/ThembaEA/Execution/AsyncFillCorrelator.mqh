@@ -42,33 +42,47 @@ string g_afc_pending_signal_ids[];
 // pre-restart reservation, if any, is released separately -- see
 // ReconcileIntentAndFeedAFC's own aged-reservation cleanup).
 string g_afc_pending_reservation_keys[];
+// **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):**
+// carries this submission's own entry-time intraday_mode (scalp vs. not)
+// alongside each pending correlation record -- the synchronous fill path
+// already captures this via PositionStateTracker.mqh immediately at
+// AttemptOrderSubmission (see that function's own comment), but a
+// genuinely-async PLACED submission has no position_id yet at that point,
+// so there is nothing to capture against until OnTradeTransaction resolves
+// the fill later. Without this, an asynchronously-opened position silently
+// fell back to the global InpTimeStopUsesScalpMode input for its whole
+// lifetime instead of its own real entry-time mode.
+bool   g_afc_pending_was_scalp_mode[];
 
 //+------------------------------------------------------------------+
 //| Records a PLACED-but-not-yet-confirmed order for later correlation.   |
 //+------------------------------------------------------------------+
 void AFC_AddPending(const ulong order_ticket, const string signal_id,
-                     const string reservation_key = "")
+                     const string reservation_key = "", const bool was_scalp_mode = false)
   {
    int n = ArraySize(g_afc_pending_order_tickets);
    ArrayResize(g_afc_pending_order_tickets, n + 1);
    ArrayResize(g_afc_pending_signal_ids, n + 1);
    ArrayResize(g_afc_pending_reservation_keys, n + 1);
+   ArrayResize(g_afc_pending_was_scalp_mode, n + 1);
    g_afc_pending_order_tickets[n] = order_ticket;
    g_afc_pending_signal_ids[n] = signal_id;
    g_afc_pending_reservation_keys[n] = reservation_key;
+   g_afc_pending_was_scalp_mode[n] = was_scalp_mode;
   }
 
 //+------------------------------------------------------------------+
 //| True iff 'order_ticket' has a pending correlation record, returning   |
-//| its original signal_id, reservation_key, and array index (for            |
-//| AFC_RemovePending).                                                        |
+//| its original signal_id, reservation_key, entry-time was_scalp_mode,       |
+//| and array index (for AFC_RemovePending).                                    |
 //+------------------------------------------------------------------+
 bool AFC_FindPending(const ulong order_ticket, string &signal_id_out, int &index_out,
-                      string &reservation_key_out)
+                      string &reservation_key_out, bool &was_scalp_mode_out)
   {
    signal_id_out = "";
    index_out = -1;
    reservation_key_out = "";
+   was_scalp_mode_out = false;
    for(int i = 0; i < ArraySize(g_afc_pending_order_tickets); i++)
      {
       if(g_afc_pending_order_tickets[i] == order_ticket)
@@ -76,6 +90,7 @@ bool AFC_FindPending(const ulong order_ticket, string &signal_id_out, int &index
          signal_id_out = g_afc_pending_signal_ids[i];
          index_out = i;
          reservation_key_out = g_afc_pending_reservation_keys[i];
+         was_scalp_mode_out = g_afc_pending_was_scalp_mode[i];
          return true;
         }
      }
@@ -94,9 +109,11 @@ void AFC_RemovePending(const int index)
    g_afc_pending_order_tickets[index] = g_afc_pending_order_tickets[last];
    g_afc_pending_signal_ids[index] = g_afc_pending_signal_ids[last];
    g_afc_pending_reservation_keys[index] = g_afc_pending_reservation_keys[last];
+   g_afc_pending_was_scalp_mode[index] = g_afc_pending_was_scalp_mode[last];
    ArrayResize(g_afc_pending_order_tickets, last);
    ArrayResize(g_afc_pending_signal_ids, last);
    ArrayResize(g_afc_pending_reservation_keys, last);
+   ArrayResize(g_afc_pending_was_scalp_mode, last);
   }
 
 //+------------------------------------------------------------------+
@@ -118,4 +135,5 @@ void AFC_ClearAllPending()
    ArrayFree(g_afc_pending_order_tickets);
    ArrayFree(g_afc_pending_signal_ids);
    ArrayFree(g_afc_pending_reservation_keys);
+   ArrayFree(g_afc_pending_was_scalp_mode);
   }

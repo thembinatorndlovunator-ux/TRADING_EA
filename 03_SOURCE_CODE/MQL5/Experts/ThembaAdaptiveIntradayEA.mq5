@@ -87,6 +87,7 @@
 #include "../Include/ThembaEA/Execution/IntentManager.mqh"
 #include "../Include/ThembaEA/Execution/ExitOrchestrator.mqh"
 #include "../Include/ThembaEA/Execution/AsyncFillCorrelator.mqh"
+#include "../Include/ThembaEA/Execution/CloseFinalizationTracker.mqh"
 #include "../Include/ThembaEA/Market/RegimeGateComposer.mqh"
 #include "../Include/ThembaEA/Market/IntradayModeRouter.mqh"
 #include "../Include/ThembaEA/Market/SessionManager.mqh"
@@ -721,6 +722,57 @@ bool PositionStillOpenById(const ulong position_id)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):  |
+//| factored out of OnTradeTransaction's DEAL_ENTRY_OUT/OUT_BY/INOUT              |
+//| handling so it can ALSO be called from ReconcilePendingCloseFinalizations()      |
+//| below, once a position confirmed closed later than the ORIGINAL closing              |
+//| deal's own callback (see that function's own header for the race this                    |
+//| closes). Caller MUST have already confirmed !PositionStillOpenById(position_id)               |
+//| -- this function does not re-check.                                                              |
+//+------------------------------------------------------------------+
+void FinalizeClosedPosition(const ulong closed_position_id)
+  {
+   double total_pnl = CDM_GetAccumulatedPositionPnl(closed_position_id) +
+                       GetPositionEntryCosts(closed_position_id);
+   if(!CDM_RecordClosedTrade(g_symbol, InpMagicNumber, total_pnl, TimeCurrent(),
+                              InpCooldownMinutes))
+      PrintFormat("ThembaEA: CooldownManager failed to persist a closed-trade "
+                  "record for '%s' magic %I64d -- the 3-loss cooldown ledger may "
+                  "be missing this trade.", g_symbol, InpMagicNumber);
+   CDM_ClearAccumulatedPositionPnl(closed_position_id);
+
+   PST_Clear(closed_position_id);
+   NSG_Clear(closed_position_id);
+   CIFT_ClearCloseInFlight(closed_position_id);
+   PCF_ClearPendingFinalization(closed_position_id);
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):  |
+//| re-checks every position_id CloseFinalizationTracker.mqh has marked as     |
+//| awaiting finalization (its own closing deal was observed, but                  |
+//| PositionStillOpenById() still read true at that exact processing moment            |
+//| -- MT5 does not guarantee transaction-type arrival order) and completes                 |
+//| finalization now that the position list has caught up. Call from OnTick                    |
+//| and OnTimer -- durable/restart-survivable (the mark is a persisted                              |
+//| GlobalVariable, not session-only), so this also recovers an obligation                              |
+//| that outlived a crash between the original DEAL_ADD callback and this                                  |
+//| reconciliation.                                                                                            |
+//+------------------------------------------------------------------+
+void ReconcilePendingCloseFinalizations()
+  {
+   ulong pending_ids[16];
+   int count = PCF_FindPendingFinalizations(pending_ids);
+   for(int i = 0; i < count; i++)
+     {
+      if(!PositionStillOpenById(pending_ids[i]))
+         FinalizeClosedPosition(pending_ids[i]);
+      // Still open -- leave the mark in place, retried on a later
+      // tick/timer fire.
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| **Added, 2026-07-22 (Codex review finding, eighth round, P1 finding    |
 //| 13):** sums the entry-side commission/fee for 'position_id' -- the           |
 //| cooldown P/L figure previously only summed CLOSING-deal costs               |
@@ -787,8 +839,9 @@ void ReconcileIntentAndFeedAFC()
       string existing_signal_id;
       int    existing_index;
       string existing_reservation_key;
+      bool   existing_was_scalp_mode;
       if(!AFC_FindPending(orphaned_pending_ticket, existing_signal_id, existing_index,
-                           existing_reservation_key))
+                           existing_reservation_key, existing_was_scalp_mode))
         {
          string synthetic_signal_id = StringFormat("restart_reconciled_%s",
                                                      IM_GetIntentId(g_symbol, InpMagicNumber));
@@ -1040,35 +1093,42 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // flags) while a remainder is still open would silently
             // discard that history for the position's own remaining
             // life. Only clear it once the position is CONFIRMED gone.**
-            if(closed_position_id != 0 && !PositionStillOpenById(closed_position_id))
+            if(closed_position_id != 0)
               {
-               // **Added, 2026-07-22 (Codex review finding, eighth round, P1
-               // finding 13): the accumulated per-position P/L (every
-               // partial closing deal summed) PLUS this position's own
-               // entry-side commission/fee (previously omitted entirely --
-               // the review's own "amount includes close-side costs only,
-               // not allocated entry-side costs" finding) is what actually
-               // gets recorded as ONE closed trade for the cooldown, only
-               // now that the position is confirmed fully gone.**
-               double total_pnl = CDM_GetAccumulatedPositionPnl(closed_position_id) +
-                                   GetPositionEntryCosts(closed_position_id);
-               if(!CDM_RecordClosedTrade(g_symbol, InpMagicNumber, total_pnl, TimeCurrent(),
-                                          InpCooldownMinutes))
-                  PrintFormat("ThembaEA: CooldownManager failed to persist a closed-trade "
-                              "record for '%s' magic %I64d -- the 3-loss cooldown ledger may "
-                              "be missing this trade.", g_symbol, InpMagicNumber);
-               CDM_ClearAccumulatedPositionPnl(closed_position_id);
-
-               PST_Clear(closed_position_id);
-               // **Added, 2026-07-22 (Codex review finding, eighth round, P0
-               // finding 3): stop tracking a confirmed-closed position's own
-               // no-SL grace-period timer too -- see NoStopGraceManager.mqh's
-               // own "clear once confirmed gone" contract.**
-               NSG_Clear(closed_position_id);
-               // **Added, 2026-07-22 (Codex review finding, eighth round, P1
-               // finding 13): also clears the close-in-flight mark -- see
-               // CloseInFlightTracker.mqh's own header.**
-               CIFT_ClearCloseInFlight(closed_position_id);
+               if(!PositionStillOpenById(closed_position_id))
+                 {
+                  // **Added, 2026-07-22 (Codex review finding, eighth round,
+                  // P1 finding 13): the accumulated per-position P/L (every
+                  // partial closing deal summed) PLUS this position's own
+                  // entry-side commission/fee is what gets recorded as ONE
+                  // closed trade for the cooldown, only now that the
+                  // position is confirmed fully gone -- see
+                  // FinalizeClosedPosition's own header (factored out,
+                  // Codex round-10 P1 finding 8, so
+                  // ReconcilePendingCloseFinalizations below can share it).**
+                  FinalizeClosedPosition(closed_position_id);
+                 }
+               else
+                 {
+                  // **Added, 2026-07-28 (Codex review finding, tenth round,
+                  // P1 finding 8):** MT5 does not guarantee that every
+                  // transaction type for a single close arrives in an order
+                  // that makes the position absent from PositionsTotal() at
+                  // this exact callback -- a closing deal was JUST observed,
+                  // but the live position list has not caught up yet. The
+                  // previous code silently skipped finalization here
+                  // FOREVER (no other path ever revisited it). Now marks a
+                  // durable obligation that ReconcilePendingCloseFinalizations
+                  // (called every tick/timer) completes once the position
+                  // list catches up, independent of this callback's own
+                  // timing.
+                  if(!PCF_MarkPendingFinalization(closed_position_id))
+                     PrintFormat("ThembaEA: CRITICAL -- failed to persist a pending-finalization "
+                                 "mark for position_id=%I64u (still appears open at this exact "
+                                 "callback) -- ReconcilePendingCloseFinalizations will not find it "
+                                 "if this process crashes before a later successful mark.",
+                                 closed_position_id);
+                 }
               }
 
             // **Stated, 2026-07-22 (Codex review finding, eighth round, P1
@@ -1229,7 +1289,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
          string pending_signal_id;
          int pending_index;
          string pending_reservation_key;
-         if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key))
+         bool   pending_was_scalp_mode;
+         if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key,
+                             pending_was_scalp_mode))
            {
             ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
             // Captured before any IM_ClearIntent below -- IM_GetIntentId reads
@@ -1272,6 +1334,25 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                // the reservation on top of that would double-count this
                // exact risk against the cap.
                RRM_ReleaseReservation(pending_reservation_key);
+               // **Added, 2026-07-28 (Codex review finding, tenth round, P1
+               // finding 8):** persists THIS position's own entry-time
+               // intraday_mode, mirroring AttemptOrderSubmission's own
+               // synchronous-fill capture (see that function's own comment)
+               // -- previously only the synchronous branch did this, so an
+               // asynchronously-opened position silently fell back to the
+               // global InpTimeStopUsesScalpMode input for its own exit
+               // management instead of the real mode active when it opened.
+               if(resolved_position_id != 0)
+                 {
+                  SPositionExitState async_entry_state = PST_Load(resolved_position_id);
+                  async_entry_state.entry_mode_captured = true;
+                  async_entry_state.entry_was_scalp_mode = pending_was_scalp_mode;
+                  if(!PST_Save(resolved_position_id, async_entry_state))
+                     PrintFormat("ThembaEA: failed to persist entry-time intraday_mode for "
+                                 "asynchronously-resolved position_id=%I64u -- its own time-stop "
+                                 "will fall back to the global InpTimeStopUsesScalpMode input "
+                                 "instead.", resolved_position_id);
+                 }
               }
             LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, resolved_position_id,
                                     trans.order, trans.deal,
@@ -1288,7 +1369,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       string pending_signal_id;
       int pending_index;
       string pending_reservation_key;
-      if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key))
+      bool   pending_was_scalp_mode;
+      if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key,
+                          pending_was_scalp_mode))
         {
          ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(trans.order, ORDER_STATE);
          // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding
@@ -1328,6 +1411,24 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             AFC_RemovePending(pending_index);
             IM_ClearIntent(g_symbol, InpMagicNumber);
             RRM_ReleaseReservation(pending_reservation_key);
+            // **Added, 2026-07-28 (Codex review finding, tenth round, P1
+            // finding 8):** this path is reached only when the DEAL_ENTRY_IN
+            // handler above left the pending record ACTIVE (a live
+            // remainder existed at that time, so it deliberately did NOT
+            // capture entry-mode yet -- see that handler's own comment) and
+            // the remainder has now been cancelled/expired -- entry-mode
+            // was never captured for this position at all until now.
+            SPositionExitState history_entry_state = PST_Load(order_position_id);
+            if(!history_entry_state.entry_mode_captured)
+              {
+               history_entry_state.entry_mode_captured = true;
+               history_entry_state.entry_was_scalp_mode = pending_was_scalp_mode;
+               if(!PST_Save(order_position_id, history_entry_state))
+                  PrintFormat("ThembaEA: failed to persist entry-time intraday_mode for "
+                              "position_id=%I64u (resolved via HISTORY_ADD) -- its own time-stop "
+                              "will fall back to the global InpTimeStopUsesScalpMode input "
+                              "instead.", order_position_id);
+              }
             ulong fill_deal_ticket = FindFillDealForOrder(trans.order);
             LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, order_position_id,
                                     trans.order, fill_deal_ticket,
@@ -1377,6 +1478,11 @@ void OnTimer()
                                InpIntradayBoundaryMinute);
    ReEvaluateMandatoryClosureObligations();
    EnforceNoStopGracePeriod();
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):
+   // same tick-starved-fallback rationale as the other wall-clock
+   // protections above -- see ReconcilePendingCloseFinalizations's own
+   // header.**
+   ReconcilePendingCloseFinalizations();
   }
 
 void OnTick()
@@ -1453,6 +1559,15 @@ void OnTick()
    // Cheap no-op via IM_HasActiveIntent's own single GlobalVariableGet
    // whenever no intent is outstanding, which is the steady-state case.**
    ReconcileIntentAndFeedAFC();
+
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):
+   // re-checks every position_id marked as awaiting close-finalization
+   // (its own closing deal was seen, but the live position list had not
+   // caught up yet at that exact callback) -- see
+   // ReconcilePendingCloseFinalizations's own header. Cheap no-op via
+   // PCF_FindPendingFinalizations' own prefix-scan whenever nothing is
+   // pending, the steady-state case.**
+   ReconcilePendingCloseFinalizations();
 
    // **Added, 2026-07-22 (Codex review finding, seventh round, P0 finding 8):
    // a persistent post-boundary entry lock. SN_IsPastIntradayBoundary() is a
@@ -2606,8 +2721,15 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // be carried through to OnTradeTransaction's own later resolution
    // handlers so THAT code can release the exact reservation this specific
    // submission made, once its own terminal outcome is known.
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding 8):**
+   // this genuinely-async path had no position_id yet to capture entry-time
+   // intraday_mode against (unlike the synchronous branch above, which
+   // captures it immediately via PST_Save) -- carrying decision.intraday_mode
+   // through AsyncFillCorrelator.mqh lets OnTradeTransaction's own
+   // DEAL_ENTRY_IN handler capture it once the position_id is finally known.
    if(open_result.position_id == 0 && open_result.order_ticket != 0)
-      AFC_AddPending(open_result.order_ticket, decision.signal_id, reservation_key);
+      AFC_AddPending(open_result.order_ticket, decision.signal_id, reservation_key,
+                      decision.intraday_mode == "SCALP");
   }
 
 //+------------------------------------------------------------------+
