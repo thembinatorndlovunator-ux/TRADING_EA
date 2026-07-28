@@ -101,6 +101,38 @@ def test_read_equity_ticks_csv_rejects_non_finite_equity(tmp_path):
         read_equity_ticks_csv(path)
 
 
+def test_read_equity_ticks_csv_rejects_blank_timestamp_server(tmp_path):
+    """Regression for a Codex review finding (2026-07-28, tenth round, P1
+    finding 12): pd.to_datetime(..., errors="raise") does NOT raise for a
+    blank cell -- it silently converts it to NaT, which
+    compute_daily_equity_peak_giveback's own groupby("date") then silently
+    DROPS. A blank timestamp_server value must be rejected explicitly at
+    ingestion, not silently accepted as a valid (but nonexistent) date."""
+    path = tmp_path / "equity_ticks.csv"
+    server_ts = [t.rstrip("Z") for t in TIMESTAMPS]
+    server_ts[2] = ""  # blank -- pd.to_datetime silently parses this as NaT
+    _write_equity_ticks_csv(path, timestamps_server=server_ts)
+    with pytest.raises(CsvSchemaError, match="timestamp_server"):
+        read_equity_ticks_csv(path)
+
+
+def test_run_blank_timestamp_server_cannot_yield_a_zero_day_report(tmp_path):
+    """Regression for a Codex review finding (2026-07-28, tenth round, P1
+    finding 12): the review's own reproduced counterexample -- a probe
+    with blank timestamp_server values returned a valid account drawdown
+    but daily_days=0, silently omitting the entire curve from the daily
+    giveback report. run() must now raise CsvSchemaError instead of
+    silently producing a zero-day report."""
+    equity_ticks_csv = tmp_path / "equity_ticks.csv"
+    server_ts = [t.rstrip("Z") for t in TIMESTAMPS]
+    server_ts[0] = ""
+    server_ts[1] = ""
+    _write_equity_ticks_csv(equity_ticks_csv, timestamps_server=server_ts)
+
+    with pytest.raises(CsvSchemaError, match="timestamp_server"):
+        run(equity_ticks_csv)
+
+
 def test_read_equity_ticks_csv_rejects_missing_column(tmp_path):
     path = tmp_path / "equity_ticks.csv"
     df = pd.DataFrame({"timestamp_utc": TIMESTAMPS, "equity": EQUITY})

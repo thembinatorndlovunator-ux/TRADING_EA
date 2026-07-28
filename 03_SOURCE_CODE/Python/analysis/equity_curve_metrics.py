@@ -178,6 +178,26 @@ def read_equity_ticks_csv(path: Path) -> tuple[pd.DataFrame, str]:
         df["timestamp_server"] = pd.to_datetime(df["timestamp_server"], errors="raise")
     except (ValueError, TypeError) as exc:
         raise CsvSchemaError(f"{path}: 'timestamp_server' contains an unparseable value") from exc
+    # **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding
+    # 12):** pd.to_datetime(..., errors="raise") does NOT raise for a
+    # blank/empty cell -- it silently converts it to NaT, which errors="raise"
+    # only guards against a genuinely UNPARSEABLE non-blank string. A blank
+    # 'timestamp_server' value therefore passed the check above untouched,
+    # and compute_daily_equity_peak_giveback's own groupby("date") silently
+    # DROPS any row whose date key is NaT/NaN -- the review's own reproduced
+    # counterexample: a two-row probe with blank timestamp_server values
+    # returned a valid 10% account drawdown but daily_days=0, omitting the
+    # entire curve from the daily giveback report with no error at all.
+    # Explicitly reject any NaT here, at ingestion, before it can reach that
+    # silent-drop behavior downstream.
+    if df["timestamp_server"].isna().any():
+        n_blank = int(df["timestamp_server"].isna().sum())
+        raise CsvSchemaError(
+            f"{path}: 'timestamp_server' contains {n_blank} blank/missing value(s) -- "
+            f"pd.to_datetime silently converts a blank cell to NaT rather than raising, and a "
+            f"NaT row would be silently DROPPED from the daily giveback report's own "
+            f"groupby('date'), understating (or entirely omitting) real trading days"
+        )
     for col in ("equity", "balance"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
         if not df[col].apply(lambda v: pd.notna(v) and math.isfinite(v)).all():
