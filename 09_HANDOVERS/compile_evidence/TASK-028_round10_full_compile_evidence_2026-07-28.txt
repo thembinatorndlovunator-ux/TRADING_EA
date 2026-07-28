@@ -1,0 +1,290 @@
+TASK-028 round-10 remediation -- full MetaEditor compile evidence
+Generated: 2026-07-28 (this session, after all round-10 findings 1-21 addressed --
+  see this file's own "Scope of this evidence" section below for exactly what
+  "addressed" means per finding).
+MetaEditor invocation (per target):
+  "C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe" /compile:"<absolute path to .mq5>" /log:"<absolute path to .log>"
+MetaEditor executable: C:\Program Files\Deriv MT5 Terminal\MetaEditor64.exe
+MetaEditor version (Get-Item ... .VersionInfo): FileVersion 5.0.0.5833, ProductVersion 5.0.0.5833
+
+Repo tree compiled: the working tree as of THIS EVIDENCE FILE'S OWN COMMIT
+  (not that commit's parent). THEMBA_EA_GIT_COMMIT (ThembaAdaptiveIntradayEA.mq5)
+  is set to "e3da3f4", the last real content commit BEFORE this evidence pass,
+  per this project's own stated build-tag convention -- **now stated as a
+  LOGICAL-PARENT TAG explicitly, not "the commit compiled from" (Codex
+  round-10 P2 finding 21's own correction of that exact wording; see the
+  macro's own header comment in the EA source)**. This evidence-file commit
+  itself changes only that macro string, THEMBA_EA_VERSION_STRING, and this
+  evidence file -- no compiled behavior. The SOURCE BYTES actually fed to
+  MetaEditor for every result below are THIS FILE'S OWN COMMIT's tree,
+  verifiable against the per-target SHA-256 hashes below (computed from the
+  working tree at the moment each target was compiled, immediately before
+  this evidence file and its own commit were written).
+
+Total targets compiled: 46 (2 Experts + 44 Test_*.mq5/Export_*.mq5 Scripts) --
+  UNCHANGED from round 9's own count. No new .mq5 target was added during
+  round-10 remediation (round-10's own new module, CloseFinalizationTracker.mqh,
+  is a reusable .mqh include with no dedicated Test_*.mq5 script of its own --
+  exercised only indirectly, via ThembaAdaptiveIntradayEA.mq5's own compile,
+  matching this project's existing precedent for EA-internal orchestration
+  logic with no standalone test harness).
+
+Format note (deviates from round 9's own more verbose per-target dump,
+  disclosed explicitly): each target below records its own SHA-256 hash (ties
+  this evidence to exact file content) and MetaEditor's own final "Result: N
+  errors, N warnings" summary line, not the full percentage-by-percentage
+  progress log round 9's evidence file included -- the summary line is the
+  only line that carries pass/fail information; the omitted lines were always
+  purely cosmetic progress output, never evidentiary.
+
+Scope of this evidence, stated precisely (Codex round-10 P1 finding 17's own
+  standing complaint, reiterated honestly here rather than glossed over):
+  this proves every listed target compiles with the stated error/warning
+  count from the exact source bytes hashed below -- SYNTAX AND TYPE
+  correctness, not runtime behavior. It does NOT execute a single Test_*.mq5
+  OnStart() assertion, and there is no retained Strategy Tester report, demo
+  attachment log, restart/concurrency run, provider-failure run, timer-failure
+  run, partial-fill trace, close-retry trace, or real pattern export. Every
+  finding in this round with a dedicated Test_*.mq5/Test_*.mqh regression
+  (see the round-10 handover's own per-finding table) had that regression's
+  own PASS/FAIL lines read directly from the MetaEditor Experts-log output at
+  the time this session ran it interactively, not merely "no exception
+  printed" -- but that is still compile-time/hand-executed verification, not
+  an automated CI gate, and is reported here as an author-reported action,
+  not independently auditable evidence, per this same finding's own required
+  framing. Real MT5 terminal runtime verification (attach the EA to a
+  live/demo chart) remains this project's single largest outstanding gap
+  before "launch the EA on MT5" and is unchanged by this round's own work.
+
+============================================================
+TARGET: Experts\EquityTickRecorder.mq5
+SHA-256: 7421D5B5FD0A20F0F5B17583A53A49379A70B5444BADC3AAA2BD478518B895CD
+MetaEditor: Result: 0 errors, 0 warnings, 3295 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Experts\ThembaAdaptiveIntradayEA.mq5
+SHA-256: A2F746F15829B9BC08B767BD89ED9FD0DDC6142D2B5E45810C8E513E2E4A5821
+MetaEditor: Result: 0 errors, 0 warnings, 27687 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_NewsCalendar.mq5
+SHA-256: 27DFBF66309554F04DB6913171E595728A2C701AF20A8A0E3E34B5050F3138F5
+MetaEditor: Result: 0 errors, 0 warnings, 2465 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_PatternDetectorResults.mq5
+SHA-256: D0C16157B719047C93D18267AFAE3D0CF9CC060EC0BEDD9E169730E8903B1894
+MetaEditor: Result: 0 errors, 0 warnings, 3699 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_PredictedRegime.mq5
+SHA-256: AFD87138CD8EC83898AF965FA23F351C002386B9E3205487A2B899EB04C01A04
+MetaEditor: Result: 0 errors, 0 warnings, 3734 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Export_TradeHistory.mq5
+SHA-256: 05CB1B255FC20CFA8F74803035A149FB34ED1DF6DF2EEE4737E1B28E9643EF30
+MetaEditor: Result: 0 errors, 0 warnings, 2395 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_AsyncFillCorrelator.mq5
+SHA-256: BCA2E5B805291A39EBD774FB1545C6DC166E35C64689B998D941906FDE7BF3B6
+MetaEditor: Result: 0 errors, 0 warnings, 2434 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CandlestickPatternEngine.mq5
+SHA-256: F29F6775456D9393EAFC8A752343EF9F61D892884F3C54AC3675876590FC6660
+MetaEditor: Result: 0 errors, 0 warnings, 3068 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternEngine.mq5
+SHA-256: 1500BAC8DCD60E895D60660521D98FD7070B82F04862A512B192DE16C73B9C95
+MetaEditor: Result: 0 errors, 0 warnings, 3390 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternLifecycle.mq5
+SHA-256: 1F2A078F869CAACC1CD14C5671E38197409D350C83A9E7EB5D6F5C9E3206682A
+MetaEditor: Result: 0 errors, 0 warnings, 3915 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ChartPatternStrategy.mq5
+SHA-256: 041C0C79F851654ED44F1FD71700AEF73ECB6133674059B13685320299AD4C71
+MetaEditor: Result: 0 errors, 0 warnings, 5394 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CloseInFlightTracker.mq5
+SHA-256: 0538B31AD1D2B46DE52901CD6C0D2585C331A5AAED22F24A4DA5C9CA27D21D10
+MetaEditor: Result: 0 errors, 0 warnings, 2063 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_CooldownManager.mq5
+SHA-256: 88A117CAA2D85887D35A896518DB291E74FC32FF09F50452247ABFC57397C566
+MetaEditor: Result: 0 errors, 0 warnings, 2574 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DailyWeeklyBreachManager.mq5
+SHA-256: 936C89833FFCC2D4128B24C3829FFA390E7E1209DDBD2A6353A3DF6CF5630E50
+MetaEditor: Result: 0 errors, 0 warnings, 2534 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DailyWeeklyLimits.mq5
+SHA-256: 3D84579895C0A24E0AED71FBFC1D699BC4371DAE46FCF19BA746CF8ED12A3E28
+MetaEditor: Result: 0 errors, 0 warnings, 3378 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_DecisionJournal.mq5
+SHA-256: 475992F232AB8713C50B492AA34B5F1000518E43444B6B794AD29AA729EBA95A
+MetaEditor: Result: 0 errors, 0 warnings, 3818 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExecutionEventJournal.mq5
+SHA-256: F9F5F5CD6F3759CF00C4A203F6D862AA6B3BB8211A78DD02DE09017A12E02959
+MetaEditor: Result: 0 errors, 0 warnings, 5470 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExitManager.mq5
+SHA-256: CE4F96F860ACC0512D33196ECAF3F1FE0CB0E514920A34356D73521731A0A822
+MetaEditor: Result: 0 errors, 0 warnings, 2138 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ExitOrchestrator.mq5
+SHA-256: 34526CD613C06300E28EF29F6CA59B13933951545C21C2B42C1E2D24358C7BA9
+MetaEditor: Result: 0 errors, 0 warnings, 2557 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_FairEconomyNewsProvider.mq5
+SHA-256: 0C4484F78756E8C8896DB61CFFBBA7EC9AF947EA0A5614E4E648823D1DFE0D31
+MetaEditor: Result: 0 errors, 0 warnings, 4465 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_ICTSMCGeometry.mq5
+SHA-256: BA7F849AF902A5F72FF48A3CF26FA265F70B073384CC41A73E0A8FD23B5B5E56
+MetaEditor: Result: 0 errors, 0 warnings, 2784 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntentManager.mq5
+SHA-256: 04B048290DB63154BAF423512FD2F11FCFFD18DC4EF9A4B6F268B87140898A5F
+MetaEditor: Result: 0 errors, 0 warnings, 3106 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntradayCloseManager.mq5
+SHA-256: 643A282E0B6555EFC01F0503BC90D572B9C89A13BDDE19156D94FDFF018991F0
+MetaEditor: Result: 0 errors, 0 warnings, 3614 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_IntradayModeRouter.mq5
+SHA-256: 56790E9B731CBDFAE381F6F043395E3263663CCD03A216DC1C6BB8D250579259
+MetaEditor: Result: 0 errors, 0 warnings, 3156 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_KeyEncoding.mq5
+SHA-256: 2D87CA4B0E135806BDC0FB05E69609372E69274442003F6E36D4D0F5D54565B6
+MetaEditor: Result: 0 errors, 0 warnings, 2547 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketData.mq5
+SHA-256: EA1D3106412421FB0E7634C32696F6509CB0AE07C37D6D0DAA36A4B6D95CCC5C
+MetaEditor: Result: 0 errors, 0 warnings, 2161 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketRegimeEngine.mq5
+SHA-256: F7422D239F42F5B00EF17F02B576EEA9D3B3044997254A919B46EF5438C18CC2
+MetaEditor: Result: 0 errors, 0 warnings, 2763 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_MarketStructure.mq5
+SHA-256: FC128A245945FF96F60A5815C3313C41EC6763F20687CEC79A20C15C770C3224
+MetaEditor: Result: 0 errors, 0 warnings, 2313 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_NewsManager.mq5
+SHA-256: 79761120A93DF61A6F126BE09DF5F60F8365FC95F94B012C99E8D0E3260AB0B6
+MetaEditor: Result: 0 errors, 0 warnings, 2351 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_NoStopGraceManager.mq5
+SHA-256: 981C4663A638A81009167106DB8B47E15D3742B6D61EE22C8481FD61CA02D8F6
+MetaEditor: Result: 0 errors, 0 warnings, 2227 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_OrderManager.mq5
+SHA-256: 0C9ACEB1CB20DFC4A2F6C1555B7BB17131151DEAD81C307B4A72B47E7E5C344D
+MetaEditor: Result: 0 errors, 0 warnings, 3384 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_PositionStateTracker.mq5
+SHA-256: 03140A8BAABEB27D17430B6ACEE0B994CD9C4F5B4A4BB990ABE7BE5546432376
+MetaEditor: Result: 0 errors, 0 warnings, 2454 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_PostExpansionRetestStrategy.mq5
+SHA-256: EA7FB14C9AC82A9254CDB49BECDB8DF378CE74C7035CA18F1A56DCEEE66437C1
+MetaEditor: Result: 0 errors, 0 warnings, 3331 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RegimeGateComposer.mq5
+SHA-256: 89F7C9BCFB0014CAE6BBDD9CA59245EBCB38A7256BC198D8580BFE64450F4DA5
+MetaEditor: Result: 0 errors, 0 warnings, 2102 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RiskManager.mq5
+SHA-256: EAE060A9120A4D288ACDC5A18ABDBECA1BD24C6AB587ADD37F82CF3354CC47AF
+MetaEditor: Result: 0 errors, 0 warnings, 2221 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_RiskReservationManager.mq5
+SHA-256: F12F33D8DB8DA93C6EF95FA9AE8C915D40F5347BDDF366BDFA72E0B973429EA4
+MetaEditor: Result: 0 errors, 0 warnings, 3529 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SessionManager.mq5
+SHA-256: 76F7AADB3AD452EF3A3F4E23218959E16F326B95D681F6E63A689AECE5F67FFE
+MetaEditor: Result: 0 errors, 0 warnings, 2115 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SMCStrategy.mq5
+SHA-256: 487B45C3BE3F64C2CDEE0FAB1F0CD6F0C4E599100CC9609789DB03499DB3A14B
+MetaEditor: Result: 0 errors, 0 warnings, 3950 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SRBounceStrategy.mq5
+SHA-256: 03FD45C4E13B0D898A79CFDDA1CB645DFE5A9DAC45C695117DD151E3F32150EF
+MetaEditor: Result: 0 errors, 0 warnings, 4445 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_StateManager.mq5
+SHA-256: F6423842D0DCFB5D9B74E3D50B82750622C076F29854164A8F743C6248756E14
+MetaEditor: Result: 0 errors, 0 warnings, 3005 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_StrategyRouter.mq5
+SHA-256: 7C60A720C4E85A48F10AE961D295AA13EB090B895533B9DA51B3E12DC2A231C5
+MetaEditor: Result: 0 errors, 0 warnings, 2919 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SupportResistance.mq5
+SHA-256: 73D995B49C4D8C64602CFCB5C2F76DEDE53A6A45E2AF6AD3A36DA75BDC79828F
+MetaEditor: Result: 0 errors, 0 warnings, 2400 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SwingEngine.mq5
+SHA-256: 06A5693528DCCE96D01E34DEC0E5C7662FCEC195F3CD0759308DD9EB567A1131
+MetaEditor: Result: 0 errors, 0 warnings, 2444 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_SymbolProfile_BrokerValidator.mq5
+SHA-256: 413253AC0C1F7575C2D6B8951F37F4BE21C19FA03F5FE42BAE308DEFF8664CEA
+MetaEditor: Result: 0 errors, 0 warnings, 2391 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_TradeHistoryAggregator.mq5
+SHA-256: B31A9BC7D11EB1FC781DC22D26707C5A7AB7303F9325E9D2916BA201AB1CADF0
+MetaEditor: Result: 0 errors, 0 warnings, 2789 ms elapsed, cpu='X64 Regular'
+
+============================================================
+TARGET: Scripts\Test_TrendFollowingStrategy.mq5
+SHA-256: 453F072A6C1FBC8E552DC030D0FAD99FF165441D026A519F9644F338738784BF
+MetaEditor: Result: 0 errors, 0 warnings, 3637 ms elapsed, cpu='X64 Regular'
+
+============================================================
+SUMMARY: 46/46 targets compiled with 0 errors, 0 warnings.

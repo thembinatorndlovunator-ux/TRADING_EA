@@ -88,8 +88,12 @@
 // a stamping script is out of this fix's own scope) -- named honestly as
 // a real, not-yet-attempted follow-up rather than silently implied to
 // already exist.**
+// **Updated, 2026-07-28 (round-10 remediation, all 21 findings resolved):
+// value now references e3da3f4, the last real content commit before this
+// evidence pass (this exact macro-update commit's own parent, containing
+// every round-10 fix) -- matching the established convention above.**
 #define THEMBA_EA_VERSION_STRING "1.03-task028-round10"
-#define THEMBA_EA_GIT_COMMIT     "2e71e38"
+#define THEMBA_EA_GIT_COMMIT     "e3da3f4"
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
 #include "../Include/ThembaEA/Risk/BrokerValidator.mqh"
