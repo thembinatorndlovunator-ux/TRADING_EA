@@ -10,6 +10,7 @@ import pandas as pd
 from analysis.report_metadata import (
     PIPELINE_VERSION,
     GitMetadataError,
+    atomic_rename_group,
     build_report_metadata,
     capture_git_commit,
     combine_labeled_hashes,
@@ -265,3 +266,149 @@ def test_publish_dataframe_csv_and_json_only_csv_requested_no_rollback_logic_nee
 def test_publish_dataframe_csv_and_json_neither_requested_is_a_no_op(tmp_path):
     df = pd.DataFrame({"a": [1]})
     publish_dataframe_csv_and_json(df, None, None, None)  # must not raise
+
+
+# --- atomic_rename_group / rename-stage failure (Codex round-10 P1 -----------
+# --- finding 11) --------------------------------------------------------------
+
+
+def test_atomic_rename_group_rolls_back_already_committed_renames_on_later_failure(
+    tmp_path, monkeypatch
+):
+    """Regression for a Codex review finding (2026-07-28, tenth round, P1
+    finding 11): the prior fix (write both files to temp first, then
+    rename JSON then CSV) closed the process-crash residual but NOT an
+    ORDINARY (catchable) OSError raised by the SECOND rename -- the
+    review's own fault injection on os.replace itself (not the earlier
+    write-to-temp stage the existing tests above already cover) reproduced
+    exactly this: old CSV left paired with a NEW json.
+
+    Starting from a complete old-a/old-b pair, the first rename (a) must
+    succeed and then be ROLLED BACK once the second rename (b) raises --
+    both final paths must end up back at their ORIGINAL content, not a
+    mismatched generation."""
+    import os as os_module
+
+    final_a = tmp_path / "a.txt"
+    final_b = tmp_path / "b.txt"
+    final_a.write_text("old-a", encoding="utf-8")
+    final_b.write_text("old-b", encoding="utf-8")
+
+    tmp_a = tmp_path / "a.txt.tmp"
+    tmp_b = tmp_path / "b.txt.tmp"
+    tmp_a.write_text("new-a", encoding="utf-8")
+    tmp_b.write_text("new-b", encoding="utf-8")
+
+    real_replace = os_module.replace
+    call_count = {"n": 0}
+
+    def flaky_replace(src, dst):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError("simulated disk failure on the second rename")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("analysis.report_metadata.os.replace", flaky_replace)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        atomic_rename_group([(tmp_a, final_a), (tmp_b, final_b)])
+
+    assert final_a.read_text(encoding="utf-8") == "old-a", (
+        "the FIRST rename (which succeeded before the second one failed) must be rolled "
+        "back to its own pre-call content, not left as the new (never-fully-committed) value"
+    )
+    assert final_b.read_text(encoding="utf-8") == "old-b", (
+        "the SECOND (failed) rename must leave its own final path completely untouched"
+    )
+
+
+def test_atomic_rename_group_removes_a_newly_created_final_path_on_rollback(tmp_path, monkeypatch):
+    """When the FIRST rename's own final path did not exist before the
+    call (a genuinely new file, not a republish), rollback must REMOVE it
+    entirely on a later failure, not leave a stray new file with no
+    corresponding pair partner."""
+    import os as os_module
+
+    final_a = tmp_path / "a.txt"  # does not exist yet -- first-ever publish
+    final_b = tmp_path / "b.txt"
+    final_b.write_text("old-b", encoding="utf-8")
+
+    tmp_a = tmp_path / "a.txt.tmp"
+    tmp_b = tmp_path / "b.txt.tmp"
+    tmp_a.write_text("new-a", encoding="utf-8")
+    tmp_b.write_text("new-b", encoding="utf-8")
+
+    real_replace = os_module.replace
+    call_count = {"n": 0}
+
+    def flaky_replace(src, dst):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError("simulated disk failure on the second rename")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("analysis.report_metadata.os.replace", flaky_replace)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        atomic_rename_group([(tmp_a, final_a), (tmp_b, final_b)])
+
+    assert not final_a.exists(), (
+        "a final path that did not exist before this call must be removed on rollback, "
+        "never left as a stray new file with no corresponding pair partner"
+    )
+    assert final_b.read_text(encoding="utf-8") == "old-b"
+
+
+def test_atomic_rename_group_succeeds_when_every_rename_succeeds(tmp_path):
+    final_a = tmp_path / "a.txt"
+    final_b = tmp_path / "b.txt"
+    tmp_a = tmp_path / "a.txt.tmp"
+    tmp_b = tmp_path / "b.txt.tmp"
+    tmp_a.write_text("new-a", encoding="utf-8")
+    tmp_b.write_text("new-b", encoding="utf-8")
+
+    atomic_rename_group([(tmp_a, final_a), (tmp_b, final_b)])
+
+    assert final_a.read_text(encoding="utf-8") == "new-a"
+    assert final_b.read_text(encoding="utf-8") == "new-b"
+    assert not tmp_a.exists()
+    assert not tmp_b.exists()
+
+
+def test_publish_dataframe_csv_and_json_rolls_back_json_rename_when_csv_rename_fails(
+    tmp_path, monkeypatch
+):
+    """The exact end-to-end counterexample the review's own fault
+    injection reported: starting from a complete old-csv/old-json pair,
+    injecting an OSError on the SECOND (CSV) os.replace call must not
+    leave old-CSV paired with a NEW json -- the JSON rename must be rolled
+    back to its own old content too."""
+    import os as os_module
+
+    output_csv = tmp_path / "result.csv"
+    summary_json = tmp_path / "result.summary.json"
+    output_csv.write_text("old-csv-content\n", encoding="utf-8")
+    summary_json.write_text("old-json-content", encoding="utf-8")
+
+    real_replace = os_module.replace
+    call_count = {"n": 0}
+
+    def flaky_replace(src, dst):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError("simulated disk failure on the CSV rename")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("analysis.report_metadata.os.replace", flaky_replace)
+
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        publish_dataframe_csv_and_json(df, output_csv, {"n": 2}, summary_json)
+
+    assert summary_json.read_text(encoding="utf-8") == "old-json-content", (
+        "the JSON rename (which succeeded before the CSV rename failed) must be rolled back "
+        "to its own pre-call content -- old-CSV paired with a NEW json is exactly the "
+        "mismatched-generation defect this fix closes"
+    )
+    assert output_csv.read_text(encoding="utf-8") == "old-csv-content\n"

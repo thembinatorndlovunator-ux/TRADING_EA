@@ -35,6 +35,7 @@ from analysis.csv_io import (
 )
 from analysis.report_metadata import (
     ReportMetadata,
+    atomic_rename_group,
     build_report_metadata,
     default_repo_root,
     write_text_to_temp,
@@ -243,10 +244,17 @@ def run(
     # temp write has succeeded are they renamed into place. If any temp
     # write raises, every temp file this call created is removed and NO
     # final path is ever touched -- a pre-existing valid file group
-    # survives completely untouched. A literal process crash between two
-    # renames (not a normal exception) is a narrower, explicitly named
-    # residual risk this does not close, matching
-    # publish_dataframe_csv_and_json's own honestly-scoped disclosure.**
+    # survives completely untouched.
+    #
+    # **Fixed, 2026-07-28 Codex review finding (tenth round, P1 finding 11):**
+    # the renames below now go through report_metadata.atomic_rename_group
+    # (see its own docstring), which rolls back every already-completed
+    # rename if a LATER rename in the group raises an ordinary (catchable)
+    # OSError -- the review's own fault injection demonstrated this is a
+    # normal exception path, not only the process-crash residual named
+    # below. That crash residual (and the narrower case where the
+    # rollback's own restoring write itself fails) remains a named,
+    # honestly-scoped limit -- see atomic_rename_group's own docstring.**
     csv_tmp: Optional[Path] = None
     output_json_tmp: Optional[Path] = None
     errors_json_tmp: Optional[Path] = None
@@ -269,14 +277,17 @@ def run(
                 errors_json, json.dumps(error_report, indent=2, default=str, allow_nan=False)
             )
 
+        renames: list[tuple[Path, Path]] = []
         if output_json_tmp is not None and output_json is not None:
-            os.replace(output_json_tmp, output_json)
-            output_json_tmp = None
+            renames.append((output_json_tmp, output_json))
         if errors_json_tmp is not None and errors_json is not None:
-            os.replace(errors_json_tmp, errors_json)
-            errors_json_tmp = None
+            renames.append((errors_json_tmp, errors_json))
         if csv_tmp is not None and output_csv is not None:
-            os.replace(csv_tmp, output_csv)
+            renames.append((csv_tmp, output_csv))
+        if renames:
+            atomic_rename_group(renames)
+            output_json_tmp = None
+            errors_json_tmp = None
             csv_tmp = None
     finally:
         for tmp_path in (csv_tmp, output_json_tmp, errors_json_tmp):

@@ -57,6 +57,7 @@ from analysis.csv_io import (
     write_dataframe_csv_to_temp,
 )
 from analysis.report_metadata import (
+    atomic_rename_group,
     build_report_metadata,
     combine_labeled_hashes,
     write_text_to_temp,
@@ -415,7 +416,16 @@ def run(
     # failed). Every requested file is now written fully to a temp
     # location first; only once every temp write has succeeded are they
     # renamed into place. If any temp write raises, every temp file this
-    # call created is removed and no final path is ever touched.**
+    # call created is removed and no final path is ever touched.
+    #
+    # **Fixed, 2026-07-28 Codex review finding (tenth round, P1 finding 11):**
+    # the renames below now go through report_metadata.atomic_rename_group
+    # (see its own docstring), which rolls back every already-completed
+    # rename if a LATER rename in the group raises an ordinary (catchable)
+    # OSError -- the review's own fault injection demonstrated this is a
+    # normal exception path, not only a process-crash residual. See
+    # atomic_rename_group's own docstring for the remaining honestly-scoped
+    # residual (a process crash, or the rollback's own write also failing).**
     csv_tmp: Optional[Path] = None
     summary_json_tmp: Optional[Path] = None
     errors_json_tmp: Optional[Path] = None
@@ -433,14 +443,17 @@ def run(
                 errors_json, json.dumps(error_payload, indent=2, default=str, allow_nan=False)
             )
 
+        renames: list[tuple[Path, Path]] = []
         if summary_json_tmp is not None and summary_json is not None:
-            os.replace(summary_json_tmp, summary_json)
-            summary_json_tmp = None
+            renames.append((summary_json_tmp, summary_json))
         if errors_json_tmp is not None and errors_json is not None:
-            os.replace(errors_json_tmp, errors_json)
-            errors_json_tmp = None
+            renames.append((errors_json_tmp, errors_json))
         if csv_tmp is not None and output_csv is not None:
-            os.replace(csv_tmp, output_csv)
+            renames.append((csv_tmp, output_csv))
+        if renames:
+            atomic_rename_group(renames)
+            summary_json_tmp = None
+            errors_json_tmp = None
             csv_tmp = None
     finally:
         for tmp_path in (csv_tmp, summary_json_tmp, errors_json_tmp):

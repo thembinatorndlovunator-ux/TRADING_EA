@@ -230,6 +230,51 @@ def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None
         raise
 
 
+def atomic_rename_group(renames: Sequence[tuple[Path, Path]]) -> None:
+    """Performs a GROUP of temp->final ``os.replace`` renames with rollback.
+
+    **Added, 2026-07-28 Codex review finding (tenth round, P1 finding 11):**
+    the prior fix in this module (write every file fully to temp first, then
+    rename in order) closed the process-crash residual risk named in
+    ``publish_dataframe_csv_and_json``'s own header, but did NOT close an
+    ORDINARY (catchable) ``OSError`` raised by a LATER rename in the group --
+    the review's own fault injection reproduced exactly this: a second
+    ``os.replace`` failure left an already-renamed FIRST file's own NEW
+    content paired with an un-renamed (still old) later file, a genuinely
+    mismatched generation, not merely a crash-window artifact.
+
+    Fixed by preserving each final path's own pre-existing content (bytes,
+    if any) before any rename in the group runs, then -- if any rename in
+    the group raises -- restoring every ALREADY-renamed final path back to
+    its own pre-call content (or removing it, if it did not exist before
+    this call) before re-raising.
+
+    **Residual risk, named honestly:** this is a best-effort rollback, not a
+    true transaction -- the rollback's own restoring write could itself fail
+    (e.g. the same underlying disk/permission issue that broke the original
+    rename). In that narrow, doubly-unlucky case a mismatched generation can
+    still result. A full versioned-directory-plus-manifest-pointer scheme
+    (the review's own alternative suggestion) would close even that but is
+    materially larger design work, not attempted here.
+    """
+    committed: list[tuple[Path, Optional[bytes]]] = []
+    try:
+        for tmp_path, final_path in renames:
+            old_bytes: Optional[bytes] = final_path.read_bytes() if final_path.exists() else None
+            os.replace(tmp_path, final_path)
+            committed.append((final_path, old_bytes))
+    except OSError:
+        for final_path, old_bytes in reversed(committed):
+            try:
+                if old_bytes is not None:
+                    final_path.write_bytes(old_bytes)
+                else:
+                    final_path.unlink()
+            except OSError:
+                pass  # best-effort rollback -- see docstring's own residual-risk disclosure
+        raise
+
+
 def publish_dataframe_csv_and_json(
     df: Optional[pd.DataFrame],
     output_csv: Optional[Path],
@@ -277,17 +322,22 @@ def publish_dataframe_csv_and_json(
     output_csv/summary_json was requested, this degrades to that single
     file's own write-to-temp-then-rename atomicity.
 
+    **Fixed, 2026-07-28 Codex review finding (tenth round, P1 finding 11):**
+    the two renames below now go through ``atomic_rename_group`` (see its
+    own docstring), which rolls back an already-completed JSON rename if
+    the subsequent CSV rename raises an ORDINARY (catchable) ``OSError`` --
+    the review's own fault injection demonstrated this is a normal
+    exception path, not only the process-crash residual named below.
+
     **Residual risk, named honestly, not silently closed:** a literal
     process crash (not a normal exception -- those are fully handled
-    above) landing between the JSON rename and the CSV rename is not
-    closed by this fix. JSON is renamed first specifically to make that
-    exact window's own surviving mismatch a genuinely complete OLD CSV
-    paired with a NEW json, rather than a missing/corrupt CSV -- the
-    project's own stated worse failure mode (round 8 P1 finding 2:
-    "apparently valid result with no provenance"). A full versioned-
-    directory-plus-manifest-pointer scheme (the review's own alternative
-    suggestion) would close this too but is materially larger design work,
-    not attempted here.
+    above, including the rollback path) landing between the JSON rename
+    and the CSV rename is not closed by this fix, nor is the narrow case
+    where the rollback's own restoring write itself fails (see
+    ``atomic_rename_group``'s own residual-risk disclosure). A full
+    versioned-directory-plus-manifest-pointer scheme (the review's own
+    alternative suggestion) would close this too but is materially larger
+    design work, not attempted here.
     """
 
     # Local import (not at module top) to avoid a hard import-time
@@ -308,11 +358,14 @@ def publish_dataframe_csv_and_json(
                 summary_json, json.dumps(payload, indent=2, default=str, allow_nan=False)
             )
 
+        renames: list[tuple[Path, Path]] = []
         if json_tmp is not None and summary_json is not None:
-            os.replace(json_tmp, summary_json)
-            json_tmp = None
+            renames.append((json_tmp, summary_json))
         if csv_tmp is not None and output_csv is not None:
-            os.replace(csv_tmp, output_csv)
+            renames.append((csv_tmp, output_csv))
+        if renames:
+            atomic_rename_group(renames)
+            json_tmp = None
             csv_tmp = None
     finally:
         for tmp_path in (csv_tmp, json_tmp):
