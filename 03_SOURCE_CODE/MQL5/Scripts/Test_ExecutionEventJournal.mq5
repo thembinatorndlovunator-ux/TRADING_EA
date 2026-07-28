@@ -165,10 +165,56 @@ void OnStart()
       Check("second written line contains EEJ_TEST_LINE_2", Contains(line2, "EEJ_TEST_LINE_2"));
      }
 
+   //--- 7. Durable retry queue round trip (Codex review finding, tenth ------
+   //---    round, P1 finding 10): a queued event is migrated into its own ----
+   //---    CORRECT daily journal file by EEJ_DrainPendingEvents, and the -------
+   //---    queue itself ends up empty once fully drained. -----------------------
+   string queue_path = EEJ_PendingQueuePath();
+   if(FileIsExist(queue_path))
+      FileDelete(queue_path); // clean slate
+
+   SExecutionEvent q1 = EEJ_NewEvent();
+   q1.event_id = "EEJ_QUEUE_TEST_LINE_1";
+   q1.event_type = "SYNC_FILL";
+   q1.timestamp = TimeCurrent();
+   q1.symbol = "TESTSYMBOL";
+   q1.filled = true;
+   q1.outcome_note = "queued_retry_test";
+
+   Check("EEJ_QueuePendingEvent succeeds", EEJ_QueuePendingEvent(q1));
+   Check("the pending queue file now exists", FileIsExist(queue_path));
+
+   // The event's own target journal file must NOT contain it yet -- only
+   // the queue does, until a drain pass runs.
+   string q1_target_path = EEJ_JournalFilePath(q1.timestamp);
+   if(FileIsExist(q1_target_path))
+      FileDelete(q1_target_path); // clean slate for this check too
+
+   EEJ_DrainPendingEvents();
+
+   Check("after draining, the pending queue file no longer exists (fully drained)",
+         !FileIsExist(queue_path));
+
+   int q1_read_handle = FileOpen(q1_target_path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_SHARE_READ,
+                                  0, CP_UTF8);
+   Check("the queued event's own correct daily journal file now exists and is readable",
+         q1_read_handle != INVALID_HANDLE);
+   if(q1_read_handle != INVALID_HANDLE)
+     {
+      string q1_line = FileReadString(q1_read_handle);
+      FileClose(q1_read_handle);
+      Check("the drained line contains the originally-queued event's own event_id",
+            Contains(q1_line, "EEJ_QUEUE_TEST_LINE_1"));
+     }
+
    //--- Cleanup: leave no residue --------------------------------------------
    if(FileIsExist(test_path))
       FileDelete(test_path);
    Check("test journal file removed after cleanup", !FileIsExist(test_path));
+   if(FileIsExist(q1_target_path))
+      FileDelete(q1_target_path);
+   if(FileIsExist(queue_path))
+      FileDelete(queue_path);
 
    PrintFormat("=== Codex round-9 P1 finding 9 ExecutionEventJournal test complete: "
                "%d passed, %d failed ===", g_pass, g_fail);

@@ -138,25 +138,37 @@ string EEJ_JournalFilePath(const datetime utc_date)
   }
 
 //+------------------------------------------------------------------+
-//| Appends one serialized event as a new line to the day's journal      |
-//| file, creating the file/directory if needed. Same bounded-retry,      |
-//| UTF-8, write-length-verified append as DecisionJournal.mqh's own       |
-//| DJ_AppendDecision — see that function's own header for why each of      |
-//| these choices (FILE_SHARE_READ-only, CP_UTF8, retry budget, checked      |
-//| FileWriteString return) matters.                                          |
+//| **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding    |
+//| 10):** previously FILE_SHARE_READ only -- a SECOND writer (a different       |
+//| chart instance on a different symbol, since this journal is per-DAY, not         |
+//| per-symbol) could not even be GRANTED share access while the first             |
+//| writer's handle was open, relying entirely on the fixed retry budget                |
+//| below to happen to land in a gap. FILE_SHARE_WRITE now lets a second               |
+//| writer's own FileOpen succeed concurrently (MT5's own file API still                    |
+//| serializes the actual read/write operations against a shared handle,                        |
+//| so this does not reintroduce a torn-write risk).                                                |
 //+------------------------------------------------------------------+
-bool EEJ_AppendEvent(const SExecutionEvent &e, string &error_reason)
+int EEJ_FileOpenFlags()
+  {
+   return FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ | FILE_SHARE_WRITE;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding    |
+//| 10):** the actual open-retry-write primitive, factored out of                 |
+//| EEJ_AppendEvent so EEJ_DrainPendingEvents below can reuse the identical             |
+//| logic when retrying a previously-queued event against its own correct                  |
+//| daily file.                                                                                |
+//+------------------------------------------------------------------+
+bool EEJ_AppendRawLine(const string path, const string line, string &error_reason)
   {
    error_reason = "";
-   string path = EEJ_JournalFilePath(e.timestamp);
-
    const int max_attempts = 20;
    const int retry_delay_ms = 15;
    int handle = INVALID_HANDLE;
    for(int attempt = 0; attempt < max_attempts; attempt++)
      {
-      handle = FileOpen(path, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ,
-                         0, CP_UTF8);
+      handle = FileOpen(path, EEJ_FileOpenFlags(), 0, CP_UTF8);
       if(handle != INVALID_HANDLE)
          break;
       Sleep(retry_delay_ms);
@@ -169,7 +181,6 @@ bool EEJ_AppendEvent(const SExecutionEvent &e, string &error_reason)
      }
 
    FileSeek(handle, 0, SEEK_END);
-   string line = EEJ_SerializeEvent(e);
    string payload = line + "\r\n";
    uint written = FileWriteString(handle, payload);
    int write_error = (written != (uint)StringLen(payload)) ? GetLastError() : 0;
@@ -181,4 +192,114 @@ bool EEJ_AppendEvent(const SExecutionEvent &e, string &error_reason)
       return false;
      }
    return true;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding    |
+//| 10):** durable retry queue for an event whose own append to its correct       |
+//| daily journal failed -- a SEPARATE small file (never rewritten in place,          |
+//| only appended to and periodically rebuilt by EEJ_DrainPendingEvents), so             |
+//| the event is not silently lost even though it could not reach the real                  |
+//| journal yet. Each queued record is "target_path\tjson_line" so the drain                    |
+//| pass can retry against the EXACT correct day-file regardless of when the                        drain
+//| itself runs (never mis-filed under "today" if a retry spans a day                                    boundary).
+//+------------------------------------------------------------------+
+string EEJ_PendingQueuePath()
+  {
+   return "ThembaEA\\Journal\\execution_events_pending.jsonl";
+  }
+
+bool EEJ_QueuePendingEvent(const SExecutionEvent &e)
+  {
+   string target_path = EEJ_JournalFilePath(e.timestamp);
+   string line = EEJ_SerializeEvent(e);
+   string record = target_path + "\t" + line;
+   string ignored_error;
+   // Append-only to the queue file itself -- reuses the same open-retry-
+   // write primitive (queue contention is no more likely than journal
+   // contention, and deserves the same retry discipline).
+   return EEJ_AppendRawLine(EEJ_PendingQueuePath(), record, ignored_error);
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding    |
+//| 10):** migrates every queued (previously failed) event into its own          |
+//| correct daily journal file. Call from OnTick/OnTimer -- cheap no-op via         |
+//| FileIsExist whenever nothing is pending, the steady-state case. Rewrites            |
+//| the queue file to contain only whatever STILL could not be migrated (an                 |
+//| empty/absent file once fully drained).                                                      |
+//+------------------------------------------------------------------+
+void EEJ_DrainPendingEvents()
+  {
+   string queue_path = EEJ_PendingQueuePath();
+   if(!FileIsExist(queue_path))
+      return;
+
+   int read_handle = FileOpen(queue_path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_SHARE_READ |
+                               FILE_SHARE_WRITE, 0, CP_UTF8);
+   if(read_handle == INVALID_HANDLE)
+      return; // cannot read the queue right now -- retried on a later tick/timer
+
+   string still_pending[];
+   while(!FileIsEnding(read_handle))
+     {
+      string record = FileReadString(read_handle);
+      if(record == "")
+         continue;
+      int tab_pos = StringFind(record, "\t");
+      if(tab_pos < 0)
+         continue; // malformed record -- should not happen; defensive-only drop
+
+      string target_path = StringSubstr(record, 0, tab_pos);
+      string json_line = StringSubstr(record, tab_pos + 1);
+      string retry_error;
+      if(!EEJ_AppendRawLine(target_path, json_line, retry_error))
+        {
+         int n = ArraySize(still_pending);
+         ArrayResize(still_pending, n + 1);
+         still_pending[n] = record;
+        }
+     }
+   FileClose(read_handle);
+
+   int write_handle = FileOpen(queue_path, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ |
+                                FILE_SHARE_WRITE, 0, CP_UTF8);
+   if(write_handle == INVALID_HANDLE)
+      return; // cannot rewrite the queue right now -- the un-migrated records above are still
+              // sitting in the ORIGINAL file (never removed until this succeeds), so nothing
+              // is lost; retried on a later tick/timer.
+   for(int i = 0; i < ArraySize(still_pending); i++)
+      FileWriteString(write_handle, still_pending[i] + "\r\n");
+   FileClose(write_handle);
+  }
+
+//+------------------------------------------------------------------+
+//| Appends one serialized event as a new line to the day's journal      |
+//| file, creating the file/directory if needed. Same bounded-retry,      |
+//| UTF-8, write-length-verified append as DecisionJournal.mqh's own       |
+//| DJ_AppendDecision — see that function's own header for why each of      |
+//| these choices (CP_UTF8, retry budget, checked FileWriteString return)     |
+//| matters.                                                                   |
+//|                                                                    |
+//| **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding    |
+//| 10):** a failed append is now durably queued (EEJ_QueuePendingEvent)          |
+//| before returning false -- previously the caller only PRINTED the failure          |
+//| and moved on, with no durable retry mechanism at all (the review's own                "there
+//| is no durable retry queue" finding). The caller's own return-value                              contract
+//| is unchanged (false still means "not yet confirmed in the real journal                              this
+//| call"), but the event itself is no longer at risk of being silently lost.                              |
+//+------------------------------------------------------------------+
+bool EEJ_AppendEvent(const SExecutionEvent &e, string &error_reason)
+  {
+   string path = EEJ_JournalFilePath(e.timestamp);
+   string line = EEJ_SerializeEvent(e);
+   bool ok = EEJ_AppendRawLine(path, line, error_reason);
+   if(!ok)
+     {
+      if(!EEJ_QueuePendingEvent(e))
+         PrintFormat("ThembaEA: CRITICAL -- ExecutionEventJournal failed to append AND failed to "
+                     "queue event_id='%s' for retry -- this event may be genuinely lost. Original "
+                     "append error: %s.", e.event_id, error_reason);
+     }
+   return ok;
   }

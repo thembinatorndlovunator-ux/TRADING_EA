@@ -554,6 +554,13 @@ int OnInit()
    // own header; also called every tick and every timer fire below.
    ReEvaluateMandatoryClosureObligations();
 
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding
+   // 10):** drain any execution-event journal append left pending by a
+   // prior session's own crash -- the queue file itself is durable (real
+   // disk file, not session-only), so this recovers it as early as possible
+   // at restart rather than waiting for the first OnTick/OnTimer fire.
+   EEJ_DrainPendingEvents();
+
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
    // a timer guarantees the mandatory intraday close is attempted even if
    // NO TICK arrives at or after the boundary before the next server
@@ -693,7 +700,21 @@ void LogAsyncFillResolution(const string original_signal_id, const string intent
       evt.order_id = IntegerToString((long)resolved_position_id);
    evt.order_ticket = order_ticket;
    if(deal_ticket != 0)
+     {
       evt.deal_id = IntegerToString((long)deal_ticket);
+      // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding
+      // 10):** volume/price were previously never populated here even
+      // though a selected fill deal provides both -- a row could say
+      // filled=true with null fill economics. HistoryDealGetDouble works
+      // directly by ticket (no fresh HistorySelect needed here) because
+      // OnTradeTransaction's own callback already runs against the
+      // terminal's just-updated history state, matching this same file's
+      // existing direct HistoryDealGet*(trans.deal, ...) usage elsewhere.
+      evt.volume = HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+      evt.has_volume = evt.volume > 0.0;
+      evt.price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      evt.has_price = evt.price > 0.0;
+     }
    evt.timestamp = event_time_utc;
    evt.symbol = g_symbol;
    evt.filled = filled;
@@ -879,6 +900,36 @@ void ReconcileIntentAndFeedAFC()
                            "at all (order never reached the broker)";
    PrintFormat("ThembaEA: reconciled an orphaned durable-intent record for '%s' magic %I64d -- "
                "%s.", g_symbol, InpMagicNumber, reconcile_outcome);
+
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding
+   // 10):** backfills an execution-event journal row for this restart
+   // reconciliation -- previously this only printed the recovered outcome
+   // and cleared/reconciled internal state, leaving NO machine-readable
+   // evidence trail for a fill that a crash prevented the normal SYNC_FILL/
+   // ASYNC_FILL_CONFIRMED append from ever recording. position_id/deal_id
+   // are left null (never fabricated) since IM_ReconcileOnRestart's own
+   // contract does not expose the specific resolved IDs here -- this event
+   // still independently proves "a fill/non-fill was recovered by restart
+   // reconciliation for this intent", closing the review's own "no
+   // backfill" finding even without those specific IDs.
+   {
+      SExecutionEvent restart_evt = EEJ_NewEvent();
+      datetime restart_evt_time = DJ_ServerTimeToUtc(TimeTradeServer());
+      restart_evt.event_id = EEJ_BuildEventId(restart_evt_time, GetMicrosecondCount());
+      restart_evt.event_type = orphaned_abandoned ? "RESTART_RECONCILED_ABANDONED"
+                                : (orphaned_was_filled ? "RESTART_RECONCILED_FILLED"
+                                                          : "RESTART_RECONCILED_NOT_FILLED");
+      restart_evt.intent_id = IM_GetIntentId(g_symbol, InpMagicNumber);
+      restart_evt.timestamp = restart_evt_time;
+      restart_evt.symbol = g_symbol;
+      restart_evt.filled = orphaned_was_filled;
+      restart_evt.outcome_note = reconcile_outcome;
+      string restart_evt_error;
+      if(!EEJ_AppendEvent(restart_evt, restart_evt_error))
+         PrintFormat("ThembaEA: CRITICAL -- failed to append restart-reconciliation execution-event "
+                     "journal row for '%s' magic %I64d (%s).", g_symbol, InpMagicNumber,
+                     restart_evt_error);
+   }
 
    // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 2):**
    // a reservation whose own holder crashed before releasing it (the
@@ -1500,6 +1551,12 @@ void OnTimer()
    // horizon (a handful of hours on any realistic timeframe) -- this is a
    // housekeeping bound, not an operational one.
    CPL_CleanupStale(g_symbol, InpMagicNumber, 7 * 86400);
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding
+   // 10):** retries any execution-event journal append that previously
+   // failed (see ExecutionEventJournal.mqh's own EEJ_QueuePendingEvent/
+   // EEJ_DrainPendingEvents header) -- "no durable retry queue" is the
+   // exact gap this closes.
+   EEJ_DrainPendingEvents();
   }
 
 void OnTick()
