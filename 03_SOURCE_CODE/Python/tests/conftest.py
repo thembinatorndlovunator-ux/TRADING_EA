@@ -6,6 +6,7 @@ synthetic fixtures... rather than fabricate results"). No file under
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -80,7 +81,7 @@ def journal_dir_factory(tmp_path):
     the given list of already-JSON-serializable dict/str lines, and returns
     the containing directory."""
 
-    def _write(filename: str, lines: list) -> "Path":  # noqa: F821
+    def _write(filename: str, lines: list) -> Path:
         path = tmp_path / filename
         with path.open("w", encoding="utf-8") as fh:
             for line in lines:
