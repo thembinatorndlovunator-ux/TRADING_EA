@@ -1,630 +1,558 @@
-# TASK-028 independent code review - round 9
+# TASK-028 independent code review - round 10
 
 **Disposition: CHANGES REQUESTED**
 
 **Review target:** branch `claude/task-028-python-statistical-lab`, commit
-`79da9c9302bfeecef84303a4b65cb2930b46f87e` (`79da9c9`). I reviewed the
-complete remediation range after the round-8 target,
-`7252987c185e0654444948b1378c78e10d1ed3f3..79da9c9` (24 commits, 84 changed
-paths, 7,941 insertions and 1,378 deletions), not only the handover or tip
-commit. I independently inspected the current MQL5 and Python source, the
-canonical Phase-2/risk contracts, Git history and diffs, retained compile
-evidence, tests, notebooks, and both immutable baseline tags.
+`6213a48f038e77716145ad54cf5a6a7ebe63e725` (`6213a48`). I reviewed the
+complete remediation range after the round-9 target,
+`79da9c9302bfeecef84303a4b65cb2930b46f87e..6213a48` (27 commits, 67 changed
+paths, 8,338 insertions, 1,201 deletions), the round-9 handover, current MQL5
+and Python source, canonical specifications and risk policy, Git history,
+retained compile evidence, tests, notebooks, and both immutable baseline tags.
 
-The remediation contains substantial real work, and all declared Python
-quality gates are clean. It nevertheless does **not** support the handover's
-claim that all 22 round-8 findings are resolved. Several safety-critical
-findings remain only partly implemented; the source and handover explicitly
-admit that portions of findings 11, 12, 14, and 19 were deferred while the
-canonical history simultaneously calls all 22 resolved.
+The remediation contains substantial genuine work. The retained 46-target
+MetaEditor compile is internally authentic, every recorded source hash matches
+the compiled tree, and the Python gates are clean. Those facts do **not**
+support the handover's assertion that 21 findings received complete fixes.
+Several fixes repeat the race they claim to remove, and multiple hard-risk and
+mandatory-closure paths still fail open.
 
-I found **23 remaining findings: 7 P0, 14 P1, and 2 P2**. The EA is **not ready
-to merge, not ready for a demo-account trial with order submission enabled,
-and not ready for live use** at this commit. Journal-only observation with
-`InpEnableOrderSubmission=false` does not validate the unresolved execution
-and capital-safety paths.
+I found **21 remaining findings: 7 P0, 11 P1, and 3 P2**. The EA is **not ready
+to merge as a completed TASK-028 package, not ready for a demo-account trial
+with `InpEnableOrderSubmission=true`, and not ready for live use**. The two
+registered architecture tasks, TASK-043 and TASK-044, also remain explicitly
+not started. A journal-only attachment with order submission disabled may be
+used for observation, but it does not exercise or validate the unsafe paths
+below.
 
 ## Findings
 
-### 1. [P0] The 1% hard-risk cap remains fail-open, raceable, and unenforced after an actual fill
+### 1. [P0] The account lock's new bootstrap and timestamp protocol are still raceable, and multi-field risk state is still non-transactional
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:610-648,1198-1273,1519-1531,1551-1576,1632-1648`;
-`TASK-002_PHASE2_SPECIFICATION.md:1024-1035,1062-1076,1122-1136`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Core/StateManager.mqh:124-182,204-228,280-354`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyLimits.mqh:135-182`;
+`TASK-002_PHASE2_SPECIFICATION.md:1194-1211,1394-1403`.
+
+`SM_AcquireAccountLock()` does not make first-use creation race-free. Two
+callers can both fail `GlobalVariableSetOnCondition()` because the key is
+absent. Caller A can execute `GlobalVariableSet(lock_key, 0.0)` and then
+acquire a nonzero token; delayed caller B can subsequently execute the same
+unconditional set at line 167 and overwrite A's live token with zero. The
+comment at lines 124-136 calling this “provably race-free” is false. The CAS
+also is not preceded by `ResetLastError()`, so its interpretation of
+`GetLastError()` at lines 163-167 is not isolated from a stale prior error.
+
+The lock token and `__since` timestamp are separate, unowned writes. Acquire
+returns at lines 157-160 and callers stamp later at 225-228. A contender can
+therefore observe a new token with an old stale timestamp and break it at
+173-182. Release CAS-clears the token at 207, then unconditionally clears
+`__since` at 216. A new holder can acquire and stamp between those operations,
+after which the old holder erases the new holder's timestamp. The source's
+claim at 208-215 that nobody can observe that interval is not established.
+
+Finally, the batch writer itself explicitly concedes at 297-321 that it has no
+WAL/versioned-record transaction. Stopping after the first failed write fixes
+one ordinary write-failure ordering, but a crash after a successful baseline
+write and before its cursor/marker still lets recovery capture later equity or
+double-apply a cash flow. `DWL_ApplyCashFlowAdjustments()` writes daily
+baseline, weekly baseline, and deal cursor as three separate globals at
+175-182, so the admitted crash window is in a binding risk path.
+
+**Required correction:** replace first-use plain-set bootstrapping with a
+creation/acquisition protocol that cannot overwrite a live owner; bind the
+staleness timestamp to the same owner token and condition its update/clear on
+that token; and persist logically coupled risk fields as one recoverable
+versioned record or WAL transaction. Add real concurrent-first-use,
+stale-break, delayed-release, write-failure, and crash/restart tests.
+
+### 2. [P0] Hard-risk reservations are ownerless and do not make the exposure check atomic
+
+**Files:**
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/RiskReservationManager.mqh:37,44-55,66-86,91-175`;
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:1959-1983,2000-2023,2053-2075,2084-2091,2142-2148`;
+`TASK-002_PHASE2_SPECIFICATION.md:986-987,1024-1035,1062-1076`;
 `RISK_POLICY.md:5-11`.
 
-`ComputeOwnMagicOpenRiskCash()` returns only a `double`, so its caller cannot
-distinguish zero exposure from exposure whose risk could not be read. It
-silently skips a position/order when a symbol profile cannot load (EA
-1213-1215, 1264-1266), ATR is unavailable for a stopless position
-(1221-1225), a pending order is stopless (1249-1251), the SL is on a
-non-loss side, or `RM_Compute*RiskCash` fails. Those paths contribute zero to
-the purported hard cap.
+There is only one reservation key per `symbol+magic` at RRM 52-55; it has no
+reservation ID or owner/intent token. A second same-symbol caller can include
+the first reservation in its sum, then overwrite that exact key at 143-145.
+If its later `IM_BeginIntent()` fails, EA 2022 blindly deletes the other
+caller's live reservation. The same stale-release defect can occur when an old
+fill path clears intent and a newer flow reserves before the old
+`RRM_ReleaseReservation()` runs. Release is unlocked and unconditionally
+deletes the shared key at RRM 168-175, contrary to the comment that no other
+holder can be affected.
 
-The aggregate check at 1519-1531 is a non-atomic snapshot. Intent acquisition
-does not begin until 1551, and there is no account/magic-wide reservation or
-lock around check plus submission. Two symbol instances sharing the magic can
-both observe the same headroom and submit, exceeding 1% together.
+The actual-position/pending-order risk snapshot is computed before the RRM
+lock at EA 1968-1983. Consequently, “actual exposure + reservations + new
+reservation” is not one critical section as RRM 18-22 and 97-100 claim. A
+position can appear after a caller's stale snapshot but before its locked
+reservation decision. Reservations also disappear from the sum after the
+fixed 120-second age at RRM 37 and 79-86 even when an accepted broker request
+has not been reconciled. The `exposure_unresolved` path releases at EA
+2073-2075 while the surrounding source admits the real fill's details are not
+yet resolvable; the assertion that `PositionsTotal()` will already account for
+it is not proven.
 
-`OnTradeTransaction()` checks only daily/weekly equity limits. It never
-recomputes own-magic risk from the actual fill price and volume and never
-forces closure for a post-fill per-trade/aggregate 1% breach. The journal
-calculation at 1632-1648 merely scales the pre-fill estimate by the filled
-volume ratio; it omits adverse entry slippage from
-`abs(actual_fill - stop) * actual_volume * tick_value / tick_size`. A
-`HistoryDealSelect` failure at 615-616 bypasses even the daily/weekly check.
+**Required correction:** use a unique reservation/intent owner key, owner-
+checked release, and an account/magic-wide lock that encloses a fresh actual
+exposure scan, reservation sum, and new reservation write. Do not age out or
+release accepted/unresolved exposure until broker history/position state
+proves its terminal disposition.
 
-**Required correction:** return an explicit validity result from every risk
-scan; treat any unreadable component fail-closed; reserve proposed risk under
-an account/magic-wide critical section before submission; and recompute actual
-per-trade and total risk inside the fill handler, with persisted mandatory
-closure/cancellation on breach.
-
-**Round-8 finding 3 status:** only partially resolved. Pending-order summation,
-the 10-ATR fallback, the grace manager, and the 0.25% shipped target are real
-improvements; the original concurrency, unreadable-state, and actual-fill
-defects remain.
-
-### 2. [P0] Risk persistence is still neither transactional nor reliably fail-closed
+### 3. [P0] Actual-fill 1% cap enforcement still has multiple silent bypasses
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Core/StateManager.mqh:77-96,117-164,197-247`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyLimits.mqh:58-84,135-182`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/EquityPeakManager.mqh:42-79,127-147`;
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:918-929,1463-1470,1966-1969`;
-`TASK-002_PHASE2_SPECIFICATION.md:1090-1120,1194-1211`.
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:795-853,972-1045,1586-1688`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/OrderManager.mqh:160-178`;
+`TASK-002_PHASE2_SPECIFICATION.md:1024-1035,1073-1076,1122-1136`;
+`RISK_POLICY.md:5-11,45-46`.
 
-`SM_EnsureAccountLockInitialized()` still performs check-then-set; its own
-comment concedes this is not airtight. The lock has no owner token, and its
-boolean and `__since` timestamp are separate writes. One owner can release the
-boolean, a second owner can acquire/stamp, and the first owner can then clear
-the second owner's timestamp. The stale-lock breaker likewise writes zero
-without proving ownership, and `SM_StampAccountLockHeld()` cannot report a
-failed timestamp write.
+The post-fill hard-cap block is below `HistoryDealSelect(trans.deal)`. A select
+failure returns at EA 852-853, so the actual-fill cap is skipped entirely even
+though the preceding comments claim only deal-specific work remains below the
+gate.
 
-`SM_SetAccountDoublesBatch()` is not a transaction. It continues writing after
-an early field fails. Consequently, a baseline write can fail while the final
-freshness timestamp/cursor succeeds; the current caller sees `false`, but the
-next call trusts the fresh marker and does not retry the missing field. The
-comment's claimed idempotent recovery is also false for the actual data:
+When selection succeeds, the code reads `DEAL_POSITION_ID` and passes it to
+`PositionSelectByTicket()` at 995-996. `DEAL_POSITION_ID` is the durable
+`POSITION_IDENTIFIER`; it is not guaranteed to equal the current
+`POSITION_TICKET`, a distinction OrderManager itself documents at 160-178.
+Selection failure has no fail-closed `else`, so neither per-trade nor aggregate
+cap enforcement runs.
 
-- retrying a daily/weekly baseline after a crash can capture later equity and
-  hide intervening P/L;
-- retrying cash-flow rebasing after the baseline changed but before the cursor
-  changed can apply the same cash flow twice;
-- retrying the daily-peak baseline can replace boundary equity with later
-  equity.
+The per-trade formula at EA 1012-1018 uses `abs(fill - SL)`. The specification
+requires directional `max(0, loss-side distance)`: for a buy filled below an SL
+that is now on the profit side, `abs` invents risk and can force a false close.
+Neither this calculation nor `ComputeOwnMagicOpenRiskCash()`'s calculations at
+1631-1683 perform the policy-required `OrderCalcProfit` cross-check. Finally,
+the aggregate scanner silently continues when `PositionGetTicket()` or
+`OrderGetTicket()` returns zero at 1593-1595 and 1644-1646, treating an
+unreadable component as absent rather than invalidating the cap calculation.
 
-Peak update return values are intentionally ignored at EA 918-929. When the
-account peak is absent, `EPM_GetCurrentDrawdownPercent()` returns 0%, which
-produces the least restrictive downstream multiplier instead of treating peak
-state as unknown.
+**Required correction:** enforce the actual-fill check even when history
+selection is temporarily unavailable; select/enumerate by the correct ticket
+or compare `POSITION_IDENTIFIER` explicitly; fail closed on every unreadable
+component; use the directional loss formula; and apply the broker-native
+cross-check to every binding risk-cash computation.
 
-**Required correction:** use a versioned single-record prepare/commit protocol
-or an atomic file replacement for related fields; use an owner-token lock with
-owner-checked release/recovery; stop a batch at its first failed write; and
-propagate peak/baseline validity so unknown state blocks entries and cannot
-increase risk.
-
-**Round-8 finding 4 status:** partially resolved. Per-tick peak calls,
-raise-if-greater locking, checked setters, and the pre-entry daily/weekly
-validity gate are improvements, but the persisted-record protocol remains
-unsafe.
-
-### 3. [P0] Durable intent can still race, correlate the wrong order, or clear after an inconclusive lookup
+### 4. [P0] The durable-intent “race-free” bootstrap repeats the same destructive first-use race
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/IntentManager.mqh:85-112,115-221,228-277,299-328,368-418`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/IntentManager.mqh:169-235,256-287`;
 `TASK-002_PHASE2_SPECIFICATION.md:1213-1225`.
 
-The first-creation path at 107-112 remains check-then-unconditional-set. Two
-concurrent `OnInit` calls can reset an already active intent; the comments only
-assume that two same-symbol/magic initializations will not race.
+`IM_BeginIntent()` has the same interleaving as finding 1. Two callers can both
+observe the missing key. Caller A can create zero and CAS it to active; delayed
+caller B then executes the unconditional `GlobalVariableSet(active_key, 0.0)`
+at line 201, erasing A's live intent and allowing a duplicate submission. The
+“provably race-free” claim at 169-181 is therefore false. It also reads
+`GetLastError()` without resetting it before the CAS.
 
-The identifier is derived solely from `GetMicrosecondCount()`, which restarts
-with the terminal and can repeat across sessions. More importantly, live
-position and pending-order reconciliation does not use the ID at all: it
-matches only symbol plus magic at 228-241 and 262-277. An unrelated position or
-order with the same magic can resolve the intent incorrectly.
+After active is acquired, `is_long`, `volume`, `timestamp`, and
+`intent_micro` are four independent writes at 216-235. Ordinary failures are
+rolled back, but a process crash can leave `active=1` with an incoherent
+record; there is no prepare/commit marker. Exact-ID matching and improved
+history enumeration are real improvements, but they do not repair acquisition
+or record atomicity.
 
-History reconciliation searches orders, not the required closed order **and
-deal** history. `HistorySelect` failure is indistinguishable from a successful
-search with no match; once the timeout is reached, 394-411 clears the intent
-anyway. That converts a temporary history failure into permission for a
-duplicate submission. An order that partially filled and later cancelled is
-also misclassified because `was_filled_out` is true only for final state
-`ORDER_STATE_FILLED`. `IM_ClearIntent()` neither reports write success nor
-flushes the safety-critical clear.
+**Required correction:** make absent-key acquisition genuinely atomic and
+persist one versioned intent record with a recoverable prepare/commit state.
+Test two simultaneous first-ever callers and crash at each persisted field.
 
-**Required correction:** create one globally unique ID, persist one coherent
-intent record, match that exact ID in live orders/positions and order/deal
-history, distinguish lookup failure from verified absence, model partial
-terminal outcomes, and verify/flush every state transition.
-
-**Round-8 finding 5 status:** partially resolved. A broker-visible comment ID,
-bounded history query, timeout, and pending-correlator reconstruction were
-added, but the protocol is not restart-idempotent yet.
-
-### 4. [P0] Partial and asynchronous fills still have unsafe terminal-state handling
+### 5. [P0] A mixed valid/malformed FairEconomy response can still hide a high-impact event and be cached as safe
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/OrderManager.mqh:239-332`;
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:768-800,1584-1614`.
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/News/FairEconomyNewsProvider.mqh:233-305,383-445`;
+`03_SOURCE_CODE/MQL5/Scripts/Test_FairEconomyNewsProvider.mq5:189-244`;
+`NEWS_INTEGRATION_SPEC.md` (provider-unavailable fail-closed policy).
 
-`DONE_PARTIAL` is now accepted, but `OM_OpenPosition()` returns `false` after a
-real fill if deal-history selection or live-position resolution fails
-(OrderManager 298-332). The caller then clears the intent and journals a
-rejection at EA 1586-1592 even though exposure exists.
+`FEP_ParseFeedJson()` skips an object with a missing date at 275-276 and an
+unparseable date at 278-281 **before** setting
+`any_required_field_missing_out` at 283-284. A payload containing one valid
+benign event and one high-impact object whose date is absent or malformed has
+`raw_object_count=2`, `parsed_count=1`, and the malformed flag remains false.
+`FEP_FetchLive()` rejects only “all objects unparseable” at 416-423 or a flag
+set by a date-parseable malformed object at 435-443. It therefore accepts and
+caches that partial calendar.
 
-For a resolved synchronous partial fill, the EA clears intent immediately at
-1594-1597 without checking whether an order remainder remains live. For an
-asynchronous order, the first `DEAL_ENTRY_IN` removes the correlator and clears
-intent at 768-783, again without testing remaining order volume/state; later
-remainder fills are uncorrelated. The history branch treats every final state
-other than `FILLED` as “never filled,” including partially-filled-then-cancelled
-orders. Entry-time mode is persisted only on the synchronous path, so an async
-fill has no corresponding position mode state.
+The new tests cover malformed fields on objects with parseable dates; they do
+not cover the mixed valid plus invalid/missing-date counterexample.
 
-**Required correction:** drive opening exposure through a durable order-state
-machine that retains intent/correlation until the order is terminal and all
-filled volume is accounted for. Once the broker has filled any volume,
-resolution uncertainty must never be returned as ordinary rejection.
+**Required correction:** validate every raw object's required schema,
+including date presence and parseability, before any `continue`; reject the
+entire fetch if any object is malformed; add both mixed-payload regressions.
 
-**Round-8 finding 8 status:** partially resolved. The immediate
-`DONE_PARTIAL == rejection` bug is fixed; partial/remainder lifecycle and
-actual-fill risk are not.
-
-### 5. [P0] FairEconomy still converts partial or missing schema into a verified safe calendar
+### 6. [P0] Mandatory boundary/no-stop protection is still tick-dependent or non-durable
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/News/FairEconomyNewsProvider.mqh:118-128,219-265,298-320,343-384`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/News/MT5CalendarProvider.mqh:95-169`;
-`03_SOURCE_CODE/MQL5/Scripts/Test_FairEconomyNewsProvider.mq5:145-177`.
-
-An object is counted as usable if `date` parses. `title`, `country`, and
-`impact` may be missing, and missing/unrecognized impact maps to 0. The live
-wrapper rejects only when **all** raw objects fail parsing. Therefore a payload
-containing one benign parseable object plus one malformed high-impact object is
-accepted and cached while silently omitting the event that should block
-trading. Even `[{"date":"2026-07-27T12:00:00Z"}]` becomes
-one “valid” zero-impact event with no identity/currency.
-
-The new tests cover bracketed garbage and wholly unparseable arrays, not
-partial failure or required-field absence. The MT5 provider's any-lookup-fails
-behavior is now correctly fail-closed.
-
-**Required correction:** validate the complete response and every object's
-safety-required schema before caching any result. Reject the whole fetch if
-any event is malformed, required identity/currency/impact is missing, or impact
-is outside the known vocabulary.
-
-**Round-8 finding 7 status:** MT5 is resolved; FairEconomy remains partial.
-
-### 6. [P0] Mandatory-close and no-stop obligations can silently stop retrying
-
-**Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/IntradayCloseManager.mqh:74-134,244-306`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Execution/CloseInFlightTracker.mqh:29-66`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyBreachManager.mqh:59-107`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/NoStopGraceManager.mqh:37-48`;
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:419-437,716-745,821-874,1288-1328`;
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:515-550,1180-1194,1220-1242,1691-1740`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyBreachManager.mqh:57-75,95-153`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/NoStopGraceManager.mqh:33-50,103-135`;
+`TASK-002_PHASE2_SPECIFICATION.md:1011-1015,1037-1044,1122-1136`;
 `RISK_POLICY.md:20`.
 
-- `ICM_ReconcileIntradayClose()` ignores a failed
-  `ICM_SetPendingCloseDate()`. It then sees no pending record and returns
-  success without attempting closure.
-- The obligation is created only after the boundary is observed. If the
-  terminal is offline before 23:45 and restarts after midnight, no prior-day
-  record exists and today's `SN_IsPastIntradayBoundary()` is false; the missed
-  close cannot be reconstructed.
-- `EventSetTimer(30)` is unchecked. Timer-registration failure silently removes
-  the advertised no-tick guarantee.
-- `DWB_AttemptClosure()` proceeds after failing to persist
-  `closure_pending=true`, but an incomplete attempt is then not retried on the
-  next tick because the flag remains false.
-- `EnforceNoStopGracePeriod()` ignores `NSG_SetFirstSeen()` failure. Repeated
-  write failure makes every tick look like the first observation, so the
-  five-second close never becomes due. This path is tick-only, not timer-driven.
-- A `PLACED` close is recorded only in memory. The in-flight mark has no timeout
-  or terminal-rejection/cancellation handler and is cleared only after a close
-  deal when the position already appears gone. A rejected/cancelled close with
-  no exit deal wedges resubmission until restart.
+If `EventSetTimer(30)` fails, OnInit logs that the no-tick guarantee is absent
+at EA 536-540 but still returns `INIT_SUCCEEDED` and can enable real order
+submission at 542-550. The only retry is on a future tick at 1193-1194; with no
+tick, the condition that motivated the timer remains unprotected.
 
-**Required correction:** treat every state/timer write as part of the safety
-decision; retain/retry an obligation even when persistence fails; reconstruct
-missed boundaries from owned exposure; and correlate close requests through
-all terminal outcomes with timeout/reconciliation. The no-stop deadline must
-be wall-clock-driven.
+`OnTimer()` calls only the intraday-close manager at 1180-1184. The five-second
+no-stop grace clock is first armed and enforced only from OnTick at 1237-1242
+and 1703-1740. A stopless position can therefore remain untracked and open
+indefinitely during a tick-starved interval, despite the specification's
+wall-clock five-second maximum.
 
-**Round-8 findings 10 and 13 status:** partially resolved. Timer, durable due
-flags, partial-close accumulation, and in-flight throttling exist, but their
-failure paths do not guarantee closure.
+For loss-cap closure, `DailyWeeklyBreachManager` explicitly admits at lines
+71-73 that its fallback does not survive restart. It proceeds with closure
+after a failed `closure_pending=true` write at 125-134; a crash during that
+attempt loses the mandatory retry obligation. The analogous no-stop in-memory
+timestamp also resets after restart when its persisted write failed.
 
-### 7. [P0] `OnInit` permits settings that defeat hard limits or make manual exposure EA-owned
+**Required correction:** do not permit order-enabled initialization without a
+working independent timer; run all wall-clock mandatory protections from that
+timer; and make closure/no-stop obligations durably reconstructible when a
+persistence write fails. Retain actual timer-failure, no-tick, write-failure,
+and restart evidence.
+
+### 7. [P0] Daily/weekly state failure disables breach detection instead of creating a fail-closed obligation
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:109,176-191,240-281`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/BrokerValidator.mqh:5-13,33-104`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/RiskManager.mqh:142-152`;
-`TASK-002_PHASE2_SPECIFICATION.md:983-1004,1138-1147`;
-`RISK_POLICY.md:5-20`.
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:229,795-845,1231-1235,2546-2549`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyLimits.mqh:135-182`;
+`TASK-002_PHASE2_SPECIFICATION.md:1078-1136`.
 
-Validation checks positivity and `target <= cap`, but does not constrain
-`InpRiskCapPercent <= 1`, `InpDailyLossCapPercent <= 2`, or
-`InpWeeklyLossCapPercent <= 4`. An operator can therefore configure the fields
-labelled “hard” above policy. `InpMagicNumber` is not required to be nonzero;
-zero makes manual orders/positions match ownership scans and exposes them to
-bulk closure.
+Moving cash-flow rebasing before the fill-time breach check is correct in the
+normal success path. On failure, however, EA 825-826 sets
+`g_daily_weekly_risk_state_valid=false`, and lines 831-834 consequently force
+both breach booleans false. No pending closure or independent re-evaluation
+obligation is armed. OnTick retries only a closure that is already pending at
+1231-1235; a later completed-bar refresh gates future entries but does not
+necessarily close existing exposure that should already have been tested.
 
-The required `InpStopFloorAtrMultiple < InpStopCapAtrMultiple` relationship is
-not checked. With the floor above the cap, the validator can widen a stop to
-the floor after the original distance passed its cap test. `BrokerValidator`
-claims filling-mode and margin validation, but stops after freeze level; there
-is no `OrderCalcMargin` or `SetTypeFillingBySymbol` call anywhere in the MQL5
-tree.
+The validity flag also starts false at line 229 and is initialized through the
+completed-bar evaluation path at 2546-2549. A deal arriving before that first
+evaluation—for example while reconciling pre-existing own-magic exposure—can
+skip the account-wide 2%/4% check. The baseline/cursor crash non-idempotence in
+finding 1 compounds this path.
 
-**Required correction:** enforce the policy maxima and all numeric domains at
-initialization, require a positive reserved magic, enforce floor below cap,
-and implement the promised filling-mode/margin validation before the EA can
-enable submission.
+**Required correction:** unknown daily/weekly state must block entries and
+create a durable, repeatedly evaluated fail-closed obligation for existing
+exposure; initialization/restart must load and validate the state before any
+deal can be treated as cap-clear.
 
-### 8. [P1] Cash-flow deals can cause false daily/weekly breaches before rebasing
+### 8. [P1] Async/partial-fill lifecycle handling still loses position-mode and close-finalization state
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:613-648,1966-1969`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Risk/DailyWeeklyLimits.mqh:89-182`;
-`TASK-002_PHASE2_SPECIFICATION.md:1090-1112`.
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:869-969,1059-1153,2179-2194,2378-2393`.
 
-Every deal triggers the equity-cap check immediately, but balance/credit cash
-flows are rebased only later on the completed-bar decision path. With a 10,000
-baseline, a 300 withdrawal can transiently appear as a -3% trading loss and
-force-close exposure; after the required rebase, the baseline is 9,700 and the
-trading-period change is 0%.
+Keeping the correlator and intent alive for a live partial remainder is a real
+fix. The asynchronous `DEAL_ENTRY_IN` path, however, never persists the
+position's entry-time intraday mode. Only the synchronous branch does so at
+2179-2194. Exit management later falls back to the one global input at
+2378-2393, so asynchronously opened positions do not receive the per-position
+time-stop behavior the comments promise.
 
-Classify and apply a balance/credit deal's rebase before evaluating the caps
-inside the same transaction handler, with the persisted cursor updated as one
-recoverable operation.
+For exits, cooldown finalization and PST/NSG/CIFT cleanup occur only if
+`PositionStillOpenById()` is already false while processing the closing
+`DEAL_ADD` at 920-948. MT5 does not promise that all transaction types arrive
+in an order that makes the position absent at that exact callback, and there
+is no later position-transaction/reconciliation path that finalizes a close
+missed there. A fully closed position can therefore retain state and fail to
+advance the consecutive-loss ledger.
 
-### 9. [P1] Asynchronous fills remain absent from machine-readable journal evidence
+**Required correction:** initialize entry state from every confirmed sync or
+async fill, and persist a close-finalization obligation that is reconciled
+after the position disappears rather than depending on one callback ordering.
 
-**Files:**
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:455-478,768-800,1698-1717`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/DecisionJournal.mqh:298-307`.
-
-`LogAsyncFillResolution()` only calls `Print`. The original `PLACED` decision
-keeps null causal IDs and a proposed entry, and no schema-correct fill/cancel
-event or update is appended. The comments at EA 1704-1715 now accurately admit
-this, so the handover cannot simultaneously call the whole round-8 journaling
-finding resolved. A crash after broker acceptance and before the original
-journal append also still leaves exposure with no journal row.
-
-Introduce an append-only execution-event record keyed by signal/intent/order,
-or a crash-safe update model. Synchronous fill identity/actual entry and
-checked character counts are genuine improvements.
-
-### 10. [P1] The approved mode-first routing architecture remains deliberately unimplemented
+### 9. [P1] Chart-pattern lifecycle marks candidates TRADED before confirmation or execution and omits required lifecycle branches
 
 **Files:**
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:2070-2126,2134-2167,2213-2245`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Market/IntradayModeRouter.mqh:10-33`;
-`TASK-002_PHASE2_SPECIFICATION.md:186-297,420-550`.
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Patterns/ChartPatternLifecycle.mqh:5-46,93-192`;
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Strategies/ChartPatternStrategy.mqh:80-209,335-382,415-480`;
+`TASK-002_PHASE2_SPECIFICATION.md:845-907`.
 
-All five strategies are generated and conflict-resolved before the mode is
-computed. Mode can only veto the already-selected winner afterward. The source
-itself states that the required regime -> mode -> mode-aware strategy
-generation pipeline, family/mode timeframe matrix, two closed-M1-bar
-hysteresis, scalp-attempt/unchanged-level counters, and bounded configurable
-weights were not attempted. All strategies still share the M15 decision
-window, and `IMR_DefaultModeWeights()` is hard-coded.
+`CPS_ApplyLifecycle()` sets `TRADED` at 168-171. The caller does this at
+359-362 **before** checking candlestick confirmation at 364-382. A retest bar
+without a confirming candle emits no signal but permanently consumes the
+pattern. Even a confirmed candidate is consumed during strategy generation,
+before mode routing, conflict resolution, news/risk gates, journal-only veto,
+or broker submission, so “TRADED” does not mean traded. The range path also
+sets `TRADED` at 208-209 before downstream routing/submission.
 
-The `NONE`/`UNKNOWN` vocabulary correction is real. It does not resolve the
-substantive routing half of round-8 finding 12. Implement the approved ordering
-or keep a numbered task open and stop presenting TASK-028/the EA as launch
-ready.
+Every `CPL_SetState()`/timestamp result in the strategy is ignored. It can
+return `true` and emit a candidate after the `TRADED` write failed, enabling a
+duplicate after restart. There is also no CAS/lock, so concurrent instances
+can both observe nonterminal state and emit the same instance.
 
-### 11. [P1] Chart-pattern execution still has no required lifecycle registry
+The lifecycle file admits it has no `FORMING` stage at 35-46, and the strategy
+admits no false-break invalidation at 90-96. `CPL_GetConfirmedTime()` and
+`CPL_CleanupStale()` have no production callers; only tests call them. There is
+no wired `InpPatternMaxAgeBars`, so the header's statement that confirmation
+expiry is implemented is false and stored globals grow without production
+cleanup.
 
-**Files:**
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Patterns/ChartPatternEngine.mqh:343,437,530,623`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Strategies/ChartPatternStrategy.mqh:182-206`;
-`TASK-002_PHASE2_SPECIFICATION.md:829-906`.
+**Required correction:** transition to a separate eligible state during
+detection and mark `TRADED` only after a confirmed order outcome; check every
+state write, serialize consumption, wire both age limits and cleanup, and
+implement the specification's FORMING/false-break/alternate-terminal paths.
+Tests must cover no-candle, router/risk veto, journal-only, failed persistence,
+concurrency, max-age, and false-break cases.
 
-Sloped boundaries are now projected to the current logical index, and
-same-bar breakout/retest is rejected. However, the live strategy expressly
-admits at 193-199 that it has no persisted
-`FORMING/CONFIRMED/RETESTING/TRADED/INVALIDATED/EXPIRED` registry. Retest is
-only current-price proximity; the live strategy does not call the engine's
-hold/fail retest helper. There is no invalidation, expiry, or consumed-pattern
-suppression, so rediscovered geometry can trade repeatedly.
-
-The projection portion of round-8 finding 14 is resolved; its lifecycle
-portion is not. Implement the state graph and durable pattern identity before
-claiming the finding closed.
-
-### 12. [P1] CSV-plus-JSON publication is not atomic and can destroy a previous valid report
+### 10. [P1] Execution-event journaling still cannot guarantee the machine-readable fill record it claims
 
 **Files:**
-`03_SOURCE_CODE/Python/analysis/report_metadata.py:211-274`;
-`03_SOURCE_CODE/Python/analysis/join_trade_journal.py:224-264`;
-`03_SOURCE_CODE/Python/analysis/join_news_events.py:402-437`.
+`03_SOURCE_CODE/MQL5/Include/ThembaEA/Journal/ExecutionEventJournal.mqh:5-25,88-91,140-183`;
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:600-644,730-762,2086-2112,2150-2177`.
 
-`publish_dataframe_csv_and_json()` replaces the final CSV first and then the
-JSON. If JSON publication fails, it unlinks the CSV. A process crash between
-renames can still expose a new CSV with old/missing provenance, and a normal
-second-write exception destroys a pre-existing valid CSV while leaving its old
-JSON.
+The new independent journal is useful, but the source overclaims closure of
+the broker-accept/crash window. For a synchronous fill, the broker can accept
+before execution reaches EA 2150-2177; a crash in that interval still leaves
+no event. Restart intent reconciliation at 730-762 only prints the recovered
+outcome and clears/reconciles state—it does not backfill an execution event.
 
-A focused probe starting with `old-csv`/`old-json` and injecting JSON-write
-failure produced:
+On async resolution, `LogAsyncFillResolution()` never sets `volume` or `price`
+even though a selected fill deal provides them, so a row can say `filled=true`
+with null fill economics. If `EEJ_AppendEvent()` fails, lines 638-643 merely
+print after lifecycle state has already advanced; there is no durable retry
+queue. The shared daily file is opened with `FILE_SHARE_READ` but not
+`FILE_SHARE_WRITE` at EEJ 158-163; contention beyond the fixed 300 ms retry
+budget permanently loses the event.
 
-```text
-csv_exists=False, json='old-json'
-```
+**Required correction:** persist an append obligation before clearing the
+intent/correlator, backfill from broker history on restart, populate available
+deal economics, and retry failed appends durably. Do not claim the crash gap is
+closed until a crash between broker acceptance and every append point is
+reconciled.
 
-The same remove-on-failure pattern is duplicated in the three-output
-journal/news publishers. Tests cover initially absent targets, not replacement
-rollback or crash windows. Publish into a versioned directory and atomically
-switch one manifest/pointer, or implement a recoverable transaction that
-preserves the prior complete generation.
-
-### 13. [P1] `max_retained_errors` is bypassed for excluded and non-file candidates
-
-**File:**
-`03_SOURCE_CODE/Python/data_collection/journal_reader.py:546-593,608-663`.
-
-An outward-resolving path or matching non-file appends a `ParseError` and
-immediately `continue`s before either budget check. Two matching directories
-with `max_retained_errors=1` returned two retained errors instead of raising:
-
-```text
-retained_errors=2
-```
-
-The round-8 change correctly bounds parse errors inside regular files and
-validation errors. Apply the same immediate check after **every** error append,
-including exclusion paths, and test mixed error sources.
-
-### 14. [P1] The Python/MQL pattern comparator still accepts different and non-finite datasets
+### 11. [P1] Multi-file Python report publication is still not atomic, including on an ordinary exception
 
 **Files:**
-`03_SOURCE_CODE/Python/analysis/pattern_validation.py:1386-1501`;
-`03_SOURCE_CODE/MQL5/Scripts/Export_PatternDetectorResults.mq5:127-132`.
+`03_SOURCE_CODE/Python/analysis/report_metadata.py:233-316`;
+`03_SOURCE_CODE/Python/analysis/join_trade_journal.py:255-287`;
+`03_SOURCE_CODE/Python/analysis/join_news_events.py:420-451`.
 
-The MQL exporter always identifies each bar with
-`symbol,timestamp,open,high,low,close,atr`. Python requires only OHLC because
-the caller chooses `identity_columns`; symbol, time, and ATR can therefore be
-omitted from validation. Matching OHLC/booleans with an MQL row containing the
-wrong symbol, a 1999 timestamp, and `atr=999` returned zero disagreements.
+`publish_dataframe_csv_and_json()` calls the pair “ONE atomic unit,” writes
+both temporary files, then renames JSON at 311-313 and CSV at 314-316 with no
+rollback. Fault injection that raises `OSError` on the second `os.replace`
+left the old CSV and new JSON together, with no temp residue. This is a normal
+commit-stage exception, not only the process-crash residual risk admitted at
+280-290. The trade-journal and news joins repeat the same multi-rename pattern.
 
-Numeric identity is not required to be finite. For a Python `close=NaN`
-against finite MQL close, `abs(NaN - value) > tolerance` is false, also
-returning zero disagreements. `price_tolerance` itself accepts negative or
-non-finite input.
+Every caller using the helper inherits the mixed-generation risk, including
+pattern, baseline, giveback, MFE/MAE, performance, parameter-stability,
+walk-forward, and signal/outcome reports.
 
-Require the complete exporter identity on both sides, exact symbol/timestamp,
-finite OHLC/ATR, and a finite nonnegative tolerance before comparing flags.
+**Required correction:** publish into a versioned generation and atomically
+switch one manifest/pointer, or implement and fault-test restoration of the
+entire prior generation on every rename-stage failure.
 
-### 15. [P1] Pattern documentation/evidence is source-stale and still has no real MQL-export comparison
-
-**Files/sections:**
-`03_SOURCE_CODE/Python/analysis/pattern_validation.py:41-48`;
-`03_SOURCE_CODE/MQL5/Scripts/Export_PatternDetectorResults.mq5:127-132`;
-`03_SOURCE_CODE/Python/notebooks/09_pattern_detector_validation.ipynb` comparison cells;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:168-180`.
-
-The module says the exporter is intentionally limited to the original four
-candlestick patterns. Current source exports all 20 predicates. Notebook 09
-then compares Python against a synthetic CSV built from Python's own results,
-not an independently executed MQL export. That can test join plumbing but
-cannot satisfy test-plan item 7's required Python-versus-exported-MQL fixture
-comparison.
-
-Correct the source description, retain a real exporter output with dataset and
-build provenance, and run the comparator against it. If real MT5 evidence is
-not yet available, mark this acceptance item pending rather than treating the
-synthetic self-copy as cross-language validation.
-
-### 16. [P1] Equity analysis accepts blank identity and resets “daily” giveback on the wrong clock
+### 12. [P1] Blank server timestamps silently erase every day from daily equity analysis
 
 **Files:**
-`03_SOURCE_CODE/Python/analysis/equity_curve_metrics.py:100-149,152-210,221-240`;
-`03_SOURCE_CODE/MQL5/Experts/EquityTickRecorder.mq5:10,29-37,96-110,145-149`;
-`TASK-002_PHASE2_SPECIFICATION.md:1101-1112`.
+`03_SOURCE_CODE/Python/analysis/equity_curve_metrics.py:176-180,230-249,323-331`.
 
-The reader only rejects more than one distinct
-`(run_id,account_login,broker_server)` tuple. It accepts an entirely blank
-file as one `(NaN,NaN,NaN)` identity and computes a curve. A focused two-row
-probe with all three fields empty was accepted.
+`pd.to_datetime(..., errors="raise")` converts blank cells to `NaT`; it does
+not raise. The later `strftime`/groupby silently drops `NaT` dates. A two-row
+probe with blank `timestamp_server` values returned a valid 10% account
+drawdown but `daily_days=0`, so the daily giveback report omitted the entire
+curve.
 
-The “daily” metric groups UTC dates. The live risk contract resets at trade-
-server midnight, explicitly not UTC. A broker-server offset can split one live
-risk day into two Python days or merge pieces of adjacent server days, so the
-offline metric does not reproduce the engine it is meant to validate.
+**Required correction:** explicitly reject null/`NaT` values after parsing and
+add a regression proving blank server timestamps cannot yield a zero-day
+report.
 
-Read identity fields as strings and require exactly one fully nonblank tuple.
-Record server time/offset (or a server-day key) in the recorder and group on
-the canonical server boundary.
-
-### 17. [P1] Journal schema still admits blank and out-of-domain provenance/state
+### 13. [P1] Equity run/account identities are numerically inferred before being converted to strings
 
 **Files:**
-`03_SOURCE_CODE/Python/analysis/schema.py:75-142`;
-`TRADE_DECISION_SCHEMA.json:1-27`;
-`03_SOURCE_CODE/MQL5/Include/ThembaEA/Market/MarketRegimeEngine.mqh:35-46`;
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:1905-1914,2181-2203`.
+`03_SOURCE_CODE/Python/analysis/equity_curve_metrics.py:125-173`;
+`03_SOURCE_CODE/Python/analysis/csv_io.py:215-230`.
 
-`Field(min_length=1)` is paired with `str_strip_whitespace=False`. Focused
-validation accepted whitespace-only values for `signal_id`, `symbol`,
-`strategy`, `setup`, `session_state`, `ea_version`, and `git_commit`, contrary
-to the comments' “blank is rejected” claim. `regime` is an unrestricted string
-with no minimum length, and `session_state` accepts arbitrary text even though
-the producer has an exact three-value vocabulary. The root schema likewise
-calls both merely strings/enum prose rather than enforceable values.
+The equity reader's documentation says identity columns are read explicitly
+as strings, but line 146 does not pass `dtype`. Conversion at 157 occurs after
+pandas has already discarded leading zeros or collapsed numeric forms. A CSV
+containing identities `001`/`0123` and `1`/`123` was accepted as one identity,
+with both rows represented as `1`/`123`.
 
-Strip then reject blank identity/provenance, restrict regime and session state
-to the real producer enums, and add focused whitespace/arbitrary-token tests.
+**Required correction:** pass string dtypes for `run_id`, `account_login`, and
+`broker_server` at ingestion, before any inference, and test leading-zero and
+large-integer identities.
 
-### 18. [P1] Performance breakdown validates normalized news states but groups the unnormalized originals
-
-**File:**
-`03_SOURCE_CODE/Python/analysis/performance_breakdown.py:204-295,354-369`.
-
-Validation case/whitespace-normalizes `news_state`, but grouping uses the
-original column. Null is also treated as “no claim,” despite the current
-producer/schema having the explicit `UNKNOWN` token. A focused input produced
-three separate groups for `CLEAR`, `" clear "`, and null rather than one
-canonical state or a rejection.
-
-Require exact `CLEAR|BLACKOUT|UNKNOWN` at this direct ingestion boundary, or
-replace the grouped column with its canonicalized values and map null to a
-declared policy. Do not validate one representation and report another.
-
-### 19. [P1] The nominal 500 MB CSV ceiling still permits multi-gigabyte peak memory
-
-**File:**
-`03_SOURCE_CODE/Python/analysis/csv_io.py:52-66,90-160`.
-
-One-MiB reads fix the tiny-file `MemoryError`, but a permitted near-500-MB CSV
-is simultaneously retained as a list of chunks, the joined `raw_bytes`, a
-decoded Unicode string, one or more `StringIO` readers, pandas parser storage,
-and the resulting DataFrame. The chunks remain live after `b"".join`. Peak
-memory can therefore be several times the advertised ceiling. The regression
-test checks requested read size, not peak memory.
-
-Hash while streaming into a bounded spool and let pandas consume the spool, or
-set a substantially smaller, measured ceiling. Do not describe a 500-MB
-source limit as a reliable memory bound while making multiple full copies.
-
-### 20. [P1] Three incompatible bar-0 conventions remain explicitly unfinished
-
-**File:**
-`03_SOURCE_CODE/Python/analysis/parameter_stability.py:64-74`;
-`TASK-028_PYTHON_STATISTICAL_LAB.md:188-189`.
-
-The module still says parameter stability requires pre-bar `0.0`,
-`analyse_giveback.py` starts with the entry bar's close, and notebook 02 starts
-at `+0.5R`; it explicitly calls unification “real, not-yet-done.” Round-8
-finding 19 included this inconsistency, yet the response calls that finding
-resolved and says this part was not attempted. No independently numbered
-owner was found.
-
-Choose and enforce one convention across producers/consumers, or split it into
-a numbered follow-up and leave the relevant TASK-028 acceptance item open.
-
-### 21. [P1] Compile evidence proves syntax, but its Git provenance is false and it does not run MQL tests
-
-**Files/sections:**
-`09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt:1-12`;
-`09_HANDOVERS/compile_evidence/README.md:39-50`;
-`09_HANDOVERS/claude_to_codex/TASK-028_round8_handover.md:20-57,114-119,157-159`;
-`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:40-64`.
-
-The artifact genuinely contains 41 headings and 41 clean results, and every
-recorded source SHA-256 matches the current 41-target tree. Its provenance
-statement is nevertheless factually wrong. It says parent commit `990f32c`
-is the tree containing `THEMBA_EA_GIT_COMMIT="990f32c17327"`; direct
-`git show` proves that commit still contains `b362c07a1bab`. The new macro was
-introduced by child commit `c9b2298`. The retained EA hash matches the child/
-current source bytes, not the claimed parent tree. The README partly describes
-the child correctly, so the two evidence descriptions disagree.
-
-Compilation also does not execute any `OnStart()` assertions. No retained MQL
-runtime output proves the hard-risk, concurrency, restart, partial-fill,
-provider-failure, timer, or close-retry counterexamples. The handover itself
-confirms no Strategy Tester/demo session was run. In particular, hard-risk
-commit `338bd3c` added no executable regression covering unreadable exposure,
-cross-instance reservation, actual-fill slippage, or forced closure.
-
-Record the exact committed source tree actually compiled, distinguish semantic
-parent tag from byte-exact source commit, execute the MQL test scripts, and
-retain their output. Compile-clean status is necessary but not behavior proof.
-
-### 22. [P2] Canonical status/history contradicts current source, Git dates, and its own deferrals
-
-**Files/sections:**
-`TASK-028_PYTHON_STATISTICAL_LAB.md:345-365,969-1018`;
-`TASKS.md:38`;
-`09_HANDOVERS/claude_to_codex/TASK-028_round8_handover.md:12-27,59-159`.
-
-All three surfaces say all 22 findings are resolved. The same history/handover
-then says the routing-order half of finding 12 was not attempted, the chart
-registry remains unimplemented in source, and the bar-0 unification was not
-attempted. Findings 3-5, 7-8, 10-14, 16-19, and 21 also remain partial as
-shown above. “All 22” and “each with a regression test reproducing the exact
-counterexample” are therefore unsupported.
-
-The Round-8 history labels the review `2026-07-22`, but Git records the review
-commit `ed46ded` at `2026-07-27 09:46:56 +0200`; its 24-commit review/remediation/
-handover range also occurs on July 27. The task's acceptance criteria remain
-unchecked, which is consistent with an in-progress task but inconsistent with
-the surrounding blanket closure language.
-
-Correct these as current facts: round 8 was reviewed/remediated on July 27;
-list resolved, partial, and deferred scopes separately; keep TASK-028 and the
-dependent task rows in progress until this review is resolved and real MT5
-evidence items are run.
-
-### 23. [P2] Committed notebook output and diff hygiene are stale/machine-local
+### 14. [P1] EquityTickRecorder appends the new seven-column schema to existing incompatible files
 
 **Files:**
-`03_SOURCE_CODE/Python/notebooks/00_journal_pipeline_demo.ipynb:94,186`;
-`03_SOURCE_CODE/Python/notebooks/01_baseline_trade_audit.ipynb:65`;
-`09_HANDOVERS/compile_evidence/TASK-028_round8_full_compile_evidence_2026-07-27.txt:1991`.
+`03_SOURCE_CODE/MQL5/Experts/EquityTickRecorder.mq5:116-140,166-181`;
+Git parent of the `b84446c` schema change.
 
-Committed notebook outputs expose `C:\Users\THEMBA~1\AppData\Local\Temp\...`.
-Notebook 00 records Git commit `ca2cbe1`, not reviewed HEAD `79da9c9`. The
-notebooks do execute successfully from clean kernels, but their committed
-outputs are not current/portable evidence. Regenerate them at the reviewed
-commit with portable labels or clear outputs. `git diff --check 7252987..HEAD`
-also reports the compile-evidence file's extra blank line at EOF; remove it.
+Before `b84446c`, the same default output had a six-column header without
+`timestamp_server`. Current OnInit only checks `FileIsExist()` and writes the
+new header when the path is absent at 127-140. An existing old-schema,
+zero-byte, or wrong-schema file is opened and receives seven-column rows at
+177-180 without validation or migration, producing a malformed dataset.
 
-## Corrections independently confirmed
+**Required correction:** validate the exact existing header and fail closed,
+rotate/migrate it, or use a versioned output filename. Check the write result
+as well as flushing it.
 
-The following round-8 work is genuinely present and should be retained:
+### 15. [P1] Mode-first routing remains explicitly unimplemented
 
-- The `OnInit` account guard now correctly requires hedging mode (EA 302-308).
-- The spread default is 0.15 and `[0.02,1.0]` is validated at startup.
-- The immediate low-confidence regime override is wired.
-- Persistence keys use bounded encodings; the original 63-character overflow
-  defect is resolved, and checked setters/flushes were added broadly.
-- Pending-order risk is now included in the visible snapshot, no-stop exposure
-  has a 10-ATR fallback, and `DONE_PARTIAL` is recognized as exposure.
-- MT5 calendar definition-lookup failure now fails the whole fetch closed.
-- Sloped chart boundaries are reprojected, and same-bar breakout/retest is
-  rejected.
-- Synchronous fill identity, actual entry, filled volume, and journal write-
-  count checking are improved.
-- Python regime-domain checks, vocabulary additions, bounded chunk reads,
-  exact-byte hashing, notebook execution, and quality-gate cleanup are real.
+**Files:**
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:2660-2719,2798-2841`;
+`TASK-043_MODE_FIRST_ROUTING_ARCHITECTURE.md:138-142`.
 
-These corrections do not neutralize the remaining failure cases above.
+The EA still generates/routes all five strategies on one shared M15 window
+and applies a post-hoc mode veto afterward. Its own comment at 2806-2826
+admits that this differs from the executable mode-first specification.
+TASK-043 remains `Not started` and expressly says the EA must not be described
+as launch-ready while it is open. Registering the task is an honest process
+decision, but it does not resolve the runtime behavior.
 
-## Verification performed
+### 16. [P1] Bar-zero unification and real cross-language pattern validation remain open
 
-- `pytest`: **718 passed**, 0 failed (8 expected overflow-test warnings).
-- `ruff check .`: passed.
-- `ruff format --check .`: **61 files already formatted**.
-- `mypy analysis data_collection --ignore-missing-imports`: passed for 25
-  source files.
-- `pip check`: no broken requirements; active environment matches the lock.
-- All 11 notebooks executed successfully through `nbconvert` using the
-  `themba-python-lab` kernel.
-- Current Git contains exactly 41 relevant `.mq5` targets (2 Experts plus 39
-  Test/Export scripts); the evidence contains 41 headings, 41 `0 errors,
-  0 warnings` results, and 41 matching current-source SHA-256 hashes.
-- `git diff --check 7252987..79da9c9`: one trailing blank-line issue, reported
-  in finding 23.
-- `01_BASELINE/EA_V637` is byte-identical to `baseline-v637`, and
-  `01_BASELINE/EA_V811` is byte-identical to `baseline-v811`, including both
-  `IDENTITY.md` files. The remediation range does not touch `01_BASELINE/`.
-- Worktree before writing this review was clean except the pre-existing
-  untracked `.claude/` directory; it was left untouched.
+**Files:**
+`TASK-044_BAR_ZERO_CONVENTION_UNIFICATION.md:105-110`;
+`03_SOURCE_CODE/Python/notebooks/09_pattern_detector_validation.ipynb`;
+the TASK-028 acceptance criteria.
+
+TASK-044 remains `Not started`; therefore the MQL/Python current-bar convention
+is still inconsistent. Notebook 09's committed comparison remains synthetic;
+no retained real MQL exporter output is compared with Python on the same
+dataset and canonical bar identity. The handover correctly calls these
+follow-ups, but other canonical files incorrectly call all findings resolved.
+Until both are implemented and measured, pattern parity is not established.
+
+### 17. [P1] The required MQL behavioral evidence does not exist
+
+**Files:**
+`09_HANDOVERS/compile_evidence/TASK-028_round9_full_compile_evidence_2026-07-28.txt`;
+`09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md:39-43,256-262`;
+`PROJECT_RULES.md:13-14`; `TEST_PLAN.md:31-44`.
+
+The retained artifact proves syntax for 46 sources; it does not execute a
+single `Test_*.mq5` `OnStart()` assertion. There is no retained Strategy
+Tester report, demo attachment log, restart/concurrency run, provider-failure
+run, timer-failure run, partial-fill trace, close-retry trace, or real pattern
+export. The handover discloses this honestly, but the safety-critical claims in
+findings 1-10 therefore remain both source-defective and behaviorally untested.
+This is an explicit demo/release blocker under the project rules and test plan.
+
+### 18. [P1] Notebook 09 was not re-executed in place after its comparison code changed
+
+**Files:**
+`09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md:75-85`;
+`03_SOURCE_CODE/Python/notebooks/09_pattern_detector_validation.ipynb:187-199`;
+Git commits `e573276` and `6bf68dc`.
+
+The handover says notebooks 00, 01, and 09 were re-executed with
+`nbconvert --execute --inplace`. The edited complete-identity comparison cell
+in notebook 09 has `execution_count: null` and no output. Its retained
+execution timestamps predate commit `e573276`, which changed that cell, and no
+later commit re-executed it. A disposable fresh run succeeds, but that does not
+make the committed execution/provenance claim true.
+
+**Required correction:** execute the committed notebook in place after the
+final code change and retain the resulting execution metadata/output, while
+still labelling the comparison synthetic until real MQL export data exists.
+
+### 19. [P2] Canonical closure/history text contradicts the open tasks and its own round count
+
+**Files:**
+`TASK-028_PYTHON_STATISTICAL_LAB.md:139-148,328-369,402-407,1044-1090`;
+`TASKS.md:38`; `09_HANDOVERS/compile_evidence/README.md:63-75`;
+compile evidence line 2; TASK-043 and TASK-044 Status sections.
+
+The handover carefully says 21 fixes plus two registered follow-ups, yet the
+compile artifact says all 23 findings were resolved, the README repeats that
+claim, TASK-028's Reviewer section calls round 9 “fully resolved,” and
+`TASKS.md` says all 23 were addressed/resolved. Both follow-up tasks say `Not
+started`, and TASK-043 expressly forbids launch-ready framing.
+
+TASK-028 is also internally stale: Files affected remains a planned
+Python-only list even though round 9 changed 67 paths; Commit says six
+remediation series; Reviewer first describes nine rounds and later calls the
+review file a concatenation of “all six”; lines 402-407 still use present tense
+to say round-6 P0s are unresolved and a seventh review should be requested.
+
+**Required correction:** state one durable Git range and one truthful status:
+21 implementation fixes, two open numbered follow-ups, and round-10 changes
+requested. Separate historical-at-the-time text from current status and make
+Files/Commit/Reviewer/Acceptance criteria agree.
+
+### 20. [P2] Compile and notebook evidence metadata contains several Git-verifiable inaccuracies
+
+**Files:**
+`09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md:48-85`;
+`09_HANDOVERS/compile_evidence/README.md:63-75`;
+`09_HANDOVERS/compile_evidence/TASK-028_round9_full_compile_evidence_2026-07-28.txt:8-24`;
+`TASK-044_BAR_ZERO_CONVENTION_UNIFICATION.md:11`; `TASKS.md:54`.
+
+- The rise from 41 to 46 compile targets came from five new scripts:
+  `Test_RiskReservationManager`, `Test_DailyWeeklyBreachManager`,
+  `Test_NoStopGraceManager`, `Test_ExecutionEventJournal`, and
+  `Test_ChartPatternLifecycle`. The handover/README/history name only two and
+  incorrectly attribute the rest to touched scripts.
+- The compile artifact does not literally record `a4cc8f5`, despite the
+  handover saying it records the compiled tree commit. It also says that
+  evidence commit changes only the EA and evidence file, while Git shows it
+  also changes the compile-evidence README.
+- The handover says the “other 7 required notebooks” were untouched. TASK-028
+  defines ten required notebooks; after required notebooks 01 and 09, eight
+  remain. Notebook 00 is additional.
+- TASK-044 says it was registered 2026-07-27, but its creation commit
+  `8510cc2` is 2026-07-28 01:42:28 +0200.
+- Per-commit compile/test claims have no retained per-commit artifacts. They
+  must be identified as author-reported actions, not independently auditable
+  evidence.
+
+The final-state compile result itself is valid; these are provenance/history
+errors, not evidence that the compiler logs were fabricated.
+
+### 21. [P2] Runtime/build provenance and TASK-028's “current state” narrative remain stale
+
+**Files:**
+`03_SOURCE_CODE/MQL5/Experts/ThembaAdaptiveIntradayEA.mq5:40-49,71-72`;
+`03_SOURCE_CODE/Python/notebooks/00_environment_and_data_contract.ipynb` output near line 198;
+`TASK-028_PYTHON_STATISTICAL_LAB.md:431-448,507-532,1069-1072`.
+
+The EA comment says `THEMBA_EA_GIT_COMMIT` identifies the actual commit the
+file was compiled from, but the current/compiled source embeds `2e71e38` while
+the compiled tree is `a4cc8f5` and the reviewed tip is `6213a48`. At
+`2e71e38`, the EA blob/version/macro are different. A runtime journal row
+containing only `2e71e38` cannot identify the compiled bytes. Notebook 00
+similarly retains `git_commit=4683afb...` despite later source/output changes.
+If these are intended as logical-parent tags, the fields and comments must say
+that; otherwise generate an exact build/source identifier.
+
+TASK-028 also still describes `news_state` as always empty, only 4/20
+candlesticks as ported, chart patterns as unported, and no pattern exporter as
+existing at 431-448 and 507-532. Current source has populated news state, the
+full candlestick set, chart-pattern implementations, and
+`Export_PatternDetectorResults.mq5`. These are headed/presented as current
+state and contradict the later history at 1069-1072.
+
+## Verification results that passed
+
+- Git range `79da9c9..6213a48`: 27 commits, 67 paths, 8,338 insertions, 1,201
+  deletions; `git diff --check` is clean.
+- The retained round-9 artifact contains exactly 46 target headings, 46 source
+  hashes, and 46 `0 errors, 0 warnings` results. All hashes match the files at
+  `a4cc8f5`; no MQL5 source changed between `a4cc8f5` and `6213a48`.
+- Python: 749 tests passed; focused regressions passed; Ruff check and format,
+  whole-project mypy (50 source files), and `pip check` are clean.
+- All 11 notebooks execute successfully in a fresh disposable run. Fresh
+  notebook 03/04/06 output objects match the committed outputs; this does not
+  cure notebook 09's false in-place-execution claim.
+- Both immutable baseline directories, including each `IDENTITY.md`, are
+  byte-identical to `baseline-v637` and `baseline-v811`. No commit in the
+  reviewed range touches `01_BASELINE/`.
+- The baseline trees are:
+  - V6.37: `fe46191174b150c4c1e0dceb1bffc6c42a076384`
+  - V8.11: `3bc9e68939873de57c70319ff75f3b39ffd58c75`
 
 ## Final disposition
 
-**CHANGES REQUESTED.** Do not merge TASK-028, do not enable the EA's order-
-submission switch on a demo account yet, and do not treat its journals as
-complete execution evidence. Resolve the P0 safety paths first, close or
-honestly number every deferred architectural/validation item, run the MQL
-behavior tests and retain their results, then request another independent
-review.
+**CHANGES REQUESTED.** Do not merge TASK-028 as complete and do not begin a
+demo trial with order submission enabled. Repair P0 findings 1-7 first, add
+retained MQL runtime/restart/concurrency/failure evidence, then resolve the P1
+correctness and validation findings and reconcile canonical history before
+requesting another independent review.
