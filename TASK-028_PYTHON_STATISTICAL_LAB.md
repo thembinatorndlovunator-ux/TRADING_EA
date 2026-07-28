@@ -344,8 +344,38 @@ round-2 doc-staleness findings above).
 
 ## Reviewer
 
-**Codex, via `/code-review ultra` — nine independent review rounds
-completed.** **Corrected, 2026-07-28 (Codex round-9 P2 finding 22, updated
+**Codex, via `/code-review ultra` — ten independent review rounds
+completed.** **Corrected, 2026-07-28 (Codex round-10 P2 finding 19,
+stating ONE durable current status rather than layering another
+"next round should be requested" tail onto the text below): a tenth
+review round returned 21 findings (7 P0, 11 P1, 3 P2) against round 9's
+own resolution, disposition "Do not merge TASK-028 as complete." Every
+finding received either a real fix or, for three P1s (15: mode-first
+routing still unimplemented; 16: bar-0 unification/real pattern
+comparison still open; 17: MQL behavioral evidence does not exist),
+confirmation that these are already-honest, correctly-scoped
+registration/documentation states, not new code defects -- see this
+file's own Round 10 history entry below for the full, per-finding
+commit-by-commit account. `TASK-043`/`TASK-044` remain "Not started"
+and real MT5 terminal runtime verification remains categorically
+blocked by this sandbox; requesting an eleventh review round is the
+user's own call, not assumed here.**
+
+**Everything from this point through the end of this section is a
+CHRONOLOGICAL, historical-at-the-time account** (Codex round-10 P2
+finding 19's own required correction: separate historical text from
+current status) -- present-tense phrasing below reflects what was true
+WHEN THAT SENTENCE WAS WRITTEN, not necessarily now; the paragraph
+above and this file's own Round 9/Round 10 history entries are the
+current, authoritative status. In particular, the "a seventh review
+round should be requested" sentence a few paragraphs below is stale
+present tense from the round-6 era -- round 7 (and every round since)
+already happened; left unedited here as a historical record rather
+than retroactively rewritten, matching this project's own established
+practice for frozen historical text elsewhere (see e.g.
+`09_HANDOVERS/compile_evidence/README.md`'s own round-7 entry).
+
+**Corrected, 2026-07-28 (Codex round-9 P2 finding 22, updated
 in place a fourth time upon round 9's own full resolution): a ninth
 review round returned 23 findings (7 P0, 14 P1, 2 P2) against round 8's
 own resolution, all Git-timestamped 2026-07-27/28. Every finding received
@@ -354,8 +384,7 @@ finding 20's bar-0 convention unification) whose own full request is
 genuinely large, separate architecture, a concrete numbered task
 registration (`TASK-043`/`TASK-044`, both explicitly "Not started") --
 see this file's own Round 9 history entry below for the full,
-per-finding commit-by-commit account. A tenth review round should be
-requested now that round 9 is fully resolved, not before.** Round 8
+per-finding commit-by-commit account.** Round 8
 itself: an eighth review round returned 22 findings (10 P0/11 P1/1 P2)
 against round 7's own resolution -- every one received a real fix, with
 two (finding 12's mode-first routing-order half, finding 14's
@@ -1106,9 +1135,56 @@ so this canonical file does not read as if history stopped at round 2.
   surfaced and fixed one real, pre-existing, unrelated type error
   (`2e71e38`). Full evidence retained at
   `09_HANDOVERS/compile_evidence/TASK-028_round9_full_compile_evidence_2026-07-28.txt`
-  (`a4cc8f5`), covering all 46 `.mq5` targets (up from round-8's 41 --
-  this round added `Test_ChartPatternLifecycle.mq5` and
-  `Test_ExecutionEventJournal.mq5`), 0 errors/0 warnings, and a passing
-  Python test suite (749 passed). See
+  covering all 46 `.mq5` targets (up from round-8's 41 --
+  **corrected, 2026-07-28, Codex round-10 P2 finding 20: the five actual
+  new scripts were `Test_RiskReservationManager.mq5`,
+  `Test_DailyWeeklyBreachManager.mq5`, `Test_NoStopGraceManager.mq5`,
+  `Test_ExecutionEventJournal.mq5`, and `Test_ChartPatternLifecycle.mq5`
+  (41 + 5 = 46), not just the two named here originally**), 0 errors/0
+  warnings, and a passing Python test suite (749 passed). See
   `09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md` for the
+  full, per-finding commit-by-commit account.
+
+- **Round 10 (2026-07-28), a tenth independent Codex review** (requested
+  per round 9's own handover): **21 findings (7 P0, 11 P1, 3 P2),
+  disposition "Do not merge TASK-028 as complete"**, written to
+  `09_HANDOVERS/codex_to_claude/TASK-028_review.md`. Every finding
+  received either a real, committed fix for its own reported primary
+  defect (a regression test reproducing the exact counterexample where
+  one could be constructed) or -- for three P1 findings (15: mode-first
+  routing still unimplemented; 16: bar-0 unification/real pattern
+  comparison still open; 17: MQL behavioral evidence does not exist) --
+  confirmation that these are already-honest, correctly-scoped
+  registration/documentation states, not new code defects requiring a
+  fix. All 7 P0s: account lock bootstrap race/non-transactional risk
+  state (`9335a39`), hard-risk reservations ownerless/exposure check not
+  atomic (`8efe8f0`), actual-fill 1% cap silent bypasses (`f8d7965`),
+  durable-intent bootstrap repeating finding 1's race (`a534c63`), mixed
+  valid/malformed FairEconomy response hiding a high-impact event
+  (`8779993`), and mandatory boundary/no-stop protection tick-dependent/
+  daily-weekly-state-not-fail-closed (`e70f42d`, closes both findings 6
+  and 7 together via one shared ground-truth-re-evaluation fix). All 11
+  P1s: async/partial-fill lifecycle losing position-mode/close-
+  finalization state (`282d1c9`), chart-pattern lifecycle marking TRADED
+  before confirmation (`d089e52`), execution-event journaling durable
+  retry queue/backfill (`0ee5e1e`), multi-file Python publish rollback on
+  an ordinary rename-stage exception (`61f859f`), blank server timestamps
+  erasing daily-report days (`ecf88bc`), equity identities numerically
+  inferred before string conversion (`fc57019`), EquityTickRecorder
+  schema validation (`92f2231`), notebook 09 genuinely re-executed
+  in place (`a8cc3fe`), plus findings 15-17 (verification/documentation
+  only, no commit). The 3 P2s: canonical closure/history text corrected
+  (this entry, `TASKS.md`'s own TASK-028 row, and the round-10
+  handover), compile/notebook evidence metadata corrected (script/
+  notebook counts, TASK-044's registration date, `README.md`), and
+  runtime/build provenance + stale current-state narrative corrected
+  (`e3da3f4`). Full evidence retained at
+  `09_HANDOVERS/compile_evidence/TASK-028_round10_full_compile_evidence_2026-07-28.txt`,
+  covering the same 46 `.mq5` targets as round 9 (no new target added
+  this round), 0 errors/0 warnings, and a passing Python test suite (758
+  passed, up from 749 -- 9 new regression tests). `TASK-043`/`TASK-044`
+  remain "Not started" and real MT5 terminal runtime verification
+  remains categorically blocked by this sandbox -- both disclosed
+  honestly, not silently dropped. See
+  `09_HANDOVERS/claude_to_codex/TASK-028_round10_handover.md` for the
   full, per-finding commit-by-commit account.

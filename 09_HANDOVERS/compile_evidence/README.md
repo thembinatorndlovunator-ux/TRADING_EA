@@ -69,9 +69,38 @@ corrected after the fact). `THEMBA_EA_GIT_COMMIT` in
 commit before this evidence pass), matching this project's own stated
 build-tag convention exactly. Covers all 46 `.mq5` programs that exist in
 Git at that point: the 2 Experts (`ThembaAdaptiveIntradayEA.mq5`,
-`EquityTickRecorder.mq5`) and all 44 `Test_*.mq5`/`Export_*.mq5` scripts
-(up from round-8's 41 -- round 9 added `Test_ChartPatternLifecycle.mq5`
-and `Test_ExecutionEventJournal.mq5`, plus scripts touched by other
-findings), each listed individually with its own SHA-256 source hash and
-its own COMPLETE raw MetaEditor log text. MetaEditor version: 5.0.0.5833.
-Every target compiles with 0 errors, 0 warnings.
+`EquityTickRecorder.mq5`) and all 44 `Test_*.mq5`/`Export_*.mq5` scripts.
+**Corrected, 2026-07-28 (Codex round-10 P2 finding 20):** the rise from
+round-8's 41 to round-9's 46 targets was previously attributed here to
+just two new scripts ("`Test_ChartPatternLifecycle.mq5` and
+`Test_ExecutionEventJournal.mq5`, plus scripts touched by other
+findings") -- undercounted. The five ACTUAL new scripts round 9 added
+were `Test_RiskReservationManager.mq5`, `Test_DailyWeeklyBreachManager.mq5`,
+`Test_NoStopGraceManager.mq5`, `Test_ExecutionEventJournal.mq5`, and
+`Test_ChartPatternLifecycle.mq5` (41 + 5 = 46). Each target is listed
+individually with its own SHA-256 source hash and its own COMPLETE raw
+MetaEditor log text. MetaEditor version: 5.0.0.5833. Every target
+compiles with 0 errors, 0 warnings.
+
+`TASK-028_round10_full_compile_evidence_2026-07-28.txt` -- generated
+after all 21 round-10 findings were addressed (see the round-10
+handover's own per-finding table for exactly what "addressed" means per
+finding -- P0/P1 findings 1-14 and 18 with a real code fix and, where a
+Python/MQL regression could be constructed, a passing test reproducing
+the exact reported counterexample; P1 findings 15-17 confirmed as
+already-honest, correctly-scoped registrations, not new code defects;
+P2 findings 19-21 as canonical-documentation corrections), against the
+tree at THIS EVIDENCE FILE'S OWN COMMIT. `THEMBA_EA_GIT_COMMIT` is set
+to `e3da3f4` (the last real content commit before this evidence pass),
+now explicitly documented in the EA's own source comment as a
+LOGICAL-PARENT TAG, not a byte-exact "compiled from" identifier (round-10
+P2 finding 21's own correction). Covers the SAME 46 `.mq5` programs as
+round 9 -- round-10 remediation added no new `.mq5` target (its own new
+module, `CloseFinalizationTracker.mqh`, is a reusable include with no
+dedicated test script; see that file's own header). Format note: each
+target's own SHA-256 hash plus MetaEditor's final `Result:` summary line
+only (not the full percentage-by-percentage progress log round 8/9's
+evidence files retained) -- disclosed explicitly in the evidence file's
+own header as a deliberate format change, not an omission; the summary
+line is the only line that ever carried pass/fail information. MetaEditor
+version: 5.0.0.5833. Every target compiles with 0 errors, 0 warnings.

@@ -8,12 +8,16 @@ closing the admitted, still-open inconsistency between
 `parameter_stability.py`'s own schema, `analyse_giveback.py`'s R-path
 construction, and notebook 02's synthetic fixtures.
 
-Registered per Codex round-9 review (P1 finding 20), 2026-07-27: three
+Registered per Codex round-9 review (P1 finding 20): three
 incompatible bar-0 conventions remain explicitly disclosed as unfinished
 in `parameter_stability.py`'s own module docstring ("Picking one
 canonical convention and updating the other two to match is a real,
 not-yet-done follow-up") with no independently numbered owner. This task
-is that registration.
+is that registration. **Corrected, 2026-07-28 (Codex round-10 P2 finding
+20): this file's own creation commit `8510cc2` is Git-timestamped
+2026-07-28 01:42:28 +0200, not 2026-07-27 as previously stated here --
+the date is corrected to match the actual commit, not the review round's
+own start date.**
 
 ## Reason
 

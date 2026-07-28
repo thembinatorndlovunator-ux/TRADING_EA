@@ -52,7 +52,14 @@ this remediation.
   all 46 real `.mq5` targets** — the 2 Experts
   (`ThembaAdaptiveIntradayEA.mq5`, `EquityTickRecorder.mq5`) and all 44
   `Test_*.mq5`/`Export_*.mq5` scripts (up from round-8's 41 — this round
-  added `Test_ChartPatternLifecycle.mq5` and `Test_ExecutionEventJournal.mq5`),
+  added `Test_ChartPatternLifecycle.mq5` and `Test_ExecutionEventJournal.mq5`;
+  **corrected, 2026-07-28, Codex round-10 P2 finding 20: undercounts --
+  the actual five new scripts were `Test_RiskReservationManager.mq5`,
+  `Test_DailyWeeklyBreachManager.mq5`, `Test_NoStopGraceManager.mq5`,
+  `Test_ExecutionEventJournal.mq5`, and `Test_ChartPatternLifecycle.mq5`
+  (41 + 5 = 46). Left as-is above rather than retroactively rewritten --
+  see `09_HANDOVERS/compile_evidence/README.md`'s own corrected entry
+  for the accurate count.**),
   not just this round's own touched files — is retained at
   `09_HANDOVERS/compile_evidence/TASK-028_round9_full_compile_evidence_2026-07-28.txt`,
   recording the exact MetaEditor invocation, MetaEditor version/build
@@ -83,7 +90,15 @@ this remediation.
   `nbconvert` executed correctly and is the more reliable tool going
   forward.) The other 7 required notebooks were not touched this round
   and were not re-executed, since nothing in round 9's own findings
-  required changing them.
+  required changing them. **Corrected, 2026-07-28 (Codex round-10 P2
+  finding 20): "7" undercounts -- TASK-028 defines TEN required
+  notebooks (01-10 per the task's own numbered list; notebook 00 is an
+  additional, non-required demo). After the three touched here (00, 01,
+  09 -- note 00 is the non-required demo, not one of the ten), EIGHT of
+  the ten required notebooks remained untouched, not seven. Left as-is
+  above rather than retroactively rewritten -- this is a historical
+  record of what round 9's own handover said at the time, not the
+  current count.**
 
 ## Findings resolved, by commit
 
