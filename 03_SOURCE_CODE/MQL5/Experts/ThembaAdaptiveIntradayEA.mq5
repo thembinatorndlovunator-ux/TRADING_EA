@@ -730,7 +730,9 @@ void ReconcileIntentAndFeedAFC()
      {
       string existing_signal_id;
       int    existing_index;
-      if(!AFC_FindPending(orphaned_pending_ticket, existing_signal_id, existing_index))
+      string existing_reservation_key;
+      if(!AFC_FindPending(orphaned_pending_ticket, existing_signal_id, existing_index,
+                           existing_reservation_key))
         {
          string synthetic_signal_id = StringFormat("restart_reconciled_%s",
                                                      IM_GetIntentId(g_symbol, InpMagicNumber));
@@ -760,6 +762,32 @@ void ReconcileIntentAndFeedAFC()
                            "at all (order never reached the broker)";
    PrintFormat("ThembaEA: reconciled an orphaned durable-intent record for '%s' magic %I64d -- "
                "%s.", g_symbol, InpMagicNumber, reconcile_outcome);
+
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 2):**
+   // a reservation whose own holder crashed before releasing it (the
+   // process died between RRM_TryReserve and the eventual
+   // RRM_ReleaseReservation call) would otherwise sit in the cap sum
+   // forever -- RiskReservationManager.mqh's own sum no longer ages
+   // anything out automatically (see that module's header for why a
+   // blind time-based exclusion was itself the review's finding). This is
+   // the caller-driven reconciliation point that replaces it: every
+   // branch above (abandoned / filled / resolved-not-filled) is
+   // DEFINITIVELY TERMINAL for this exact intent (the still-pending
+   // branches above both return earlier without reaching here), so any
+   // reservation still aged-present under THIS symbol+magic's own
+   // namespace at this point can only be a leftover from a PRE-restart
+   // attempt whose own disposition this reconciliation pass has now
+   // independently proven -- safe to release, never before.
+   string aged_keys[8];
+   int aged_count = RRM_FindAgedReservations(InpMagicNumber, RRM_STALE_SECONDS, aged_keys);
+   for(int ai = 0; ai < aged_count; ai++)
+     {
+      if(StringFind(aged_keys[ai], RRM_SymbolPrefix(g_symbol, InpMagicNumber)) != 0)
+         continue; // a different symbol under this same magic -- not this reconciliation's to touch
+      PrintFormat("ThembaEA: releasing a pre-restart risk reservation ('%s') now that its own "
+                  "intent has been proven terminal by the reconciliation above.", aged_keys[ai]);
+      RRM_ReleaseReservation(aged_keys[ai]);
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -1046,7 +1074,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
          string pending_signal_id;
          int pending_index;
-         if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
+         string pending_reservation_key;
+         if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key))
            {
             ulong resolved_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
             // Captured before any IM_ClearIntent below -- IM_GetIntentId reads
@@ -1088,7 +1117,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                // ComputeOwnMagicOpenRiskCash() itself, so continuing to hold
                // the reservation on top of that would double-count this
                // exact risk against the cap.
-               RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+               RRM_ReleaseReservation(pending_reservation_key);
               }
             LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, resolved_position_id,
                                     trans.order, trans.deal,
@@ -1104,7 +1133,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
      {
       string pending_signal_id;
       int pending_index;
-      if(AFC_FindPending(trans.order, pending_signal_id, pending_index))
+      string pending_reservation_key;
+      if(AFC_FindPending(trans.order, pending_signal_id, pending_index, pending_reservation_key))
         {
          ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(trans.order, ORDER_STATE);
          // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding
@@ -1127,7 +1157,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             IM_ClearIntent(g_symbol, InpMagicNumber); // cancelled/expired/rejected -- terminal
             // No exposure was ever created -- release this submission's own
             // risk reservation (Codex round-9 P0 finding 1).
-            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+            RRM_ReleaseReservation(pending_reservation_key);
             LogAsyncFillResolution(pending_signal_id, resolved_intent_id, false, 0, trans.order, 0,
                                     "ASYNC_NEVER_FILLED",
                                     StringFormat("async_order_never_filled_state_%s",
@@ -1143,7 +1173,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             // record alive this long in the first place).
             AFC_RemovePending(pending_index);
             IM_ClearIntent(g_symbol, InpMagicNumber);
-            RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+            RRM_ReleaseReservation(pending_reservation_key);
             ulong fill_deal_ticket = FindFillDealForOrder(trans.order);
             LogAsyncFillResolution(pending_signal_id, resolved_intent_id, true, order_position_id,
                                     trans.order, fill_deal_ticket,
@@ -1965,11 +1995,31 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // (StateManager.mqh's own owner-token lock), summing every OTHER symbol's
    // own live reservation under this same magic before deciding -- see
    // RiskReservationManager.mqh's own header for the full design.
+   //
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 2):**
+   // ComputeOwnMagicOpenRiskCash's own snapshot was previously taken BEFORE
+   // RRM_TryReserve's own lock acquisition -- "actual exposure + reservations
+   // + new reservation" was therefore never genuinely one critical section; a
+   // position could appear between this snapshot and the (separately locked)
+   // reservation decision. The account lock is now acquired HERE, held across
+   // the snapshot AND the reservation decision (RRM_TryReserveLocked, which
+   // assumes the lock is already held -- see its own header), and released
+   // once the decision is made, closing that gap.
+   double account_lock_token;
+   if(!SM_AcquireAccountLock(account_lock_token))
+     {
+      AppendReason(rejected, "total_open_risk_lock_timeout");
+      decision.reasons_passed_json = BuildJsonStringArray(passed);
+      decision.reasons_rejected_json = BuildJsonStringArray(rejected);
+      return;
+     }
+
    double existing_open_risk_cash;
    bool   existing_risk_readable;
    ComputeOwnMagicOpenRiskCash(existing_open_risk_cash, existing_risk_readable);
    if(!existing_risk_readable)
      {
+      SM_ReleaseAccountLock(account_lock_token);
       AppendReason(rejected, "total_open_risk_unreadable_failing_closed");
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
@@ -1978,9 +2028,12 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
 
    double total_open_risk_percent;
    string reservation_rejection;
-   bool reserved = RRM_TryReserve(g_symbol, InpMagicNumber, existing_open_risk_cash,
-                                    sizing.risk_cash_actual, InpRiskCapPercent, equity,
-                                    total_open_risk_percent, reservation_rejection);
+   string reservation_key;
+   bool reserved = RRM_TryReserveLocked(g_symbol, InpMagicNumber, existing_open_risk_cash,
+                                          sizing.risk_cash_actual, InpRiskCapPercent, equity,
+                                          total_open_risk_percent, reservation_rejection,
+                                          reservation_key);
+   SM_ReleaseAccountLock(account_lock_token);
    if(!reserved)
      {
       AppendReason(rejected, reservation_rejection);
@@ -2000,7 +2053,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       // Codex round-9 P0 finding 1: the reservation gate 5b just made must
       // not be left dangling until its own crash-recovery staleness timeout
       // -- this decision is rejected here, so no submission will ever use it.
-      RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+      RRM_ReleaseReservation(reservation_key);
       AppendReason(rejected, StringFormat(
          "risk_cross_check_failed_computed_%.4f_broker_%.4f",
          sizing.risk_cash_actual, broker_risk_cash));
@@ -2019,7 +2072,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       // second order rather than risk a duplicate position.
       // Same reservation-release requirement as the cross-check rejection
       // above (Codex round-9 P0 finding 1).
-      RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+      RRM_ReleaseReservation(reservation_key);
       AppendReason(rejected, "intent_already_active_refusing_duplicate_submission");
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
@@ -2072,7 +2125,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       // to hold the reservation on top of that would double-count it.**
       if(open_result.exposure_unresolved)
         {
-         RRM_ReleaseReservation(g_symbol, InpMagicNumber);
+         RRM_ReleaseReservation(reservation_key);
          AppendReason(rejected, "order_exposure_unresolved_awaiting_reconciliation_" +
                       open_result.rejection_reason);
          decision.reasons_passed_json = BuildJsonStringArray(passed);
@@ -2113,7 +2166,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
         }
 
       IM_ClearIntent(g_symbol, InpMagicNumber); // rejected outright -- definitively terminal
-      RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1
+      RRM_ReleaseReservation(reservation_key); // Codex round-9 P0 finding 1
       AppendReason(rejected, "order_" + open_result.rejection_reason);
       decision.reasons_passed_json = BuildJsonStringArray(passed);
       decision.reasons_rejected_json = BuildJsonStringArray(rejected);
@@ -2134,6 +2187,11 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
       // remainder's own terminal outcome eventually arrives.**
       if(open_result.has_live_remainder)
         {
+         // reservation_key deliberately omitted (defaults to "") -- the
+         // reservation is released unconditionally just below regardless of
+         // this branch (real exposure already exists from the partial fill,
+         // which is what the reservation was guarding), so there is nothing
+         // left for a later async resolution to release a second time.
          AFC_AddPending(open_result.order_ticket, decision.signal_id);
          PrintFormat("ThembaEA: DONE_PARTIAL fill for position_id=%I64u still has a live order "
                      "remainder (ticket #%I64u) -- durable intent left ACTIVE pending its own "
@@ -2143,7 +2201,7 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
         {
          IM_ClearIntent(g_symbol, InpMagicNumber); // synchronous fill confirmed -- definitively terminal
         }
-      RRM_ReleaseReservation(g_symbol, InpMagicNumber); // Codex round-9 P0 finding 1 -- real
+      RRM_ReleaseReservation(reservation_key); // Codex round-9 P0 finding 1 -- real
                                                           // exposure now exists and is counted by
                                                           // ComputeOwnMagicOpenRiskCash() itself.
 
@@ -2293,8 +2351,14 @@ void AttemptOrderSubmission(STradeDecision &decision, const SConflictResult &res
    // design, per DecisionJournal.mqh's own append-only contract), but real
    // machine-readable evidence of the eventual fill/cancellation now exists
    // in that separate journal.**
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 2):**
+   // this genuinely-async path never released its own reservation anywhere
+   // within THIS function call (unlike every other branch above) -- it must
+   // be carried through to OnTradeTransaction's own later resolution
+   // handlers so THAT code can release the exact reservation this specific
+   // submission made, once its own terminal outcome is known.
    if(open_result.position_id == 0 && open_result.order_ticket != 0)
-      AFC_AddPending(open_result.order_ticket, decision.signal_id);
+      AFC_AddPending(open_result.order_ticket, decision.signal_id, reservation_key);
   }
 
 //+------------------------------------------------------------------+

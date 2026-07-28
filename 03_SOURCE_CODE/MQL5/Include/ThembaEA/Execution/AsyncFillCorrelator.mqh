@@ -31,33 +31,51 @@
 
 ulong  g_afc_pending_order_tickets[];
 string g_afc_pending_signal_ids[];
+// **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 2):**
+// carries RiskReservationManager.mqh's own unique reservation key alongside
+// each pending correlation record, so OnTradeTransaction's later async-
+// resolution handlers can release the EXACT reservation this specific
+// submission made (RRM_ReleaseReservation now requires that exact key --
+// see that module's own header for why a bare symbol+magic release is no
+// longer safe). Empty string means "no reservation to release for this
+// record" (e.g. a restart-reconciliation-reconstructed entry, whose own
+// pre-restart reservation, if any, is released separately -- see
+// ReconcileIntentAndFeedAFC's own aged-reservation cleanup).
+string g_afc_pending_reservation_keys[];
 
 //+------------------------------------------------------------------+
 //| Records a PLACED-but-not-yet-confirmed order for later correlation.   |
 //+------------------------------------------------------------------+
-void AFC_AddPending(const ulong order_ticket, const string signal_id)
+void AFC_AddPending(const ulong order_ticket, const string signal_id,
+                     const string reservation_key = "")
   {
    int n = ArraySize(g_afc_pending_order_tickets);
    ArrayResize(g_afc_pending_order_tickets, n + 1);
    ArrayResize(g_afc_pending_signal_ids, n + 1);
+   ArrayResize(g_afc_pending_reservation_keys, n + 1);
    g_afc_pending_order_tickets[n] = order_ticket;
    g_afc_pending_signal_ids[n] = signal_id;
+   g_afc_pending_reservation_keys[n] = reservation_key;
   }
 
 //+------------------------------------------------------------------+
 //| True iff 'order_ticket' has a pending correlation record, returning   |
-//| its original signal_id and array index (for AFC_RemovePending).          |
+//| its original signal_id, reservation_key, and array index (for            |
+//| AFC_RemovePending).                                                        |
 //+------------------------------------------------------------------+
-bool AFC_FindPending(const ulong order_ticket, string &signal_id_out, int &index_out)
+bool AFC_FindPending(const ulong order_ticket, string &signal_id_out, int &index_out,
+                      string &reservation_key_out)
   {
    signal_id_out = "";
    index_out = -1;
+   reservation_key_out = "";
    for(int i = 0; i < ArraySize(g_afc_pending_order_tickets); i++)
      {
       if(g_afc_pending_order_tickets[i] == order_ticket)
         {
          signal_id_out = g_afc_pending_signal_ids[i];
          index_out = i;
+         reservation_key_out = g_afc_pending_reservation_keys[i];
          return true;
         }
      }
@@ -75,8 +93,10 @@ void AFC_RemovePending(const int index)
       return;
    g_afc_pending_order_tickets[index] = g_afc_pending_order_tickets[last];
    g_afc_pending_signal_ids[index] = g_afc_pending_signal_ids[last];
+   g_afc_pending_reservation_keys[index] = g_afc_pending_reservation_keys[last];
    ArrayResize(g_afc_pending_order_tickets, last);
    ArrayResize(g_afc_pending_signal_ids, last);
+   ArrayResize(g_afc_pending_reservation_keys, last);
   }
 
 //+------------------------------------------------------------------+
@@ -97,4 +117,5 @@ void AFC_ClearAllPending()
   {
    ArrayFree(g_afc_pending_order_tickets);
    ArrayFree(g_afc_pending_signal_ids);
+   ArrayFree(g_afc_pending_reservation_keys);
   }
