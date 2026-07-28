@@ -113,6 +113,13 @@ string CsvQuoteField(const string value)
    return "\"" + escaped + "\"";
   }
 
+// **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 14):**
+// the exact, current CSV header -- the single source of truth both the
+// fresh-file write path and the existing-file validation path below
+// compare against, so the two can never silently drift apart.
+#define EQUITY_TICK_CSV_HEADER \
+   "timestamp_utc,timestamp_server,run_id,account_login,broker_server,equity,balance\r\n"
+
 int OnInit()
   {
    if(InpSampleIntervalMs <= 0)
@@ -125,6 +132,54 @@ int OnInit()
    g_run_id = TimeLocal();
 
    bool file_exists = FileIsExist(InpOutputFile);
+
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding
+   // 14):** OnInit previously only checked FileIsExist() before deciding
+   // whether to write a fresh header -- an OLD-schema file (six columns,
+   // predating b84446c's 'timestamp_server' addition), a zero-byte file
+   // with no header at all, or any other wrong-schema file was opened and
+   // then silently received new seven-column rows appended underneath
+   // whatever (or no) header it already had, corrupting the file's own
+   // schema consistency. A pre-existing NON-EMPTY file's actual first line
+   // is now read back and compared against the exact current header
+   // BEFORE any row is ever appended -- a mismatch fails closed (refuses
+   // to run) rather than silently corrupting the dataset. A zero-byte
+   // existing file (never had any schema imposed) is treated the same as
+   // "does not exist" -- safe to initialize fresh, nothing to corrupt.
+   bool file_has_content = false;
+   if(file_exists)
+     {
+      int probe_handle = FileOpen(InpOutputFile, FILE_READ | FILE_TXT | FILE_ANSI |
+                                   FILE_SHARE_READ, 0, CP_UTF8);
+      if(probe_handle == INVALID_HANDLE)
+        {
+         PrintFormat("EquityTickRecorder: could not open existing '%s' to validate its own "
+                     "header (error=%d) -- refusing to run rather than risk appending "
+                     "incompatible rows to an unverified file.", InpOutputFile, GetLastError());
+         return INIT_FAILED;
+        }
+      if(!FileIsEnding(probe_handle))
+        {
+         file_has_content = true;
+         string existing_header = FileReadString(probe_handle);
+         // FileReadString does not include the line terminator -- compare
+         // against the expected header with its own trailing "\r\n" stripped.
+         string expected_header = EQUITY_TICK_CSV_HEADER;
+         StringReplace(expected_header, "\r\n", "");
+         if(existing_header != expected_header)
+           {
+            FileClose(probe_handle);
+            PrintFormat("EquityTickRecorder: existing '%s' has an incompatible header "
+                        "(expected '%s', found '%s') -- refusing to append seven-column rows "
+                        "to a file whose own schema does not match. Move/rename the old file, "
+                        "or point InpOutputFile at a new path, before running again.",
+                        InpOutputFile, expected_header, existing_header);
+            return INIT_FAILED;
+           }
+        }
+      FileClose(probe_handle);
+     }
+
    g_file_handle = FileOpen(InpOutputFile, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI |
                              FILE_SHARE_READ, 0, CP_UTF8);
    if(g_file_handle == INVALID_HANDLE)
@@ -135,9 +190,21 @@ int OnInit()
      }
 
    FileSeek(g_file_handle, 0, SEEK_END);
-   if(!file_exists)
-      FileWriteString(g_file_handle, "timestamp_utc,timestamp_server,run_id,account_login,"
-                                     "broker_server,equity,balance\r\n");
+   if(!file_has_content)
+     {
+      uint header_written = FileWriteString(g_file_handle, EQUITY_TICK_CSV_HEADER);
+      if(header_written != (uint)StringLen(EQUITY_TICK_CSV_HEADER))
+        {
+         PrintFormat("EquityTickRecorder: failed to write the CSV header to '%s' (wrote %u of "
+                     "%d chars, error=%d) -- refusing to run with an unverified/incomplete "
+                     "header.", InpOutputFile, header_written, StringLen(EQUITY_TICK_CSV_HEADER),
+                     GetLastError());
+         FileClose(g_file_handle);
+         g_file_handle = INVALID_HANDLE;
+         return INIT_FAILED;
+        }
+      FileFlush(g_file_handle);
+     }
 
    if(!EventSetMillisecondTimer(InpSampleIntervalMs))
      {
@@ -177,6 +244,14 @@ void OnTimer()
    string line = StringFormat("%s,%s,%I64d,%I64d,%s,%.2f,%.2f\r\n", Iso8601Utc(tick_server_time),
                                Iso8601ServerLocal(tick_server_time), (long)g_run_id, login,
                                CsvQuoteField(server), equity, balance);
-   FileWriteString(g_file_handle, line);
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding
+   // 14):** the write's own result was previously discarded -- a partial/
+   // failed write (disk full, permission change mid-run) silently produced
+   // a truncated or missing row with no record of it having happened.
+   uint written = FileWriteString(g_file_handle, line);
+   if(written != (uint)StringLen(line))
+      PrintFormat("EquityTickRecorder: CRITICAL -- write to '%s' incomplete (wrote %u of %d "
+                  "chars, error=%d) -- this tick's own equity sample may be missing or "
+                  "truncated.", InpOutputFile, written, StringLen(line), GetLastError());
    FileFlush(g_file_handle);
   }
