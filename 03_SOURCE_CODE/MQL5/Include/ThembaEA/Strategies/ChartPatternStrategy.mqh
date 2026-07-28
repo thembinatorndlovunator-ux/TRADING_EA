@@ -72,20 +72,39 @@ struct SCPStrategyConfig
    // calling the engine's own hold/fail predicate).
    double retest_failure_atr;
    int    retest_max_bars;
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):
+   // wires ChartPatternLifecycle.mqh's own InpPatternMaxAgeBars expiry
+   // (documented in that module's header as an implemented capability, but
+   // previously called by no production caller at all -- only tests
+   // exercised CPL_GetConfirmedTime). An instance still non-terminal this
+   // many bars after its own CONFIRMED timestamp is expired rather than
+   // left eligible indefinitely.
+   int    max_age_bars;
   };
 
 //+------------------------------------------------------------------+
 //| **Added, 2026-07-27 (Codex review finding, ninth round, P1 finding 11):  |
 //| applies ChartPatternLifecycle.mqh's persisted state machine to an          |
 //| already-breakout-confirmed pattern instance (CPT_Detect*Array's own          |
-//| 'found' + 'breakout_index >= 0' contract). Returns true ONLY on the exact       |
-//| bar this instance's retest resolves to TRADED for the first and only time         |
-//| -- every other case (already consumed, not yet touching the retest zone,             |
-//| retest still pending, or a transition to INVALIDATED/EXPIRED this very                  |
-//| call) returns false. A CONSUMED instance (TRADED/INVALIDATED/EXPIRED)                       |
-//| never re-enters eligibility, per section 6's own "permanently marks an                         |
-//| instance TRADED as consumed" requirement, extended to all three terminal                            |
-//| states.                                                                                                    |
+//| 'found' + 'breakout_index >= 0' contract).                                        |
+//|                                                                    |
+//| **Fixed, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):  |
+//| returns true ONLY on the exact bar this instance's retest resolves to      |
+//| CPL_STATE_CANDIDATE (retest HELD) -- previously this transitioned             |
+//| DIRECTLY to CPL_STATE_TRADED here, before the caller had even checked            |
+//| candlestick confirmation, so a retest-hold bar with no confirming candle          |
+//| permanently marked the instance TRADED despite no signal ever being                  |
+//| emitted. The caller MUST now call CPS_FinalizeTradedInstance below (after              |
+//| its own candlestick check) to genuinely reach TRADED. Every other case                   |
+//| (already consumed, not yet touching the retest zone, retest still                            |
+//| pending, aged past max_age_bars, or a transition to INVALIDATED/EXPIRED                          |
+//| this very call) returns false. A CONSUMED instance (TRADED/INVALIDATED/                              |
+//| EXPIRED) never re-enters eligibility, per section 6's own "permanently                                   |
+//| marks an instance TRADED as consumed" requirement, extended to all three                                     |
+//| terminal states. Every CPL_Set*() write is now CHECKED -- a failed write                                         |
+//| reports "not eligible" rather than silently trusting an untaken                                                      |
+//| transition (closing the review's own "every CPL_SetState() result... is                                                  |
+//| ignored" finding).**                                                                                                        |
 //|                                                                    |
 //| **Stated scope boundary:** the false-break invalidation path (section 6:      |
 //| "a confirmed close back inside the boundary within InpFalseBreakBars bars       |
@@ -101,7 +120,7 @@ bool CPS_ApplyLifecycle(const string symbol, const long magic,
                           const double current_price, const double boundary_price,
                           const bool is_bullish_breakout, const double current_atr,
                           const double retest_tolerance_atr, const double retest_failure_atr,
-                          const int retest_max_bars)
+                          const int retest_max_bars, const int max_age_bars)
   {
    int n = ArraySize(times);
    if(pivot_index_1 < 0 || pivot_index_2 < 0 || pivot_index_1 >= n || pivot_index_2 >= n)
@@ -115,13 +134,48 @@ bool CPS_ApplyLifecycle(const string symbol, const long magic,
    if(CPL_IsTerminal(state))
       return false; // consumed (TRADED/INVALIDATED/EXPIRED) -- never re-enters eligibility
 
+   if(state == CPL_STATE_CANDIDATE)
+      return false; // awaiting CPS_FinalizeTradedInstance from an earlier bar's own call -- not
+                     // this function's concern; never fall through into RETESTING-specific logic
+                     // below with stale/irrelevant retest-touch data.
+
    if(state == CPL_STATE_NONE)
      {
       // Newly confirmed instance -- first time this exact identity has ever
       // been observed.
-      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_CONFIRMED);
-      CPL_SetConfirmedTime(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, times[0]);
+      bool state_ok = CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time,
+                                     CPL_STATE_CONFIRMED);
+      bool time_ok  = CPL_SetConfirmedTime(symbol, magic, (int)pattern_type, pivot1_time,
+                                             pivot2_time, times[0]);
+      if(!state_ok || !time_ok)
+         return false; // cannot trust this transition took effect -- do not proceed as CONFIRMED
       state = CPL_STATE_CONFIRMED;
+     }
+
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):
+   // InpPatternMaxAgeBars expiry -- wires CPL_GetConfirmedTime (previously
+   // called by no production caller) against max_age_bars. Recomputes the
+   // confirmation bar's CURRENT "bars ago" index from its own persisted
+   // TIME, same technique the retest-touch aging check below already uses
+   // (bar indices shift by one every new bar).
+   datetime confirmed_time = CPL_GetConfirmedTime(symbol, magic, (int)pattern_type, pivot1_time,
+                                                    pivot2_time);
+   if(confirmed_time > 0)
+     {
+      int confirmed_index_now = -1;
+      for(int k = 0; k < n; k++)
+        {
+         if(times[k] == confirmed_time)
+           {
+            confirmed_index_now = k;
+            break;
+           }
+        }
+      if(confirmed_index_now < 0 || confirmed_index_now > max_age_bars)
+        {
+         CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_EXPIRED);
+         return false;
+        }
      }
 
    double tol = current_atr * retest_tolerance_atr;
@@ -131,8 +185,15 @@ bool CPS_ApplyLifecycle(const string symbol, const long magic,
      {
       if(!currently_in_retest_zone)
          return false; // still waiting to touch the retest zone
-      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_RETESTING);
-      CPL_SetRetestTouchTime(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, times[0]);
+      bool state_ok = CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time,
+                                     CPL_STATE_RETESTING);
+      bool touch_ok = CPL_SetRetestTouchTime(symbol, magic, (int)pattern_type, pivot1_time,
+                                               pivot2_time, times[0]);
+      if(!state_ok || !touch_ok)
+         PrintFormat("ThembaEA: ChartPatternLifecycle failed to persist a CONFIRMED->RETESTING "
+                     "transition for '%s' magic %I64d pattern_type=%d -- this instance's own "
+                     "retest tracking may be lost or re-triggered on a later bar.",
+                     symbol, magic, (int)pattern_type);
       return false; // just entered RETESTING this bar -- hold/fail is evaluated on a later bar
      }
 
@@ -167,12 +228,60 @@ bool CPS_ApplyLifecycle(const string symbol, const long magic,
 
    if(holds)
      {
-      CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_TRADED);
-      return true; // eligible to trade -- this exact instance is now consumed forever after
+      // **Fixed, 2026-07-28 (Codex round-10 P1 finding 9):** transitions to
+      // CPL_STATE_CANDIDATE, NOT CPL_STATE_TRADED -- the caller must still
+      // check candlestick confirmation and then call
+      // CPS_FinalizeTradedInstance below to genuinely reach TRADED. A
+      // failed write here means this transition cannot be trusted to have
+      // taken effect -- reporting eligible anyway risks re-observing
+      // CPL_STATE_RETESTING on the next bar (harmless re-evaluation, not a
+      // duplicate-trade risk, since CANDIDATE/TRADED is what actually gates
+      // trading) rather than silently proceeding.
+      if(!CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time,
+                        CPL_STATE_CANDIDATE))
+         return false;
+      return true; // retest HELD -- caller must now check candlestick confirmation
      }
 
    CPL_SetState(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time, CPL_STATE_INVALIDATED);
    return false;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):  |
+//| the ONLY sanctioned way for a caller to move a CPL_STATE_CANDIDATE          |
+//| instance to its own genuine terminal state, called once (and only once)      |
+//| immediately after CPS_ApplyLifecycle returns true, with the result of the       |
+//| caller's own candlestick-confirmation check. 'candle_confirmed' true            |
+//| attempts the CAS-guarded TRADED transition (CPL_TryFinalizeTraded --                |
+//| serialized against a concurrent instance racing the same identity, see                 |
+//| that function's own header); false marks INVALIDATED (retest held, but no                  |
+//| valid entry trigger appeared -- an accurate, non-misleading terminal                            |
+//| state, never silently left as an untouched CANDIDATE nor incorrectly                                marked
+//| TRADED). Returns true ONLY when this exact call is the one that                                        genuinely
+//| won the TRADED transition -- a caller must treat any false return as                                          "do
+//| not emit a trade signal for this instance", including the case where a                                             concurrent
+//| instance won the race first.                                                                                            |
+//+------------------------------------------------------------------+
+bool CPS_FinalizeTradedInstance(const string symbol, const long magic,
+                                  const ENUM_CHART_PATTERN_TYPE pattern_type,
+                                  const int pivot_index_1, const int pivot_index_2,
+                                  const datetime &times[], const bool candle_confirmed)
+  {
+   int n = ArraySize(times);
+   if(pivot_index_1 < 0 || pivot_index_2 < 0 || pivot_index_1 >= n || pivot_index_2 >= n)
+      return false;
+
+   datetime pivot1_time = times[pivot_index_1];
+   datetime pivot2_time = times[pivot_index_2];
+
+   if(!candle_confirmed)
+     {
+      CPL_MarkCandidateInvalidated(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time);
+      return false;
+     }
+
+   return CPL_TryFinalizeTraded(symbol, magic, (int)pattern_type, pivot1_time, pivot2_time);
   }
 
 //+------------------------------------------------------------------+
@@ -358,7 +467,8 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
    // closing "rediscovered geometry can trade repeatedly."**
    if(!CPS_ApplyLifecycle(symbol, magic, found_type, r.pivot_index_1, r.pivot_index_2, times, closes,
                            current_price, r.boundary_price, pattern_is_bullish_breakout, current_atr,
-                           cfg.retest_tolerance_atr, cfg.retest_failure_atr, cfg.retest_max_bars))
+                           cfg.retest_tolerance_atr, cfg.retest_failure_atr, cfg.retest_max_bars,
+                           cfg.max_age_bars))
       return false; // not yet eligible this bar (still forming/retesting), or consumed/expired
 
    string pattern_name = "";
@@ -378,7 +488,14 @@ bool CPS_EvaluateTrendBreakoutRetestArray(const double &opens[], const double &h
         { confirmed = true; pattern_name = "bearish_engulfing"; }
      }
 
-   if(!confirmed)
+   // **Fixed, 2026-07-28 (Codex round-10 P1 finding 9):** CPS_ApplyLifecycle
+   // above only reached CPL_STATE_CANDIDATE (retest HELD) -- this call is
+   // what genuinely finalizes TRADED (only if candle confirms AND this
+   // caller wins the CAS-guarded transition) or INVALIDATED (candle did not
+   // confirm -- an accurate, non-misleading terminal state instead of the
+   // previous defect of marking TRADED regardless).
+   if(!CPS_FinalizeTradedInstance(symbol, magic, found_type, r.pivot_index_1, r.pivot_index_2,
+                                    times, confirmed))
       return false;
 
    signal.found = true;

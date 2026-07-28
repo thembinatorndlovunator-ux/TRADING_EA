@@ -48,6 +48,7 @@
 #property strict
 
 #include "../Core/KeyEncoding.mqh"
+#include "../Core/StateManager.mqh"
 
 enum ENUM_CP_LIFECYCLE_STATE
   {
@@ -56,7 +57,18 @@ enum ENUM_CP_LIFECYCLE_STATE
    CPL_STATE_RETESTING,
    CPL_STATE_TRADED,
    CPL_STATE_INVALIDATED,
-   CPL_STATE_EXPIRED
+   CPL_STATE_EXPIRED,
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):
+   // interim, NON-terminal state for "the retest resolved as HOLD, but the
+   // candlestick-confirmation check this instance's own trade eligibility
+   // also requires has not been evaluated yet" -- appended (not inserted)
+   // to preserve every existing state's own numeric value. Previously the
+   // retest-hold outcome transitioned DIRECTLY to CPL_STATE_TRADED before
+   // the caller had even checked candlestick confirmation, so a retest-hold
+   // bar with no confirming candle permanently marked the instance TRADED
+   // even though no signal was ever emitted. See CPS_ApplyLifecycle/
+   // CPS_FinalizeTradedInstance in ChartPatternStrategy.mqh.
+   CPL_STATE_CANDIDATE
   };
 
 //+------------------------------------------------------------------+
@@ -179,6 +191,57 @@ bool CPL_IsTerminal(const ENUM_CP_LIFECYCLE_STATE state)
   {
    return state == CPL_STATE_TRADED || state == CPL_STATE_INVALIDATED ||
           state == CPL_STATE_EXPIRED;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):  |
+//| the ONLY sanctioned way to transition an instance into CPL_STATE_TRADED  |
+//| -- serializes the "is this instance still CANDIDATE" check and the         |
+//| TRADED write into ONE critical section, under StateManager.mqh's own          |
+//| account-wide lock (reused, not a second lock primitive). Closes the               |
+//| review's own "no CAS/lock, so concurrent instances can both observe                  |
+//| nonterminal state and emit the same instance" finding for this exact,                    |
+//| highest-stakes transition (two chart instances sharing the same                              |
+//| symbol+magic could otherwise both observe CANDIDATE and both report                              |
+//| eligible). Returns false -- and writes NOTHING -- if the instance is no                              |
+//| longer CANDIDATE by the time the lock is held (a concurrent caller                                       |
+//| already finalized it, or it was independently invalidated/expired), or                                       |
+//| if the lock itself could not be acquired, or if the persisted write                                              |
+//| itself fails -- a caller MUST treat any false return as "do not treat                                                this
+//| as a real trade", never silently proceed as if it had won.                                                                |
+//+------------------------------------------------------------------+
+bool CPL_TryFinalizeTraded(const string symbol, const long magic, const int pattern_type,
+                             const datetime pivot1_time, const datetime pivot2_time,
+                             const int lock_timeout_ms = 500)
+  {
+   double owner_token;
+   if(!SM_AcquireAccountLock(owner_token, lock_timeout_ms))
+      return false;
+
+   ENUM_CP_LIFECYCLE_STATE current = CPL_GetState(symbol, magic, pattern_type, pivot1_time,
+                                                     pivot2_time);
+   if(current != CPL_STATE_CANDIDATE)
+     {
+      SM_ReleaseAccountLock(owner_token);
+      return false; // a concurrent caller already finalized/invalidated this exact instance
+     }
+
+   bool ok = CPL_SetState(symbol, magic, pattern_type, pivot1_time, pivot2_time, CPL_STATE_TRADED);
+   SM_ReleaseAccountLock(owner_token);
+   return ok;
+  }
+
+//+------------------------------------------------------------------+
+//| Transitions a CANDIDATE instance to INVALIDATED -- call when the        |
+//| retest resolved as HOLD but the required candlestick confirmation does    |
+//| NOT appear. Does not require the account lock: invalidating redundantly      |
+//| (e.g. a concurrent caller already did) is harmless, unlike the TRADED           |
+//| transition above, which must never happen twice for the same instance.          |
+//+------------------------------------------------------------------+
+bool CPL_MarkCandidateInvalidated(const string symbol, const long magic, const int pattern_type,
+                                    const datetime pivot1_time, const datetime pivot2_time)
+  {
+   return CPL_SetState(symbol, magic, pattern_type, pivot1_time, pivot2_time, CPL_STATE_INVALIDATED);
   }
 
 //+------------------------------------------------------------------+

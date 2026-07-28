@@ -119,6 +119,55 @@ void OnStart()
          CPL_GetRetestTouchTime(TEST_SYMBOL, TEST_MAGIC, (int)CPT_HEAD_SHOULDERS, p1, p2) ==
          touch_time);
 
+   //--- 7b. CPL_STATE_CANDIDATE and the CAS-guarded finalize primitives ------
+   //---     (Codex review finding, tenth round, P1 finding 9): the "retest ----
+   //---     held but candle didn't confirm" defect this round closes -- ---------
+   //---     previously the caller transitioned STRAIGHT to TRADED before ---------
+   //---     checking candlestick confirmation at all, so a no-candle bar -----------
+   //---     permanently (and wrongly) marked the instance TRADED. -------------------
+   datetime pc1 = D'2026.03.01 00:00';
+   datetime pc2 = D'2026.03.01 00:15';
+   Check("CPL_STATE_CANDIDATE is NOT terminal (it must remain eligible for "
+         "CPL_TryFinalizeTraded/CPL_MarkCandidateInvalidated to resolve)",
+         CPL_IsTerminal(CPL_STATE_CANDIDATE) == false);
+
+   Check("a fresh instance can be set to CPL_STATE_CANDIDATE",
+         CPL_SetState(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc1, pc2,
+                       CPL_STATE_CANDIDATE));
+
+   //--- No confirming candle -> CPL_MarkCandidateInvalidated, NEVER TRADED ---
+   Check("CPL_MarkCandidateInvalidated succeeds", CPL_MarkCandidateInvalidated(
+      TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc1, pc2));
+   Check("a CANDIDATE with no confirming candle ends INVALIDATED, "
+         "never TRADED (the exact defect this round closes)",
+         CPL_GetState(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc1, pc2) ==
+         CPL_STATE_INVALIDATED);
+   Check("that INVALIDATED instance is terminal -- never re-enters eligibility",
+         CPL_IsTerminal(CPL_GetState(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc1, pc2)));
+
+   //--- A confirming candle -> CPL_TryFinalizeTraded genuinely reaches -------
+   //--- TRADED, on a DIFFERENT instance (the one above is already terminal). -
+   datetime pc3 = D'2026.03.02 00:00';
+   datetime pc4 = D'2026.03.02 00:15';
+   Check("a second fresh instance can be set to CPL_STATE_CANDIDATE",
+         CPL_SetState(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc3, pc4,
+                       CPL_STATE_CANDIDATE));
+   Check("CPL_TryFinalizeTraded succeeds for a genuinely CANDIDATE instance",
+         CPL_TryFinalizeTraded(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc3, pc4));
+   Check("that instance now genuinely reads back as TRADED",
+         CPL_GetState(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc3, pc4) ==
+         CPL_STATE_TRADED);
+
+   //--- CPL_TryFinalizeTraded refuses an instance that is NOT CANDIDATE ------
+   //--- (the CAS check) -- e.g. calling it again on the now-TRADED instance --
+   //--- above must not succeed a second time. --------------------------------
+   Check("CPL_TryFinalizeTraded refuses to re-finalize an instance that is "
+         "no longer CANDIDATE (already TRADED) -- the CAS guard",
+         CPL_TryFinalizeTraded(TEST_SYMBOL, TEST_MAGIC, (int)CPT_DOUBLE_BOTTOM, pc3, pc4) == false);
+   Check("CPL_TryFinalizeTraded also refuses a NEVER-SEEN instance "
+         "(state == CPL_STATE_NONE, not CANDIDATE)",
+         CPL_TryFinalizeTraded(TEST_SYMBOL, TEST_MAGIC, (int)CPT_TRIPLE_TOP, pc1, pc2) == false);
+
    //--- 8. CPL_CleanupStale deletes only records past the retention window ---
    // Force this instance's own last_update far into the past by writing the
    // state again and then directly back-dating the companion field.

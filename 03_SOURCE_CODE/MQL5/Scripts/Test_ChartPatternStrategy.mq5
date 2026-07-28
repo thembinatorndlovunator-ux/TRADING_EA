@@ -85,6 +85,10 @@ SCPStrategyConfig MakeConfig()
    // finding 11 -- previously never wired to any live caller at all).
    cfg.retest_failure_atr = 0.2;
    cfg.retest_max_bars = 10;
+   // Codex round-10 P1 finding 9: TASK-002_PHASE2_SPECIFICATION.md section
+   // 6's own default (50) -- previously not a real operator input, now
+   // wired and required by CPS_ApplyLifecycle's own signature.
+   cfg.max_age_bars = 50;
    return cfg;
   }
 

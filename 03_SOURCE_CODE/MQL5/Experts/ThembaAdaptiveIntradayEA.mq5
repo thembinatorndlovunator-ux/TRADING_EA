@@ -121,6 +121,14 @@ input long   InpMagicNumber      = 990001;
 input int    InpSwingDepth       = 3;
 input int    InpMaxLookback      = 50;
 input int    InpSharedWindowBars = 250;      // shared OHLC/ATR window for all strategy evaluations
+// **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):
+// TASK-002_PHASE2_SPECIFICATION.md section 6's own "Maximum age from
+// confirmation: InpPatternMaxAgeBars (default 50)" -- previously not a
+// real operator input at all (ChartPatternLifecycle.mqh's own
+// CPL_GetConfirmedTime existed but had no production caller). See
+// ChartPatternStrategy.mqh's own CPS_ApplyLifecycle for where this is now
+// enforced.
+input int    InpPatternMaxAgeBars = 50;
 
 input ENUM_NEWS_PROVIDER_SOURCE InpNewsProviderSource = NEWS_PROVIDER_MT5_CALENDAR; // see note above
 input string InpNewsCurrency               = "USD"; // "" = all currencies
@@ -1483,6 +1491,15 @@ void OnTimer()
    // protections above -- see ReconcilePendingCloseFinalizations's own
    // header.**
    ReconcilePendingCloseFinalizations();
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P1 finding 9):
+   // ChartPatternLifecycle.mqh's own CPL_CleanupStale existed with no
+   // production caller at all -- wired here so GlobalVariable count for
+   // consumed/expired pattern instances stays bounded over the EA's
+   // lifetime instead of growing forever. A 7-day retention window is
+   // deliberately generous relative to InpPatternMaxAgeBars' own bar-count
+   // horizon (a handful of hours on any realistic timeframe) -- this is a
+   // housekeeping bound, not an operational one.
+   CPL_CleanupStale(g_symbol, InpMagicNumber, 7 * 86400);
   }
 
 void OnTick()
@@ -3216,6 +3233,8 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    // TASK-002_PHASE2_SPECIFICATION.md section 6 defaults (InpRetestFailureATR
    // 0.2, InpRetestMaxBars 10) -- Codex round-9 P1 finding 11.
    cpCfg.retest_failure_atr = 0.2; cpCfg.retest_max_bars = 10;
+   // Codex round-10 P1 finding 9: wires the real InpPatternMaxAgeBars input.
+   cpCfg.max_age_bars = InpPatternMaxAgeBars;
    SChartPatternStrategySignal cpSig;
    CPS_EvaluateArray(opens, highs, lows, closes, atr_values, bar_times, g_symbol, InpMagicNumber,
                       effective_regime, structure, cpCfg, cpSig);
