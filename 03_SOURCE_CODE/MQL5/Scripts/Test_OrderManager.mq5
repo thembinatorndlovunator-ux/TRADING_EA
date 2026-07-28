@@ -166,6 +166,18 @@ void OnStart()
    Check("unloaded profile is rejected",
          OM_CalculateVolume(unloaded, 10000.0, 1.0, 1.00, 1.0, r8) == false);
 
+   //--- 6b. OM_FindPositionByIdentifier (Codex review finding, tenth round, --
+   //---     P0 finding 3): pure, no-live-trading-action coverage for the -------
+   //---     "not found" path -- a real found-case round-trip needs a genuine -----
+   //---     live position and is exercised implicitly by test 7+ below (which -----
+   //---     places one), not duplicated here. ---------------------------------------
+   ulong nonexistent_ticket_out;
+   Check("OM_FindPositionByIdentifier returns false for an identifier that matches "
+         "no currently-open position",
+         OM_FindPositionByIdentifier(999999999999, nonexistent_ticket_out) == false);
+   Check("a failed OM_FindPositionByIdentifier leaves ticket_out at 0",
+         nonexistent_ticket_out == 0);
+
    //--- 7. Real-symbol live order test ------------------------------------
    PrintFormat("WARNING: about to place a real minimum-volume market "
                "position on '%s' under magic %I64d, then close it.",
@@ -225,6 +237,16 @@ void OnStart()
             open_result.position_id != 0);
       Check("exactly one owned position exists after opening",
             CountOwnedPositions(InpTestMagic) == 1);
+      // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding
+      // 3):** OM_FindPositionByIdentifier's own real found-case round-trip --
+      // resolving the just-opened position's own durable position_id must
+      // yield exactly the same position_ticket OM_OpenPosition itself
+      // already resolved.
+      ulong resolved_by_identifier;
+      Check("OM_FindPositionByIdentifier resolves the just-opened position's own position_id "
+            "back to its correct ticket",
+            OM_FindPositionByIdentifier(open_result.position_id, resolved_by_identifier) &&
+            resolved_by_identifier == open_result.position_ticket);
       // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding
       // 8): a full (non-partial) fill's filled_volume must equal the
       // requested volume -- TRADE_RETCODE_DONE_PARTIAL (where filled_volume

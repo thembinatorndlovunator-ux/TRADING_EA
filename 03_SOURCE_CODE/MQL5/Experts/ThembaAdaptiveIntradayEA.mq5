@@ -877,8 +877,47 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
       // DOES need this deal's own specific fields, so it is still guarded
       // by a successful select -- only the account-equity-only check above
       // is exempt.
+      //
+      // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding
+      // 3):** a select failure previously returned immediately here,
+      // silently skipping the mandatory post-fill hard-risk-cap check
+      // entirely -- even though this handler only runs on a genuine
+      // DEAL_ADD transaction (SOME deal just fired, and it may belong to
+      // this EA's own magic+symbol). Deal-specific fields (magic, symbol,
+      // position_id) cannot be read without a successful select, so the
+      // PER-TRADE slippage check below cannot run for this specific fill --
+      // but the AGGREGATE total-open-risk check has no such dependency
+      // (ComputeOwnMagicOpenRiskCash scans live positions/orders directly,
+      // never this deal), so it now runs here as a fail-closed fallback,
+      // still catching a breach this exact fill may have caused even
+      // though its own per-trade details are unreadable.
       if(!HistoryDealSelect(trans.deal))
+        {
+         if(!DWB_IsClosurePending(g_symbol, InpMagicNumber))
+           {
+            double fallback_total_risk_cash;
+            bool   fallback_total_readable;
+            ComputeOwnMagicOpenRiskCash(fallback_total_risk_cash, fallback_total_readable);
+            double fallback_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+            bool fallback_breached = !fallback_total_readable ||
+                                      (fallback_equity > 0.0 &&
+                                       100.0 * fallback_total_risk_cash / fallback_equity >
+                                       InpRiskCapPercent + 1e-6);
+            if(fallback_breached)
+              {
+               string fallback_breach_reasons[];
+               bool fallback_closed = DWB_AttemptClosure(g_symbol, InpMagicNumber,
+                                                          fallback_breach_reasons);
+               PrintFormat("ThembaEA: CRITICAL -- HistoryDealSelect(#%I64u) failed on a DEAL_ADD "
+                           "event; per-trade slippage risk cannot be verified for this fill, but "
+                           "the aggregate total-open-risk fallback check found a breach "
+                           "(total_readable=%s) -- closure %s.", trans.deal,
+                           fallback_total_readable ? "true" : "false",
+                           fallback_closed ? "completed" : "pending (will retry every tick)");
+              }
+           }
          return;
+        }
 
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
 
@@ -1021,12 +1060,42 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
             !DWB_IsClosurePending(g_symbol, InpMagicNumber))
            {
             ulong opened_position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
-            if(PositionSelectByTicket(opened_position_id))
+            // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0
+            // finding 3): DEAL_POSITION_ID is the durable POSITION_IDENTIFIER,
+            // not guaranteed to equal the current POSITION_TICKET
+            // PositionSelectByTicket() actually expects (see
+            // OrderManager.mqh's own SOrderOpenResult header for the exact
+            // divergence conditions) -- OM_FindPositionByIdentifier resolves
+            // this correctly by enumerating and matching POSITION_IDENTIFIER
+            // explicitly, leaving the match selected on success.**
+            ulong opened_position_ticket;
+            bool position_found = OM_FindPositionByIdentifier(opened_position_id,
+                                                                opened_position_ticket);
+            bool   per_trade_breached;
+            bool   total_breached;
+            double actual_trade_risk_cash = 0.0;
+            double total_risk_cash = 0.0;
+            bool   total_readable = false;
+            double equity_now = AccountInfoDouble(ACCOUNT_EQUITY);
+
+            if(!position_found)
+              {
+               // **Fixed, 2026-07-28 (Codex round-10 P0 finding 3):** a
+               // DEAL_ENTRY_IN fill JUST reported this exact position_id --
+               // failing to find it now means its own actual risk cannot be
+               // verified. The previous code had NO else branch here at all,
+               // silently skipping BOTH the per-trade and total checks.
+               // Fail closed: treat as breached regardless of what the
+               // (unreachable, since the position can't be selected) total
+               // check would have found.
+               per_trade_breached = true;
+               total_breached = true;
+              }
+            else
               {
                double pos_sl = PositionGetDouble(POSITION_SL);
-               double equity_now = AccountInfoDouble(ACCOUNT_EQUITY);
-               bool   per_trade_breached = false;
-               double actual_trade_risk_cash = 0.0;
+               bool   pos_is_long = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+               per_trade_breached = false;
 
                // A stopless position is priced by ComputeOwnMagicOpenRiskCash's
                // own no-SL worst-case fallback below (via the total-risk
@@ -1039,36 +1108,65 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
                     {
                      double actual_fill_price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
                      double actual_volume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
-                     double slippage_loss_distance = MathAbs(actual_fill_price - pos_sl);
+                     // **Fixed, 2026-07-28 (Codex round-10 P0 finding 3): the
+                     // spec requires the DIRECTIONAL loss-side distance
+                     // (max(0, loss-side distance)), not abs(fill - SL) --
+                     // for a BUY filled below an SL that adverse slippage
+                     // pushed onto the PROFIT side (SL below entry), abs()
+                     // would invent a large "risk" figure and could force a
+                     // false emergency closure.**
+                     double slippage_loss_distance = pos_is_long
+                                                       ? MathMax(0.0, actual_fill_price - pos_sl)
+                                                       : MathMax(0.0, pos_sl - actual_fill_price);
                      actual_trade_risk_cash = slippage_loss_distance * actual_volume *
                                               fill_profile.tick_value_loss / fill_profile.tick_size;
-                     double actual_trade_risk_percent = 100.0 * actual_trade_risk_cash / equity_now;
-                     per_trade_breached = actual_trade_risk_percent > InpRiskCapPercent + 1e-6;
+
+                     // **Added, 2026-07-28 (Codex round-10 P0 finding 3):**
+                     // RISK_POLICY.md's blanket "use OrderCalcProfit to
+                     // cross-check risk" rule applies to every binding risk-
+                     // cash computation -- this post-fill figure is exactly
+                     // that (it can trigger a real forced closure), and
+                     // previously had no cross-check at all. A cross-check
+                     // failure or excessive discrepancy fails closed (cannot
+                     // vouch for this fill's own actual risk), matching the
+                     // pre-submission RM_CrossCheckRiskCash usage in
+                     // AttemptOrderSubmission.
+                     double broker_risk_cash;
+                     bool cross_ok = RM_CrossCheckRiskCash(g_symbol, pos_is_long, actual_volume,
+                                                            actual_fill_price, pos_sl,
+                                                            actual_trade_risk_cash, broker_risk_cash,
+                                                            InpRiskCrossCheckTolerancePercent);
+                     if(!cross_ok)
+                        per_trade_breached = true; // fail closed -- see comment above
+                     else
+                       {
+                        double actual_trade_risk_percent = 100.0 * actual_trade_risk_cash / equity_now;
+                        per_trade_breached = actual_trade_risk_percent > InpRiskCapPercent + 1e-6;
+                       }
                     }
                   else
                      per_trade_breached = true; // cannot verify this fill's own actual risk -- fail closed
                  }
 
-               double total_risk_cash;
-               bool   total_readable;
                ComputeOwnMagicOpenRiskCash(total_risk_cash, total_readable);
-               bool total_breached = !total_readable ||
-                                     (equity_now > 0.0 &&
-                                      100.0 * total_risk_cash / equity_now > InpRiskCapPercent + 1e-6);
+               total_breached = !total_readable ||
+                                 (equity_now > 0.0 &&
+                                  100.0 * total_risk_cash / equity_now > InpRiskCapPercent + 1e-6);
+              }
 
-               if(per_trade_breached || total_breached)
-                 {
-                  string breach_reasons[];
-                  bool breach_closed = DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_reasons);
-                  PrintFormat("ThembaEA: POST-FILL hard-risk-cap breach for position_id=%I64u "
-                              "(per_trade_breached=%s total_breached=%s, "
-                              "actual_trade_risk_cash=%.2f, total_risk_cash=%.2f, "
-                              "total_risk_readable=%s) -- closure %s.",
-                              opened_position_id, per_trade_breached ? "true" : "false",
-                              total_breached ? "true" : "false", actual_trade_risk_cash,
-                              total_risk_cash, total_readable ? "true" : "false",
-                              breach_closed ? "completed" : "pending (will retry every tick)");
-                 }
+            if(per_trade_breached || total_breached)
+              {
+               string breach_reasons[];
+               bool breach_closed = DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_reasons);
+               PrintFormat("ThembaEA: POST-FILL hard-risk-cap breach for position_id=%I64u "
+                           "(position_found=%s, per_trade_breached=%s total_breached=%s, "
+                           "actual_trade_risk_cash=%.2f, total_risk_cash=%.2f, "
+                           "total_risk_readable=%s) -- closure %s.",
+                           opened_position_id, position_found ? "true" : "false",
+                           per_trade_breached ? "true" : "false",
+                           total_breached ? "true" : "false", actual_trade_risk_cash,
+                           total_risk_cash, total_readable ? "true" : "false",
+                           breach_closed ? "completed" : "pending (will retry every tick)");
               }
            }
 
@@ -1612,6 +1710,18 @@ bool GetCurrentATRForSymbol(const string symbol, const ENUM_TIMEFRAMES timeframe
 //| RM_ComputeLossDistance's own documented contract already returns 0.0                                      |
 //| for) is NOT treated as invalid -- only genuinely unreadable/unpriceable                                   |
 //| states are.**                                                                                             |
+//|                                                                    |
+//| **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 3):    |
+//| a zero ticket from PositionGetTicket()/OrderGetTicket() at a valid              |
+//| enumeration index now fails closed (was previously silently skipped as             |
+//| if that slot held no position/order at all -- see the loops' own                       |
+//| comments). Every real-SL risk-cash figure (position or pending order) is                    |
+//| now cross-checked against OrderCalcProfit (RISK_POLICY.md's blanket                             |
+//| rule), matching the same discipline AttemptOrderSubmission's own pre-                               |
+//| submission RM_CrossCheckRiskCash call already applies -- a cross-check                                 |
+//| failure or excessive discrepancy fails closed. The no-SL ATR-proxy                                          |
+//| worst-case branch is deliberately NOT cross-checked (it is an explicit                                          |
+//| estimate with no real price level for OrderCalcProfit to value against).**                                          |
 //+------------------------------------------------------------------+
 bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
   {
@@ -1622,7 +1732,19 @@ bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
      {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0)
+        {
+         // **Fixed, 2026-07-28 (Codex round-10 P0 finding 3):** a zero ticket
+         // at a valid enumeration index (0..PositionsTotal()-1) is a
+         // TRANSIENT read failure (the live position list changed between
+         // the PositionsTotal() call and this PositionGetTicket() call --
+         // documented MT5 API behavior, not "no position here": a genuinely
+         // empty slot is never enumerated at all). Silently skipping it
+         // (the previous behavior) undercounted real risk exactly like every
+         // other unreadable-component case this scan already fails closed
+         // on below.
+         all_readable = false;
          continue;
+        }
       if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
          continue;
 
@@ -1664,7 +1786,23 @@ bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
          continue; // stop genuinely on the non-loss side -- a real zero, not unreadable
 
       if(RM_ComputeRiskCash(pos_profile, loss_distance, volume, risk_cash))
-         total += risk_cash;
+        {
+         // **Added, 2026-07-28 (Codex review finding, tenth round, P0
+         // finding 3):** RISK_POLICY.md's blanket OrderCalcProfit cross-
+         // check now also applies here -- this figure directly feeds
+         // total_breached, a real forced-closure trigger, exactly the kind
+         // of "binding risk-cash computation" the policy requires it for.
+         // A real SL price exists for this branch (checked above), so a
+         // genuine broker valuation is possible, unlike the no-SL ATR-proxy
+         // branch above (a deliberate worst-case ESTIMATE with no real
+         // price level to check against).
+         double broker_risk_cash;
+         if(RM_CrossCheckRiskCash(pos_symbol, pos_is_long, volume, entry, sl, risk_cash,
+                                   broker_risk_cash, InpRiskCrossCheckTolerancePercent))
+            total += risk_cash;
+         else
+            all_readable = false; // cross-check failed or disagreed beyond tolerance -- fail closed
+        }
       else
          all_readable = false;
      }
@@ -1673,7 +1811,13 @@ bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
      {
       ulong ticket = OrderGetTicket(i);
       if(ticket == 0)
+        {
+         // Same transient-read-failure fix as the positions loop above
+         // (Codex round-10 P0 finding 3) -- fail closed, never silently
+         // treat as "no order here".
+         all_readable = false;
          continue;
+        }
       if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber)
          continue;
 
@@ -1708,7 +1852,17 @@ bool ComputeOwnMagicOpenRiskCash(double &risk_cash_out, bool &all_readable_out)
 
       double risk_cash;
       if(RM_ComputeRiskCash(ord_profile, loss_distance, volume, risk_cash))
-         total += risk_cash; // unconditional sum — see header comment
+        {
+         // **Added, 2026-07-28 (Codex round-10 P0 finding 3):** same
+         // broker-native cross-check as the positions loop above -- see
+         // that branch's own comment.
+         double broker_risk_cash;
+         if(RM_CrossCheckRiskCash(ord_symbol, ord_is_long, volume, entry, sl, risk_cash,
+                                   broker_risk_cash, InpRiskCrossCheckTolerancePercent))
+            total += risk_cash; // unconditional sum — see header comment
+         else
+            all_readable = false; // cross-check failed or disagreed beyond tolerance -- fail closed
+        }
       else
          all_readable = false;
      }

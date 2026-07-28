@@ -219,6 +219,41 @@ struct SOrderOpenResult
   };
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding    |
+//| 3):** resolves a durable POSITION_IDENTIFIER (e.g. a deal's own            |
+//| DEAL_POSITION_ID) to the position's CURRENT ticket, leaving that           |
+//| position selected on success (PositionGetTicket's own side effect,             |
+//| matching this file's own internal OM_OpenPosition resolution loop            |
+//| below). PositionSelectByTicket() expects a TICKET, not an IDENTIFIER --          |
+//| see SOrderOpenResult's own position_ticket/position_id header comment            |
+//| for why the two are not guaranteed equal (a server service re-open, or,             |
+//| in netting mode, a reversal, can change position_ticket while                          |
+//| position_id stays constant for the position's whole life). Passing a                       |
+//| DEAL_POSITION_ID directly to PositionSelectByTicket() is therefore a                            |
+//| genuine API-misuse bug whenever the two diverge, not just a design gap --                           |
+//| this enumerate-and-match-by-identifier approach is correct regardless.                                   |
+//| Returns false (nothing selected) if no currently-open position carries                                       |
+//| this exact identifier -- callers MUST treat that as "this position's                                             |
+//| actual risk cannot be verified right now" and fail closed, never as                                                  |
+//| "no position, nothing to check".                                                                                          |
+//+------------------------------------------------------------------+
+bool OM_FindPositionByIdentifier(const ulong position_id, ulong &ticket_out)
+  {
+   ticket_out = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((ulong)PositionGetInteger(POSITION_IDENTIFIER) != position_id)
+         continue;
+      ticket_out = ticket;
+      return true;
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| Submits a real market order via CTrade — the first function in this   |
 //| project capable of opening a live position. Explicitly checks the     |
 //| CTrade result code on every call (never assumes success from a bool    |
