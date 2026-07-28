@@ -49,13 +49,17 @@ void OnStart()
 
    // Clean slate: remove any residue from a prior run before testing.
    // Force the lock itself back to a clean unlocked state too (a prior
-   // aborted run could otherwise leave it held).
+   // aborted run could otherwise leave it held). The lock no longer has a
+   // separate "__since" field to clean up (round-10 P0 finding 1 -- the
+   // staleness timestamp is now encoded directly into the token itself).
    GlobalVariableSet(SM_AccountKey("lock"), 0.0);
-   GlobalVariableSet(SM_AccountKey("lock") + "__since", 0.0);
    SM_DeleteAccountField("test_field_a");
    SM_DeleteAccountField("test_field_b");
    SM_DeleteAccountField("schema_version");
    SM_DeleteAccountField("test_peak");
+   SM_DeleteAccountField("wal_test_batch_0");
+   SM_DeleteAccountField("wal_test_batch_1");
+   SM_DeleteAccountField("wal_test_batch_pending");
 
    //--- 1. Round-trip set/get -----------------------------------------
    double default_val = -999.0;
@@ -86,7 +90,6 @@ void OnStart()
    bool first_acquire = SM_AcquireAccountLock(token_1, 200);
    Check("first lock acquire succeeds", first_acquire);
    Check("first acquire's own token is nonzero", token_1 != 0.0);
-   SM_StampAccountLockHeld();
 
    double token_2_unused;
    bool second_acquire = SM_AcquireAccountLock(token_2_unused, 200); // short
@@ -107,24 +110,23 @@ void OnStart()
    //---     round, P0 finding 2): a delayed release from a PRIOR holder ---
    //---     whose lock was force-broken as stale must NOT clear a -------
    //---     DIFFERENT, currently-legitimate holder's lock. --------------
-   double token_a;
-   Check("holder A acquires the lock", SM_AcquireAccountLock(token_a, 200));
-   SM_StampAccountLockHeld();
-
-   // Simulate holder A going silent long enough to look abandoned,
-   // without actually waiting SM_LOCK_STALE_SECONDS in real time.
-   GlobalVariableSet(SM_AccountKey("lock") + "__since",
-                      (double)(TimeCurrent() - (SM_LOCK_STALE_SECONDS + 5)));
+   //---     **Updated, 2026-07-28 (round-10 P0 finding 1): staleness is ---
+   //---     now encoded directly in the token (see SM_AcquireAccountLock's ---
+   //---     header) -- simulate an abandoned holder by writing a token that ---
+   //---     itself encodes an old acquisition second, instead of the -----------
+   //---     now-retired separate "__since" field. ------------------------------
+   long   stale_epoch_sec = (long)(TimeCurrent() - (SM_LOCK_STALE_SECONDS + 5));
+   double stale_token_a   = (double)(stale_epoch_sec * 1000000L + 1L);
+   GlobalVariableSet(SM_AccountKey("lock"), stale_token_a);
 
    double token_b;
    bool holder_b_acquired = SM_AcquireAccountLock(token_b, 200);
    Check("holder B force-breaks A's stale lock and acquires it", holder_b_acquired);
-   Check("holder B's token differs from holder A's stale token", token_b != token_a);
-   SM_StampAccountLockHeld();
+   Check("holder B's token differs from holder A's stale token", token_b != stale_token_a);
 
    // Holder A's release finally arrives, using its OWN (now-stale) token --
    // this must be a no-op against holder B's live lock, not clear it.
-   SM_ReleaseAccountLock(token_a);
+   SM_ReleaseAccountLock(stale_token_a);
 
    double token_c_unused;
    bool third_party_during_b = SM_AcquireAccountLock(token_c_unused, 200);
@@ -139,6 +141,29 @@ void OnStart()
    Check("holder B's own correctly-tokened release frees the lock for a new acquirer",
          acquire_after_b_release);
    SM_ReleaseAccountLock(token_d);
+
+   //--- 4c. Bootstrap-path regression (Codex review finding, tenth round, --
+   //---     P0 finding 1). Honest scope note: a true two-PROCESS race (two ---
+   //---     concurrent terminals both observing ERR_GLOBALVARIABLE_NOT_FOUND ---
+   //---     before either has created the variable) cannot be reproduced by ------
+   //---     a single-threaded script -- and once ANY caller's write has landed, ---
+   //---     a second caller's own FIRST CAS attempt would observe a real held -----
+   //---     token (a "condition not met" failure), not ERR_GLOBALVARIABLE_NOT_ -----
+   //---     FOUND, so it would never re-enter the bootstrap branch at all -- this ---
+   //---     is exactly the property the fix relies on (see the function's own ------
+   //---     header). What IS verified here in-process: the bootstrap path's own -----
+   //---     readback-verify mechanic returns the exact token it wrote, proving -------
+   //---     the "claim ownership only if MY OWN write is still there" check is --------
+   //---     wired correctly for the single-writer case. -------------------------------
+   SM_DeleteAccountField(SM_AccountKey("lock")); // simulate "never created yet"
+   double token_first;
+   bool first_ever_acquire = SM_AcquireAccountLock(token_first, 200);
+   Check("first-ever-use acquire succeeds via the bootstrap path", first_ever_acquire);
+   Check("first-ever-use bootstrap token is nonzero", token_first != 0.0);
+   Check("first-ever-use bootstrap token is exactly what SM_AcquireAccountLock returned "
+         "(the readback-verify step correctly identified this caller as the bootstrap winner)",
+         GlobalVariableGet(SM_AccountKey("lock")) == token_first);
+   SM_ReleaseAccountLock(token_first);
 
    //--- 5. Schema versioning: first-run stamps the version, and a ----
    //---    second call is a true no-op (idempotent). ------------------
@@ -197,6 +222,51 @@ void OnStart()
          stop_early_ok == false);
    Check("a batch whose FIRST write fails never reaches the SECOND field",
          SM_GetAccountDouble("test_field_a", default_val) == 1.0);
+
+   //--- 6c. SM_SetAccountDoublesBatchDurable / SM_RecoverAccountDoublesBatch --
+   //---     (Codex review finding, tenth round, P0 finding 1): a normal ---------
+   //---     durable write round-trips, and a SIMULATED crash between "intent -----
+   //---     logged" and "real fields written" is recovered by REPLAYING the -------
+   //---     exact logged target values, not a fresh recompute. ---------------------
+   SM_DeleteAccountField("test_field_a");
+   SM_DeleteAccountField("test_field_b");
+   string wal_fields[2] = {"test_field_a", "test_field_b"};
+   double wal_values[2] = {321.0, 654.0};
+   bool wal_write_ok = SM_SetAccountDoublesBatchDurable("test_batch", wal_fields, wal_values);
+   Check("SM_SetAccountDoublesBatchDurable returns true on a normal write", wal_write_ok);
+   Check("SM_SetAccountDoublesBatchDurable sets the FIRST field",
+         SM_GetAccountDouble("test_field_a", default_val) == 321.0);
+   Check("SM_SetAccountDoublesBatchDurable sets the SECOND field",
+         SM_GetAccountDouble("test_field_b", default_val) == 654.0);
+   Check("SM_SetAccountDoublesBatchDurable acknowledges (clears) its own intent on success",
+         SM_GetAccountDouble("wal_test_batch_pending", -1.0) == 0.0);
+
+   bool recover_noop = SM_RecoverAccountDoublesBatch("test_batch", wal_fields);
+   Check("SM_RecoverAccountDoublesBatch is a no-op when nothing is pending", recover_noop);
+   Check("a no-op recovery pass does not disturb the already-correct fields",
+         SM_GetAccountDouble("test_field_a", default_val) == 321.0 &&
+         SM_GetAccountDouble("test_field_b", default_val) == 654.0);
+
+   // Simulate a crash: intent logged (pending=1) but the real fields were
+   // never touched -- they still hold their OLD values, while the intent
+   // names DIFFERENT target values than whatever "live" recompute would
+   // produce, so a passing check here proves recovery replayed the LOGGED
+   // values rather than recomputing from current state.
+   SM_SetAccountDouble("wal_test_batch_0", 999.0);
+   SM_SetAccountDouble("wal_test_batch_1", 888.0);
+   SM_SetAccountDouble("wal_test_batch_pending", 1.0);
+   Check("simulated interrupted write: real fields still hold their pre-crash values",
+         SM_GetAccountDouble("test_field_a", default_val) == 321.0 &&
+         SM_GetAccountDouble("test_field_b", default_val) == 654.0);
+
+   bool recovered = SM_RecoverAccountDoublesBatch("test_batch", wal_fields);
+   Check("SM_RecoverAccountDoublesBatch reports success after replaying", recovered);
+   Check("recovery replays the EXACT logged first target value",
+         SM_GetAccountDouble("test_field_a", default_val) == 999.0);
+   Check("recovery replays the EXACT logged second target value",
+         SM_GetAccountDouble("test_field_b", default_val) == 888.0);
+   Check("recovery acknowledges (clears) the intent once replayed",
+         SM_GetAccountDouble("wal_test_batch_pending", -1.0) == 0.0);
 
    //--- 7. SM_SetAccountDoubleIfGreater: atomic raise-only write (Codex ----
    //---    review finding, eighth round, P0 finding 4) -----------------

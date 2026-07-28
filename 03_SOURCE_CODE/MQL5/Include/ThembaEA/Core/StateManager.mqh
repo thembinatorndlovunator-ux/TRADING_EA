@@ -121,19 +121,21 @@ void SM_EnsureAccountLockInitialized()
 //|    that specific token is STILL the current value, so a delayed/stale                                        |
 //|    release from a PRIOR holder can never clear a DIFFERENT holder's                                            |
 //|    live lock.                                                                                                     |
-//| 2. **Bootstrap race fix.** The separate OnInit-only                                                                 |
-//|    SM_EnsureAccountLockInitialized() bootstrap is retired (see its own                                                   |
-//|    header). GlobalVariableSetOnCondition against a variable that does                                                       |
-//|    not exist yet fails AND sets GetLastError() to                                                                                |
-//|    ERR_GLOBALVARIABLE_NOT_FOUND (4501), which this function now checks:                                                              |
-//|    on that specific error, it creates the variable via a plain                                                                          |
-//|    GlobalVariableSet(lock_key, 0.0) -- always the SAME neutral                                                                              |
-//|    "unlocked" value regardless of how many concurrent callers                                                                                  |
-//|    redundantly do this -- then retries its own atomic acquire. Because                                                                            |
-//|    no acquired-lock state can exist before at least one caller's own                                                                                 |
-//|    atomic compare-and-set succeeds, this bootstrap is now provably                                                                                       |
-//|    race-free (unlike the previous separate check-then-set), and works                                                                                       |
-//|    from ANY call site, not only a completed OnInit run.                                                                                                          |
+//| 2. **Bootstrap race fix (superseded 2026-07-28, round-10 P0 finding 1     |
+//|    -- see the "Redesigned"/"Fixed" comments inside the function body        |
+//|    below for what changed and why the round-9 version here was still         |
+//|    genuinely racy). The separate OnInit-only                                    |
+//|    SM_EnsureAccountLockInitialized() bootstrap remains retired (see its           |
+//|    own header) -- bootstrap now happens directly inside this function,               |
+//|    on ERR_GLOBALVARIABLE_NOT_FOUND, via a create-then-verify-readback                     |
+//|    step that can never overwrite a concurrently-acquired live lock.**                          |
+//| 3. **Timestamp-desync fix (round-10 P0 finding 1).** The staleness            |
+//|    timestamp is no longer a separate "__since" global written by a               |
+//|    separate later call -- it is now encoded directly into the token               |
+//|    itself, so staleness is derived from the SAME atomic value the CAS                |
+//|    operates on, with no window where a fresh token could be observed                     |
+//|    alongside a stale leftover timestamp from a previous holder. See the                       |
+//|    token-construction comment inside the function body below.                                     |
 //+------------------------------------------------------------------+
 bool SM_AcquireAccountLock(double &owner_token_out, const int timeout_ms = 500)
   {
@@ -143,17 +145,24 @@ bool SM_AcquireAccountLock(double &owner_token_out, const int timeout_ms = 500)
    ulong start_tick = GetTickCount64();
    while(true)
      {
-      // Unique-enough per-acquisition token: microsecond counter (rapidly
-      // changing, terminal-wide monotonic within a session) combined with a
-      // random component so two callers racing the SAME microsecond tick
-      // still (almost certainly) mint distinct tokens. Never 0.0 -- that
-      // value is reserved for "unlocked". The token's exact value is never
-      // trusted for uniqueness across the WHOLE lock's lifetime, only for
-      // "is this still the same acquisition I made a moment ago" within
-      // this one hold -- see header comment above for why that is exactly
-      // what closes the ABA release race.
-      double token = (double)GetMicrosecondCount() * 100000.0 + (double)MathRand() + 1.0;
+      // **Redesigned, 2026-07-28 (Codex review finding, tenth round, P0
+      // finding 1):** token now ENCODES its own acquisition second in its
+      // high-order digits (epoch_seconds * 1,000,000 + tiebreak + 1), so
+      // staleness can be derived directly from the token's own value below
+      // -- no separate "__since" field, and therefore no window where a
+      // reader can observe a fresh token paired with a stale leftover
+      // timestamp from a PREVIOUS holder (round-9's own separate-write
+      // design had exactly that gap). The tiebreak (microsecond counter +
+      // random, folded into six low-order digits) keeps two callers racing
+      // the same second from minting the same token. epoch_seconds*1e6
+      // stays well under a double's exact-integer range (2^53 ~= 9.0e15)
+      // through the dates this project runs in, so the cast below is
+      // always an exact integer, never a precision-lossy approximation.
+      long   now_sec  = (long)TimeCurrent();
+      long   tiebreak = ((long)GetMicrosecondCount() + (long)MathRand()) % 1000000L;
+      double token    = (double)(now_sec * 1000000L + tiebreak + 1L);
 
+      ResetLastError();
       if(GlobalVariableSetOnCondition(lock_key, token, 0.0))
         {
          owner_token_out = token;
@@ -163,24 +172,55 @@ bool SM_AcquireAccountLock(double &owner_token_out, const int timeout_ms = 500)
       int err = GetLastError();
       if(err == ERR_GLOBALVARIABLE_NOT_FOUND)
         {
-         ResetLastError();
-         GlobalVariableSet(lock_key, 0.0); // race-free bootstrap -- see header
-         GlobalVariableSet(lock_key + "__since", 0.0);
-         continue; // retry the atomic acquire above immediately
+         // **Fixed, 2026-07-28 (round-10 P0 finding 1):** round 9's
+         // bootstrap here was an UNCONDITIONAL GlobalVariableSet(lock_key,
+         // 0.0) -- a blind overwrite, not a create-if-absent. A second,
+         // merely-delayed caller reaching that same line AFTER a first
+         // caller had already raced through bootstrap-then-CAS and
+         // legitimately acquired a live nonzero token would stomp that
+         // live token back to 0.0, letting both callers believe they held
+         // the lock simultaneously. Native MQL5 has no atomic "create only
+         // if absent" primitive, so this is fixed differently: write THIS
+         // caller's own acquisition token directly (never the neutral 0.0
+         // value), then read the value back. GlobalVariableSet is the
+         // terminal's own single, indivisible operation, so whichever
+         // concurrent caller's write physically lands last is the one
+         // whose value survives -- every OTHER racing caller's own
+         // readback observes a value that is not its own token and
+         // correctly retries via the normal CAS path instead of ever
+         // believing it holds a lock it does not. Because this write is
+         // always a real nonzero token (never 0.0), a concurrent normal-
+         // path GlobalVariableSetOnCondition(lock_key, token_x, 0.0) can
+         // never spuriously succeed against it either: the variable is
+         // either still genuinely absent (that caller lands here too) or
+         // already holds SOME caller's real token (its own compare against
+         // 0.0 correctly fails) -- there is no window where the variable
+         // holds 0.0 while a live acquisition exists.
+         GlobalVariableSet(lock_key, token);
+         if(GlobalVariableGet(lock_key) == token)
+           {
+            owner_token_out = token;
+            return true;
+           }
+         continue; // lost the bootstrap race to a concurrent first-time caller
         }
 
-      // Someone else holds it — check for staleness.
+      // Someone else holds it — staleness is derived from the held
+      // token's own encoded acquisition second (see token comment above).
       double held_token = GlobalVariableGet(lock_key);
-      datetime held_since = (datetime)GlobalVariableGet(lock_key + "__since");
-      if(held_token != 0.0 && held_since > 0 && (TimeCurrent() - held_since) > SM_LOCK_STALE_SECONDS)
+      if(held_token != 0.0)
         {
-         // Force-break an abandoned lock -- atomic compare-and-set from the
-         // EXACT stale token observed above, never a blind write, so a
-         // holder that finishes and releases normally between the read
-         // above and this call cannot have this call incorrectly clear a
-         // brand-new, unrelated holder's fresh acquisition.
-         GlobalVariableSetOnCondition(lock_key, 0.0, held_token);
-         continue;
+         datetime held_since = (datetime)(long)(held_token / 1000000.0);
+         if((TimeCurrent() - held_since) > SM_LOCK_STALE_SECONDS)
+           {
+            // Force-break an abandoned lock -- atomic compare-and-set from the
+            // EXACT stale token observed above, never a blind write, so a
+            // holder that finishes and releases normally between the read
+            // above and this call cannot have this call incorrectly clear a
+            // brand-new, unrelated holder's fresh acquisition.
+            GlobalVariableSetOnCondition(lock_key, 0.0, held_token);
+            continue;
+           }
         }
 
       if((GetTickCount64() - start_tick) >= (ulong)timeout_ms)
@@ -205,26 +245,25 @@ void SM_ReleaseAccountLock(const double owner_token)
   {
    string lock_key = SM_AccountKey("lock");
    GlobalVariableSetOnCondition(lock_key, 0.0, owner_token);
-   // The "__since" timestamp is harmless to clear unconditionally: a stale
-   // value there only ever feeds the staleness check above, which is
-   // itself guarded by the lock value's own compare-and-set, so an
-   // unrelated holder's clock cannot be corrupted into looking stale early
-   // by this -- at worst it is cleared to 0 (treated as "never stamped",
-   // i.e. never eligible for a stale-break) and the current legitimate
-   // holder's own SM_StampAccountLockHeld() (already called right after
-   // every acquire) re-stamps it before anyone could observe the gap.
-   KE_SetDoubleChecked(lock_key + "__since", 0.0);
   }
 
 //+------------------------------------------------------------------+
-//| Internal: stamp the lock's acquisition time. Call immediately     |
-//| after a successful SM_AcquireAccountLock() when the caller intends |
-//| to hold it for more than a trivial instant (enables staleness      |
-//| detection for other callers).                                      |
+//| **Superseded, 2026-07-28 (Codex review finding, tenth round, P0     |
+//| finding 1): no longer needed or called.** The staleness timestamp is |
+//| now encoded directly into the lock token itself (see                  |
+//| SM_AcquireAccountLock's header/body), so there is no longer a          |
+//| separate "__since" field to stamp -- doing so was the source of a       |
+//| genuine bug (a contender could observe a brand-new token paired with     |
+//| a stale leftover timestamp in the window before this function ran,        |
+//| and incorrectly force-break a fresh lock; and SM_ReleaseAccountLock's       |
+//| own former unconditional clear of that field could corrupt a               |
+//| legitimately new holder's fresh stamp on a stale/failed release). Kept       |
+//| only as a no-op so existing call sites do not need to be touched --          |
+//| same pattern as SM_EnsureAccountLockInitialized() above.                       |
 //+------------------------------------------------------------------+
 void SM_StampAccountLockHeld()
   {
-   KE_SetDoubleChecked(SM_AccountKey("lock") + "__since", (double)TimeCurrent());
+   // Intentionally a no-op -- see header comment above.
   }
 
 //+------------------------------------------------------------------+
@@ -316,9 +355,15 @@ bool SM_SetAccountDouble(const string field, const double value,
 //| specific class requires a real write-ahead log (persist "intend to                                                                              |
 //| rebase to computed value X" BEFORE touching either field, so a crash-                                                                               |
 //| recovery pass can resume from the LOGGED intent rather than                                                                                          |
-//| recomputing from current state) -- a materially larger, separate                                                                                        |
-//| follow-up, not attempted here, named honestly rather than silently                                                                                          |
-//| left unaddressed under this finding's own closure.**                                                                                                          |
+//| recomputing from current state).                                                                                                                       |
+//|                                                                    |
+//| **Closed, 2026-07-28 (Codex review finding, tenth round, P0 finding   |
+//| 1):** the write-ahead log named above as a deferred gap is now             |
+//| implemented -- see SM_SetAccountDoublesBatchDurable() /                        |
+//| SM_RecoverAccountDoublesBatch() below this function. Callers whose             |
+//| fields are a binding risk path (DailyWeeklyLimits.mqh's three coupled            |
+//| daily/weekly/cash-flow-cursor fields, the concrete case the review               |
+//| named) now use the durable variant instead of this plain one.**                     |
 //+------------------------------------------------------------------+
 bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
                                  const int lock_timeout_ms = 500)
@@ -352,6 +397,92 @@ bool SM_SetAccountDoublesBatch(const string &fields[], const double &values[],
 
    SM_ReleaseAccountLock(owner_token);
    return all_ok;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 1):  |
+//| write-ahead-logged companion to SM_SetAccountDoublesBatch above, closing  |
+//| the "honestly scoped" gap that function's own header names. Before          |
+//| touching any real field, this persists the EXACT target values as a           |
+//| durable "intent" record (via SM_SetAccountDoublesBatch itself, so the             |
+//| intent write inherits that function's own stop-at-first-failure +                    |
+//| freshness-marker-last self-healing). The real fields are then written,               |
+//| and the intent is acknowledged (cleared) only once that succeeds. A                      |
+//| companion recovery pass, SM_RecoverAccountDoublesBatch(), must be called                       |
+//| with the SAME batch_name/fields[] before any read of those fields --                              |
+//| if a previous call's real-field write was interrupted (process crash                                  |
+//| or a write failure) before its intent was acknowledged, recovery                                          |
+//| REPLAYS the exact logged target values, not values recomputed from                                            |
+//| whatever equity/cursor state exists at recovery time -- closing the                                               |
+//| crash window named above where recompute-at-retry could hide                                                          |
+//| intervening P/L or double-apply a cash flow whose cursor advance was                                                      |
+//| itself the field that got interrupted.                                                                                        |
+//|                                                                    |
+//| batch_name must be a short, stable identifier unique to this logical    |
+//| field-group (becomes part of the intent record's own key names) --      |
+//| never reuse a batch_name for two different field groups.                |
+//+------------------------------------------------------------------+
+bool SM_SetAccountDoublesBatchDurable(const string batch_name, const string &fields[],
+                                        const double &values[], const int lock_timeout_ms = 500)
+  {
+   int n = ArraySize(fields);
+   if(n != ArraySize(values) || n == 0)
+      return false;
+
+   string intent_fields[];
+   double intent_values[];
+   ArrayResize(intent_fields, n + 1);
+   ArrayResize(intent_values, n + 1);
+   for(int i = 0; i < n; i++)
+     {
+      intent_fields[i]  = "wal_" + batch_name + "_" + IntegerToString(i);
+      intent_values[i]  = values[i];
+     }
+   intent_fields[n] = "wal_" + batch_name + "_pending";
+   intent_values[n] = 1.0;
+   if(!SM_SetAccountDoublesBatch(intent_fields, intent_values, lock_timeout_ms))
+      return false; // could not even log intent -- real fields must not be touched
+
+   bool applied = SM_SetAccountDoublesBatch(fields, values, lock_timeout_ms);
+
+   // Acknowledge only once the real fields are confirmed applied. If this
+   // acknowledgement write itself fails, or a crash happens before it
+   // lands, SM_RecoverAccountDoublesBatch will replay the SAME
+   // already-correct intent values again next time -- a harmless
+   // idempotent re-write, not a correctness gap.
+   if(applied)
+      SM_SetAccountDouble("wal_" + batch_name + "_pending", 0.0, lock_timeout_ms);
+
+   return applied;
+  }
+
+//+------------------------------------------------------------------+
+//| Recovery pass companion to SM_SetAccountDoublesBatchDurable(): if a  |
+//| previous call's real-field write was interrupted before its intent   |
+//| was acknowledged, replay the EXACT logged intent values now. MUST be |
+//| called with the SAME batch_name/fields[] the original write used,    |
+//| before any read of those fields. A no-op (returns true) when no      |
+//| incomplete intent is pending.                                        |
+//+------------------------------------------------------------------+
+bool SM_RecoverAccountDoublesBatch(const string batch_name, const string &fields[],
+                                     const int lock_timeout_ms = 500)
+  {
+   int n = ArraySize(fields);
+   if(n == 0)
+      return true;
+
+   if(SM_GetAccountDouble("wal_" + batch_name + "_pending", 0.0) == 0.0)
+      return true; // nothing to recover
+
+   double values[];
+   ArrayResize(values, n);
+   for(int i = 0; i < n; i++)
+      values[i] = SM_GetAccountDouble("wal_" + batch_name + "_" + IntegerToString(i), 0.0);
+
+   if(!SM_SetAccountDoublesBatch(fields, values, lock_timeout_ms))
+      return false; // still pending -- caller must retry recovery later
+
+   return SM_SetAccountDouble("wal_" + batch_name + "_pending", 0.0, lock_timeout_ms);
   }
 
 //+------------------------------------------------------------------+

@@ -47,6 +47,22 @@ void CleanupTestFields()
    SM_DeleteAccountField("epm_daily_peak_equity");
    SM_DeleteAccountField("epm_daily_peak_reset_time");
    SM_DeleteAccountField("epm_account_peak_equity");
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 1):
+   // DWL_EnsureDailyBaseline/DWL_EnsureWeeklyBaseline/
+   // DWL_ApplyCashFlowAdjustments now write through
+   // SM_SetAccountDoublesBatchDurable, which persists a WAL-style intent
+   // record under these "wal_dwl_*" keys -- clean those up too, same
+   // no-residue discipline as every other field this script touches.**
+   SM_DeleteAccountField("wal_dwl_daily_0");
+   SM_DeleteAccountField("wal_dwl_daily_1");
+   SM_DeleteAccountField("wal_dwl_daily_pending");
+   SM_DeleteAccountField("wal_dwl_weekly_0");
+   SM_DeleteAccountField("wal_dwl_weekly_1");
+   SM_DeleteAccountField("wal_dwl_weekly_pending");
+   SM_DeleteAccountField("wal_dwl_cashflow_0");
+   SM_DeleteAccountField("wal_dwl_cashflow_1");
+   SM_DeleteAccountField("wal_dwl_cashflow_2");
+   SM_DeleteAccountField("wal_dwl_cashflow_pending");
    // **Fixed, 2026-07-27 (Codex review finding, ninth round, P0 finding 2):
    // SM_ReleaseAccountLock now requires the exact owner token its matching
    // acquire returned (see that function's own header for the ABA race
@@ -55,7 +71,6 @@ void CleanupTestFields()
    // script legitimately holds) is the correct defensive action here, not
    // a token-less release call.**
    GlobalVariableSet(SM_AccountKey("lock"), 0.0);
-   GlobalVariableSet(SM_AccountKey("lock") + "__since", 0.0);
   }
 
 void OnStart()
@@ -154,6 +169,29 @@ void OnStart()
    Check("re-running DWL_ApplyCashFlowAdjustments immediately after a fresh "
          "baseline capture does NOT change the baseline (no double-counting)",
          NearlyEqual(fresh_daily_start, daily_start_after_reapply, 0.0001));
+
+   //--- 7c. WAL/durable-batch crash recovery (Codex review finding, tenth --
+   //--- round, P0 finding 1): a previously-interrupted write (intent -------
+   //--- logged, real fields never applied) must be replayed with the ---------
+   //--- EXACT logged target values on the next call, not values recomputed -----
+   //--- from live equity at recovery time. ---------------------------------------
+   CleanupTestFields();
+   double   wal_target_equity = 12345.67;
+   datetime wal_target_reset  = SN_CurrentDailyBoundary();
+   SM_SetAccountDouble("wal_dwl_daily_0", wal_target_equity);
+   SM_SetAccountDouble("wal_dwl_daily_1", (double)wal_target_reset);
+   SM_SetAccountDouble("wal_dwl_daily_pending", 1.0);
+   // Real fields deliberately left UNSET -- simulates a crash between
+   // "intent logged" and "real fields written".
+   Check("simulated interrupted write: real daily baseline field absent before recovery",
+         !SM_AccountFieldExists("dwl_daily_start_equity"));
+
+   DWL_EnsureDailyBaseline(); // must recover the logged intent BEFORE any live-equity rebase
+   double recovered_equity = SM_GetAccountDouble("dwl_daily_start_equity", -1.0);
+   Check("interrupted write recovers the EXACT logged target value, not live equity",
+         NearlyEqual(recovered_equity, wal_target_equity, 0.0001));
+   Check("interrupted write's intent is acknowledged (cleared) after recovery",
+         SM_GetAccountDouble("wal_dwl_daily_pending", -1.0) == 0.0);
 
    //--- 8. EquityPeakManager: daily peak ---------------------------------
    EPM_UpdateDailyPeak();

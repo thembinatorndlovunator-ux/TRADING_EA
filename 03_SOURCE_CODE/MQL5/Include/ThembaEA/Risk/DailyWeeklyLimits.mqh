@@ -57,14 +57,22 @@
 //+------------------------------------------------------------------+
 bool DWL_EnsureDailyBaseline()
   {
+   string fields[2] = {"dwl_daily_start_equity", "dwl_daily_reset_time"};
+   if(!SM_RecoverAccountDoublesBatch("dwl_daily", fields))
+      return false; // an interrupted prior rebase could not be replayed -- risk state unknown
+
    datetime last_reset = (datetime)SM_GetAccountDouble("dwl_daily_reset_time", 0.0);
    if(last_reset != 0 && !SN_DailyBoundaryCrossed(last_reset))
       return true; // already rebased for today — no-op, not a failure
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   string fields[2] = {"dwl_daily_start_equity", "dwl_daily_reset_time"};
    double values[2] = {equity, (double)SN_CurrentDailyBoundary()};
-   return SM_SetAccountDoublesBatch(fields, values);
+   // **Fixed, 2026-07-28 (Codex round-10 P0 finding 1):** durable/WAL'd
+   // instead of a plain batch write -- see SM_SetAccountDoublesBatchDurable's
+   // own header for why a crash between these two fields now self-heals to
+   // the EXACT intended values on the next call, not values recomputed from
+   // whatever equity happens to exist at retry time.
+   return SM_SetAccountDoublesBatchDurable("dwl_daily", fields, values);
   }
 
 //+------------------------------------------------------------------+
@@ -74,14 +82,19 @@ bool DWL_EnsureDailyBaseline()
 //+------------------------------------------------------------------+
 bool DWL_EnsureWeeklyBaseline()
   {
+   string fields[2] = {"dwl_weekly_start_equity", "dwl_weekly_reset_time"};
+   if(!SM_RecoverAccountDoublesBatch("dwl_weekly", fields))
+      return false; // an interrupted prior rebase could not be replayed -- risk state unknown
+
    datetime last_reset = (datetime)SM_GetAccountDouble("dwl_weekly_reset_time", 0.0);
    if(last_reset != 0 && !SN_WeeklyBoundaryCrossed(last_reset))
       return true;
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   string fields[2] = {"dwl_weekly_start_equity", "dwl_weekly_reset_time"};
    double values[2] = {equity, (double)SN_CurrentWeeklyBoundary()};
-   return SM_SetAccountDoublesBatch(fields, values);
+   // **Fixed, 2026-07-28 (Codex round-10 P0 finding 1):** durable/WAL'd --
+   // see DWL_EnsureDailyBaseline's own comment above.
+   return SM_SetAccountDoublesBatchDurable("dwl_weekly", fields, values);
   }
 
 //+------------------------------------------------------------------+
@@ -134,6 +147,20 @@ bool DWL_EnsureWeeklyBaseline()
 //+------------------------------------------------------------------+
 bool DWL_ApplyCashFlowAdjustments()
   {
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 1):
+   // this function's own three coupled writes (daily baseline, weekly
+   // baseline, deal cursor) were named explicitly as "a binding risk path"
+   // for the WAL-transaction requirement -- recovering any interrupted
+   // prior attempt BEFORE reading the cursor below ensures a crash between
+   // this function's own writes replays the exact intended target values on
+   // the next call, not a recomputation seeded by whatever cursor/baseline
+   // state happens to exist at retry time (which could double-apply or miss
+   // a cash flow whose cursor advance was itself the interrupted field).
+   string cashflow_fields[3] = {"dwl_daily_start_equity", "dwl_weekly_start_equity",
+                                 "dwl_last_balance_deal_ticket"};
+   if(!SM_RecoverAccountDoublesBatch("dwl_cashflow", cashflow_fields))
+      return false; // an interrupted prior application could not be replayed -- risk state unknown
+
    ulong last_ticket = (ulong)SM_GetAccountDouble("dwl_last_balance_deal_ticket", 0.0);
 
    datetime from = TimeTradeServer() - 8 * 86400;
@@ -176,10 +203,8 @@ bool DWL_ApplyCashFlowAdjustments()
      {
       double daily  = SM_GetAccountDouble("dwl_daily_start_equity", 0.0) + cash_flow_sum;
       double weekly = SM_GetAccountDouble("dwl_weekly_start_equity", 0.0) + cash_flow_sum;
-      string fields[3] = {"dwl_daily_start_equity", "dwl_weekly_start_equity",
-                           "dwl_last_balance_deal_ticket"};
       double values[3] = {daily, weekly, (double)max_ticket_seen};
-      return SM_SetAccountDoublesBatch(fields, values);
+      return SM_SetAccountDoublesBatchDurable("dwl_cashflow", cashflow_fields, values);
      }
    return true;
   }
