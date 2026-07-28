@@ -406,7 +406,14 @@ int OnInit()
    // restart, a pending closure_pending record is the first thing
    // reconciled." A single attempt here is enough to bring most restarts
    // fully current; OnTick's own retry-until-closed loop (see OnTick) covers
-   // anything this attempt does not immediately finish.**
+   // anything this attempt does not immediately finish. This early, cheap
+   // check runs before profile load/other init steps that could still fail
+   // and return INIT_FAILED -- ReEvaluateMandatoryClosureObligations()
+   // later in this function (Codex round-10 P0 findings 6/7) is the
+   // comprehensive ground-truth pass that also covers a closure obligation
+   // whose OWN persisted flag never survived a prior crash; redundant with
+   // this block when both find the same pending flag, which is harmless
+   // (DWB_AttemptClosure is idempotent).**
    if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
      {
       string reconcile_reasons[];
@@ -514,6 +521,30 @@ int OnInit()
                   "magic %I64d -- not yet fully closed, will keep retrying every tick/timer.",
                   g_symbol, InpMagicNumber);
 
+   // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 7):**
+   // establish the daily/weekly risk-state validity flag NOW, at restart,
+   // before any deal/tick can be processed -- previously this stayed false
+   // (its OnInit-time default) until the first completed-bar evaluation, a
+   // window in which a deal arriving early (e.g. while reconciling
+   // pre-existing own-magic exposure just above) could skip the account-wide
+   // daily/weekly check entirely. See EstablishDailyWeeklyRiskState's own
+   // header.
+   EstablishDailyWeeklyRiskState();
+
+   // **Added, 2026-07-28 (Codex review findings, tenth round, P0 findings 6
+   // and 7):** ground-truth re-evaluation of every mandatory closure
+   // condition, run once here at restart -- closes finding 6's own
+   // "DailyWeeklyBreachManager's fallback does not survive restart" gap (a
+   // closure obligation lost to a crash before its persisted flag ever wrote
+   // is REDISCOVERED here from current baseline/position state, not
+   // dependent on that flag having survived) and finding 7's own "unknown
+   // daily/weekly state must... create a durable, repeatedly evaluated fail-
+   // closed obligation for existing exposure" requirement (an unreadable
+   // state right here at restart now arms closure immediately, not just a
+   // future new-entry block). See ReEvaluateMandatoryClosureObligations's
+   // own header; also called every tick and every timer fire below.
+   ReEvaluateMandatoryClosureObligations();
+
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 10):
    // a timer guarantees the mandatory intraday close is attempted even if
    // NO TICK arrives at or after the boundary before the next server
@@ -533,11 +564,36 @@ int OnInit()
    // logged loudly and OnTick retries EventSetTimer on every tick until it
    // succeeds (a cheap, idempotent registration call), so the guarantee is
    // restored as soon as possible instead of never.**
+   //
+   // **Fixed, 2026-07-28 (Codex review finding, tenth round, P0 finding 6):
+   // a timer failure previously still returned INIT_SUCCEEDED and could
+   // enable real order submission -- every wall-clock mandatory protection
+   // this timer exists to guarantee (intraday close, no-stop grace-period
+   // closure, mandatory daily/weekly/total-risk closure re-evaluation) would
+   // then depend entirely on ticks arriving, with no independent guarantee
+   // during a tick-starved period. Now refuses to initialize with order
+   // submission enabled unless the timer is genuinely active -- journal-only
+   // mode (no real exposure ever created) may still proceed without it, but
+   // is explicitly still logged as running with a reduced guarantee.**
    g_timer_armed = EventSetTimer(30);
    if(!g_timer_armed)
+     {
+      if(InpEnableOrderSubmission)
+        {
+         PrintFormat("ThembaEA: REFUSING TO INITIALIZE -- EventSetTimer(30) failed (error=%d) and "
+                     "InpEnableOrderSubmission=true. Every wall-clock mandatory protection "
+                     "(intraday close, no-stop grace-period closure, daily/weekly/total-risk "
+                     "closure re-evaluation) requires a working independent timer to guarantee "
+                     "coverage during a tick-starved period; running order-enabled without one is "
+                     "not permitted.", GetLastError());
+         return INIT_FAILED;
+        }
       PrintFormat("ThembaEA: CRITICAL -- EventSetTimer(30) FAILED at OnInit (error=%d). The "
                   "no-tick mandatory-close guarantee is NOT currently active; OnTick will retry "
-                  "arming the timer every tick until it succeeds.", GetLastError());
+                  "arming the timer every tick until it succeeds. Proceeding because "
+                  "InpEnableOrderSubmission=false (journal-only mode -- no real exposure is ever "
+                  "created).", GetLastError());
+     }
 
    if(InpEnableOrderSubmission)
       PrintFormat("ThembaEA: initialized for '%s' on %s. *** ORDER SUBMISSION IS ENABLED *** "
@@ -1304,11 +1360,23 @@ void OnDeinit(const int reason)
 //| the SAME persisted-due/pending reconciliation OnTick and OnInit both use,                |
 //| so a close armed here and one armed from a tick are the same record, never                  |
 //| double-tracked.                                                                                 |
+//|                                                                    |
+//| **Extended, 2026-07-28 (Codex review finding, tenth round, P0 finding    |
+//| 6):** previously the ONLY wall-clock mandatory protection driven from        |
+//| this timer was the intraday close -- the five-second no-stop grace-period          |
+//| closure and the daily/weekly/total-risk mandatory closure re-evaluation                |
+//| were driven from OnTick alone, so a stopless position (or an unresolved                    |
+//| breach) could remain untracked/open indefinitely during a genuinely tick-                       |
+//| starved interval, despite the specification's wall-clock maximums. Every                            |
+//| wall-clock mandatory protection this EA has now runs from BOTH OnTick AND                                this
+//| timer.**                                                                                                     |
 //+------------------------------------------------------------------+
 void OnTimer()
   {
    ICM_ReconcileIntradayClose(g_symbol, InpMagicNumber, InpIntradayBoundaryHour,
                                InpIntradayBoundaryMinute);
+   ReEvaluateMandatoryClosureObligations();
+   EnforceNoStopGracePeriod();
   }
 
 void OnTick()
@@ -1353,14 +1421,20 @@ void OnTick()
    // section 8, "if the close fails (requote/error), the EA retries on
    // every subsequent tick until confirmed closed." A fresh breach is armed
    // from OnTradeTransaction (the required synchronous, same-handler
-   // submission); this only re-attempts a closure ALREADY marked pending,
-   // every tick, until DWB_AttemptClosure reports full success and clears
-   // the persisted record.**
-   if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
-     {
-      string breach_retry_reasons[];
-      DWB_AttemptClosure(g_symbol, InpMagicNumber, breach_retry_reasons);
-     }
+   // submission).
+   //
+   // **Fixed, 2026-07-28 (Codex review findings, tenth round, P0 findings 6
+   // and 7):** previously only re-attempted a closure ALREADY marked
+   // pending -- now delegates to ReEvaluateMandatoryClosureObligations(),
+   // which ALSO re-derives the breach condition from ground truth
+   // (current daily/weekly baselines, current total open risk) when
+   // nothing is currently marked pending, so a closure obligation whose own
+   // persisted flag never survived a prior crash, or an unreadable
+   // daily/weekly state, is rediscovered here every tick instead of only
+   // ever being caught by a fresh OnTradeTransaction detection. Also called
+   // from OnTimer (tick-starved fallback) and OnInit (restart) -- see that
+   // function's own header.**
+   ReEvaluateMandatoryClosureObligations();
 
    // **Added, 2026-07-22 (Codex review finding, eighth round, P0 finding 3):
    // section 8's no-SL fallback mandatory-remediation grace period -- runs
@@ -1905,8 +1979,29 @@ void EnforceNoStopGracePeriod()
       datetime first_seen = NSG_GetFirstSeen(position_id);
       if(first_seen == 0)
         {
-         NSG_SetFirstSeen(position_id, TimeCurrent());
+         first_seen = TimeCurrent();
+         NSG_SetFirstSeen(position_id, first_seen);
          continue; // just observed -- grace period starts now, not yet expired
+        }
+
+      // **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding
+      // 6):** retry the persisted write on EVERY tick/timer fire while it
+      // remains unconfirmed, not just once at first observation -- NSG's own
+      // in-memory fallback (round-9 P0 finding 6) keeps THIS session's own
+      // timing correct even if the persisted write keeps failing, but a
+      // crash before that write ever succeeds would lose the obligation on
+      // restart (NSG_GetFirstSeen would read 0 again, resetting the clock).
+      // GlobalVariableCheck is a cheap read; this only re-attempts the write
+      // when the persisted key genuinely does not exist yet, narrowing the
+      // restart-survival gap to "at most a few ticks/timer fires", not
+      // "forever until restart, then silently reset".
+      if(!GlobalVariableCheck(NSG_Key(position_id)))
+        {
+         if(!NSG_SetFirstSeen(position_id, first_seen))
+            PrintFormat("ThembaEA: CRITICAL -- NoStopGraceManager failed to durably persist "
+                        "position_id=%I64u's first-seen-stopless timestamp -- the %d-second grace "
+                        "obligation is NOT yet restart-survivable for this position; retrying every "
+                        "tick/timer.", position_id, InpNoStopGraceSeconds);
         }
 
       if((TimeCurrent() - first_seen) < InpNoStopGraceSeconds)
@@ -2721,6 +2816,105 @@ void JournalDataFailureDecision(const string failure_reason)
   }
 
 //+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review finding, tenth round, P0 finding 7):  |
+//| establishes/refreshes g_daily_weekly_risk_state_valid from the three       |
+//| persisted writes DWL_ApplyCashFlowAdjustments/DWL_EnsureDailyBaseline/           |
+//| DWL_EnsureWeeklyBaseline actually require, in the mandated order (cash-              |
+//| flow adjustment BEFORE either baseline -- see DWL_ApplyCashFlowAdjustments'              |
+//| own header for why the order matters). Factored out of EvaluateAndJournal                    |
+//| (which still calls this once per completed bar) so OnInit can ALSO call                          |
+//| this immediately at restart, BEFORE any deal/tick can be processed --                                |
+//| closing the review's own "validity flag starts false at line 229 and is                                  |
+//| only initialized through the completed-bar evaluation path... a deal                                        |
+//| arriving before that first evaluation can skip the account-wide check"                                          |
+//| finding.**                                                                                                          |
+//+------------------------------------------------------------------+
+void EstablishDailyWeeklyRiskState()
+  {
+   bool cash_flow_ok       = DWL_ApplyCashFlowAdjustments();
+   bool daily_baseline_ok  = DWL_EnsureDailyBaseline();
+   bool weekly_baseline_ok = DWL_EnsureWeeklyBaseline();
+   g_daily_weekly_risk_state_valid = cash_flow_ok && daily_baseline_ok && weekly_baseline_ok;
+  }
+
+//+------------------------------------------------------------------+
+//| **Added, 2026-07-28 (Codex review findings, tenth round, P0 findings 6  |
+//| and 7):** ground-truth re-evaluation of every mandatory closure           |
+//| condition (daily/weekly loss cap, post-fill total-open-risk cap),            |
+//| independent of any persisted "pending" flag surviving a crash. Call from        |
+//| OnInit (restart), OnTick, and OnTimer (tick-starved fallback) -- makes             |
+//| the closure obligation SELF-HEALING (rediscoverable every tick/timer/                  |
+//| restart from ground truth: current daily/weekly baselines and current                     |
+//| live positions/orders) rather than dependent on a single persisted flag                       |
+//| write having succeeded before a crash (finding 6's own "DailyWeeklyBreach-                        |
+//| Manager explicitly admits its fallback does not survive restart" gap). An                             |
+//| UNREADABLE daily/weekly state (g_daily_weekly_risk_state_valid == false)                                   |
+//| is now itself treated as a reason to attempt closure of EXISTING exposure                                     |
+//| -- previously an unreadable state only blocked NEW entries                                                        |
+//| (AttemptOrderSubmission's own gate 2), with no obligation at all to                                                   |
+//| re-test or close exposure that already existed (finding 7's own required                                                 |
+//| correction: "unknown daily/weekly state must block entries AND create a                                                      |
+//| durable, repeatedly evaluated fail-closed obligation for existing                                                                exposure").
+//+------------------------------------------------------------------+
+void ReEvaluateMandatoryClosureObligations()
+  {
+   if(DWB_IsClosurePending(g_symbol, InpMagicNumber))
+     {
+      string retry_reasons[];
+      DWB_AttemptClosure(g_symbol, InpMagicNumber, retry_reasons);
+      return; // already retrying an armed closure -- ground truth already drove this
+     }
+
+   bool should_close = false;
+   string close_trigger = "";
+
+   if(!g_daily_weekly_risk_state_valid)
+     {
+      should_close = true;
+      close_trigger = "daily_weekly_risk_state_unreadable";
+     }
+   else
+     {
+      double daily_change, weekly_change;
+      bool daily_breached  = DWL_IsDailyLossBreached(InpDailyLossCapPercent, daily_change);
+      bool weekly_breached = DWL_IsWeeklyLossBreached(InpWeeklyLossCapPercent, weekly_change);
+      if(daily_breached || weekly_breached)
+        {
+         should_close = true;
+         close_trigger = StringFormat("daily_weekly_reevaluated_daily=%s_weekly=%s",
+                                       daily_breached ? "true" : "false",
+                                       weekly_breached ? "true" : "false");
+        }
+     }
+
+   if(!should_close)
+     {
+      double total_risk_cash;
+      bool   total_readable;
+      ComputeOwnMagicOpenRiskCash(total_risk_cash, total_readable);
+      double equity_now = AccountInfoDouble(ACCOUNT_EQUITY);
+      bool total_breached = !total_readable ||
+                             (equity_now > 0.0 &&
+                              100.0 * total_risk_cash / equity_now > InpRiskCapPercent + 1e-6);
+      if(total_breached)
+        {
+         should_close = true;
+         close_trigger = StringFormat("total_open_risk_reevaluated_readable=%s",
+                                       total_readable ? "true" : "false");
+        }
+     }
+
+   if(should_close)
+     {
+      string reasons[];
+      bool closed = DWB_AttemptClosure(g_symbol, InpMagicNumber, reasons);
+      PrintFormat("ThembaEA: ground-truth re-evaluation armed a mandatory closure obligation for "
+                  "'%s' magic %I64d (trigger=%s) -- closure %s.", g_symbol, InpMagicNumber,
+                  close_trigger, closed ? "completed" : "pending (will retry every tick/timer)");
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| Classifies the regime once, reads the shared OHLC/ATR window once,   |
 //| computes structure once, evaluates all five strategies against that   |
 //| SAME data, routes, resolves, journals the outcome, and — only when     |
@@ -2761,10 +2955,7 @@ void EvaluateAndJournal(const bool past_intraday_boundary)
    // once-per-completed-bar function to OnTick's own per-tick path (see
    // OnTick) -- section 8 requires peak tracking on every tick, not once per
    // completed bar.**
-   bool cash_flow_ok      = DWL_ApplyCashFlowAdjustments();
-   bool daily_baseline_ok = DWL_EnsureDailyBaseline();
-   bool weekly_baseline_ok = DWL_EnsureWeeklyBaseline();
-   g_daily_weekly_risk_state_valid = cash_flow_ok && daily_baseline_ok && weekly_baseline_ok;
+   EstablishDailyWeeklyRiskState();
 
    const int    atr_percentile_window = 100;
    const int    efficiency_window     = 20;
