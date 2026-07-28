@@ -427,9 +427,16 @@ different task's deferred item, and built all ten required notebooks.
    factor/max drawdown (`metrics.py`'s new `compute_max_drawdown`) over a
    normalized trade-export CSV.
 5. **`join_news_events.py`** — independently recomputes `NEWS_BLACKOUT`
-   status per journal decision against a news-events export; directly
-   useful since every real journal record's `news_state` is currently
-   always empty.
+   status per journal decision against a news-events export.
+   **Stale, corrected 2026-07-28 (Codex review finding, tenth round, P2
+   finding 21): this list entry is from the ORIGINAL part-1 planning pass
+   and is no longer current -- `news_state` is NOT always empty in a real
+   journal record; TASK-034's live `ResolveNewsBlackout` wiring populates
+   it. This script remains genuinely useful as an INDEPENDENT cross-check
+   (recomputed from the raw news-events export, not merely trusting
+   whatever the live EA itself recorded), not as a substitute for a
+   missing value -- see `join_news_events.py`'s own module docstring for
+   the current, accurate framing.**
 6. **`walk_forward.py`** — deterministic rolling train/test window
    generation (`generate_windows`, hand-traced) and per-window win-rate/
    expectancy stability metrics.
@@ -437,15 +444,23 @@ different task's deferred item, and built all ten required notebooks.
    sequence for final-equity/max-drawdown/ruin-probability distributions;
    explicitly documents the i.i.d.-resampling simplification (no
    trade-sequence autocorrelation).
-8. **`pattern_validation.py`** — Python ports of 4 of
-   `CandlestickPatternEngine.mqh`'s 20 detector/predicate functions (19
-   `CP_Is*Array` boolean predicates plus the non-boolean
-   `CP_DetectHaramiArray` helper — corrected count, 2026-07-22 Codex
-   review finding, third round; this previously said "18") — the 4
-   ported are bullish/bearish pin bar incl. TASK-017's fix, bullish/
-   bearish engulfing; explicitly partial, and cross-checking against a
-   real MQL5-exported detector-results CSV is not yet possible (no such
-   export exists).
+8. **`pattern_validation.py`** — Python ports of `CandlestickPatternEngine.mqh`'s
+   detector/predicate functions.
+   **Stale, corrected 2026-07-28 (Codex review finding, tenth round, P2
+   finding 21): this list entry is from the ORIGINAL part-1 planning pass
+   and is no longer current -- TASK-033 (see the "Bonus"/history sections
+   below) completed ALL 20 of `CandlestickPatternEngine.mqh`'s detector/
+   predicate functions, not 4; `ChartPatternEngine.mqh`/
+   `ChartPatternStrategy.mqh` are also since implemented (chart patterns
+   are NOT unported); and `Export_PatternDetectorResults.mq5` (TASK-037)
+   now exists and exports a real MQL5 detector-results CSV, including
+   symbol/timestamp/OHLC/ATR provenance columns specifically so a
+   comparison can prove both sides analyzed the same underlying bars. A
+   REAL (not self-consistent-synthetic) comparison run against that
+   exporter's own output remains part of this project's batched runtime-
+   verification backlog (this sandbox cannot attach to a live/demo MT5
+   terminal) -- see notebook 09's own closing cells for the current,
+   accurate status.**
 9. **`compare_releases.py`** — two-sample bootstrap CI on the win-rate/
    expectancy difference between two releases; never declares a release
    "better" automatically. Its own test suite incidentally demonstrates
@@ -516,11 +531,18 @@ of the paired-notebook pattern, not one of these ten.)
   component correlation analysis (master prompt lines 747-757's own
   requirement, not TASK-024's deferred item — corrected, 2026-07-22
   Codex review finding, third round) has no dedicated module yet.
-  Candlestick/chart-pattern validation is only
-  4-of-20 patterns deep (corrected count, 2026-07-22 Codex review
-  finding, third round; this previously said "4-of-18"), and chart
-  patterns (double top/bottom, head-and-shoulders) are not ported at
-  all.
+  **Stale, corrected 2026-07-28 (Codex review finding, tenth round, P2
+  finding 21): the candlestick/chart-pattern claim below is from the
+  ORIGINAL part-1 planning pass and is no longer current.** Candlestick
+  validation now covers all 20 of `CandlestickPatternEngine.mqh`'s
+  detector/predicate functions (TASK-033), and chart patterns (double
+  top/bottom, head-and-shoulders/inverse) ARE ported
+  (`ChartPatternEngine.mqh`/`ChartPatternStrategy.mqh`, exercised by
+  `pattern_validation.py`/notebook 09 and `Test_ChartPatternEngine.mq5`/
+  `Test_ChartPatternStrategy.mq5` on the MQL5 side) — what remains open
+  is exclusively the REAL (not self-consistent-synthetic) cross-language
+  comparison against `Export_PatternDetectorResults.mq5`'s own live/demo
+  output, part of this project's batched runtime-verification backlog.
 - **`03_SOURCE_CODE/Python/news_connectors/`** remains empty — no
   offline/cached adapter built (would need an agreed news-event export
   format from the MQL5 side first).

@@ -45,8 +45,10 @@
 // would be a real stability/security concern for a live-trading EA this
 // project has never accepted elsewhere) -- so THEMBA_EA_GIT_COMMIT is a
 // STATED, MANUALLY-MAINTAINED build tag, not a live-queried value: update it
-// by hand to the actual commit this file is compiled from immediately before
-// each real release build. THEMBA_EA_VERSION_STRING mirrors #property
+// by hand to the last real content commit (a LOGICAL-PARENT TAG -- see the
+// 2026-07-28 correction below for why this is not, and by construction
+// cannot be, a byte-exact "the commit this file was compiled from"
+// identifier) immediately before each real release build. THEMBA_EA_VERSION_STRING mirrors #property
 // version above (single source of truth referenced from both journal-writing
 // call sites below, instead of the previous two independently-hardcoded
 // literals that had already drifted out of sync with each other).**
@@ -68,7 +70,25 @@
 // actually was); the convention itself is unchanged and correct, only
 // this round's own compile-evidence file's prose is written correctly
 // from the start this time (see that file's own header).**
-#define THEMBA_EA_VERSION_STRING "1.03-task028-round9"
+// **Corrected, 2026-07-28 (Codex review finding, tenth round, P2 finding
+// 21): this macro is a LOGICAL-PARENT TAG, not a literal "the exact bytes
+// that were compiled" identifier, and the header above previously implied
+// the latter ("the actual commit this file is compiled from"). By
+// construction, the macro can only ever name a commit that PREDATES the
+// commit that actually updates this string literal (a chicken-and-egg
+// limit inherent to any manually-maintained, compiled-in version tag: the
+// commit recording "this is the final source" cannot itself be known
+// before it is created). A runtime journal row's own git_commit field
+// should therefore be read as "the last real content commit at or before
+// this build," not a byte-exact compiled-tree identifier -- the exact
+// compiled tree and the exact reviewed tip are both later commits, always
+// findable via `git log` from this tag forward. Generating a genuinely
+// exact build identifier would require a pre-compile stamping step this
+// project does not currently have (MQL5 cannot query git at runtime, and
+// a stamping script is out of this fix's own scope) -- named honestly as
+// a real, not-yet-attempted follow-up rather than silently implied to
+// already exist.**
+#define THEMBA_EA_VERSION_STRING "1.03-task028-round10"
 #define THEMBA_EA_GIT_COMMIT     "2e71e38"
 
 #include "../Include/ThembaEA/Routing/ConflictResolver.mqh"
