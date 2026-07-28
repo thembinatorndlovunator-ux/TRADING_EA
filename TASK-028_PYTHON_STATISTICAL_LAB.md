@@ -345,20 +345,21 @@ round-2 doc-staleness findings above).
 ## Reviewer
 
 **Codex, via `/code-review ultra` — nine independent review rounds
-completed so far.** **Corrected, 2026-07-27 (Codex round-9 P2 finding 22,
-updated in place a third time): this section's own prior version claimed
-round 8 was "fully resolved" and that "a ninth review round should be
-requested now" -- true when written, but immediately superseded: a ninth
-review round WAS requested and returned, on the same date (2026-07-27,
-per commit timestamps -- not "2026-07-22," which was round 7's own date,
-not round 8's), 23 further findings (7 P0, 14 P1, 2 P2) against round 8's
-own resolution. That remediation is this document's own current work (see
-`TASKS.md`'s own TASK-028 row for the live per-finding status); a tenth
-review round should be requested once round 9 is fully resolved, not
-before.** Round 8 itself: an eighth review round returned 22 findings (10
-P0/11 P1/1 P2) against round 7's own resolution -- every one received a
-real fix, with two (finding 12's mode-first routing-order half, finding
-14's chart-pattern lifecycle registry) explicitly, honestly disclosed as
+completed.** **Corrected, 2026-07-28 (Codex round-9 P2 finding 22, updated
+in place a fourth time upon round 9's own full resolution): a ninth
+review round returned 23 findings (7 P0, 14 P1, 2 P2) against round 8's
+own resolution, all Git-timestamped 2026-07-27/28. Every finding received
+either a real fix or, for two (finding 10's mode-first routing reorder,
+finding 20's bar-0 convention unification) whose own full request is
+genuinely large, separate architecture, a concrete numbered task
+registration (`TASK-043`/`TASK-044`, both explicitly "Not started") --
+see this file's own Round 9 history entry below for the full,
+per-finding commit-by-commit account. A tenth review round should be
+requested now that round 9 is fully resolved, not before.** Round 8
+itself: an eighth review round returned 22 findings (10 P0/11 P1/1 P2)
+against round 7's own resolution -- every one received a real fix, with
+two (finding 12's mode-first routing-order half, finding 14's
+chart-pattern lifecycle registry) explicitly, honestly disclosed as
 PARTIAL at the time (see this file's own Round 8 history entry below for
 the full account) and since closed or formally registered by round 9's
 own remediation. (2026-07-21, 2026-07-22 x5; see
@@ -1039,38 +1040,53 @@ so this canonical file does not read as if history stopped at round 2.
   `09_HANDOVERS/claude_to_codex/TASK-028_round8_handover.md` for the full,
   per-finding commit-by-commit account.
 
-- **Round 9 (2026-07-27), a ninth independent Codex review** (requested
+- **Round 9 (2026-07-27/28), a ninth independent Codex review** (requested
   per round 8's own handover): **23 findings (7 P0, 14 P1, 2 P2),
   disposition CHANGES REQUESTED**, written to
   `09_HANDOVERS/codex_to_claude/TASK-028_review.md` (commit `c70ee72`).
-  **In progress as of this entry** (this row is updated in place
-  as remediation continues, per this project's own established
-  discipline of never claiming a round "fully resolved" before it
-  genuinely is): all 7 P0s resolved (hard-risk cap still fail-open/
-  raceable/unenforced post-fill; risk persistence still non-transactional/
-  unsafe; durable intent race/wrong-order-correlation/premature-clear;
-  partial/async fill terminal-state handling still unsafe; FairEconomy
-  accepting partial/malformed calendar payload as safe; mandatory-close/
-  no-stop obligations silently stopping retry on write failure; `OnInit`
-  permitting settings that defeat hard limits) and all 14 P1s resolved
-  (cash-flow deals causing false daily/weekly breach before rebasing;
-  async fills absent from machine-readable journal evidence; mode-first
-  routing architecture registered as `TASK-043` rather than implemented
-  under time pressure; chart-pattern lifecycle registry built in full;
-  CSV+JSON publish rollback destroying a prior valid report; max_retained_errors
-  bypassed for excluded/non-file candidates; Python/MQL pattern comparator
-  accepting different/non-finite datasets; stale pattern-export docs +
-  notebook 09 self-comparison honestly re-labelled, not claimed a real
-  MQL cross-check; equity analysis accepting blank identity + wrong
-  daily-reset clock; journal schema still admitting blank/out-of-domain
-  provenance via whitespace; performance_breakdown validating normalized
-  news_state but grouping the unnormalized original; the nominal 500 MB
-  CSV ceiling still permitting multi-gigabyte peak memory; the three
-  incompatible bar-0 conventions registered as `TASK-044` rather than
-  unified under time pressure; compile-evidence false Git provenance
-  corrected, MQL runtime execution remains honestly disclosed as
-  sandbox-blocked, not fabricated). The 2 P2s (canonical docs contradicting
-  reality yet again -- this same history entry's own correction; committed
-  notebook output/diff hygiene) are addressed by this same remediation
-  pass. See `09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md`
-  (once written) for the full, per-finding commit-by-commit account.
+  Every finding received either a real, committed fix for its own
+  reported primary defect (a regression test reproducing the exact
+  counterexample where one could be constructed) or -- for two findings
+  whose own full request is genuinely large, separate architecture
+  (finding 10's mode-first routing reorder, finding 20's bar-0
+  convention unification) -- a concrete, numbered task registration
+  (`TASK-043`/`TASK-044`, both "Not started" in their own Status
+  sections) rather than an unnumbered "future task." All 7 P0s: hard-risk
+  cap still fail-open/raceable/unenforced post-fill (`3a5549a`), risk
+  persistence still non-transactional/unsafe (`fad8901`), durable intent
+  race/wrong-order-correlation/premature-clear (`a38e98c`), partial/async
+  fill terminal-state handling still unsafe (`4d69783`), FairEconomy
+  accepting partial/malformed calendar payload as safe (`2dd855b`),
+  mandatory-close/no-stop obligations silently stopping retry on write
+  failure (`892425d`), `OnInit` permitting settings that defeat hard
+  limits (`996039b`). All 14 P1s: cash-flow deals causing false daily/
+  weekly breach before rebasing (`03d1f17`), async fills absent from
+  machine-readable journal evidence (`c3815ad`), mode-first routing
+  architecture registered as `TASK-043` (`1974b98`), chart-pattern
+  lifecycle registry built in full (`d04fed9`), CSV+JSON publish
+  rollback destroying a prior valid report (`19f16ff`),
+  `max_retained_errors` bypassed for excluded/non-file candidates
+  (`7100ff0`), Python/MQL pattern comparator accepting different/non-
+  finite datasets (`e573276`), stale pattern-export docs + notebook 09
+  self-comparison honestly re-labelled (`6bf68dc`), equity analysis
+  accepting blank identity + wrong daily-reset clock (`b84446c`), journal
+  schema still admitting blank/out-of-domain provenance via whitespace
+  (`8bbd881`), performance_breakdown validating normalized news_state but
+  grouping the unnormalized original (`e4e2ab5`), the nominal 500 MB CSV
+  ceiling still permitting multi-gigabyte peak memory (`7a797d3`), the
+  three incompatible bar-0 conventions registered as `TASK-044`
+  (`8510cc2`), compile-evidence false Git provenance corrected/MQL
+  runtime execution honestly disclosed as sandbox-blocked (`a2699f2`).
+  The 2 P2s: canonical docs contradicting reality yet again, including
+  this same history entry's own date/blanket-claim corrections
+  (`4683afb`), and committed notebook output/diff hygiene (`33cd86d`).
+  A whole-project `mypy .` gate run (the first of this remediation pass)
+  surfaced and fixed one real, pre-existing, unrelated type error
+  (`2e71e38`). Full evidence retained at
+  `09_HANDOVERS/compile_evidence/TASK-028_round9_full_compile_evidence_2026-07-28.txt`
+  (`a4cc8f5`), covering all 46 `.mq5` targets (up from round-8's 41 --
+  this round added `Test_ChartPatternLifecycle.mq5` and
+  `Test_ExecutionEventJournal.mq5`), 0 errors/0 warnings, and a passing
+  Python test suite (749 passed). See
+  `09_HANDOVERS/claude_to_codex/TASK-028_round9_handover.md` for the
+  full, per-finding commit-by-commit account.
