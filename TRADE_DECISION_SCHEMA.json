@@ -2,9 +2,9 @@
   "signal_id": "string",
   "timestamp_utc": "ISO-8601",
   "symbol": "string",
-  "market_family": "METAL|SYNTHETIC",
-  "intraday_mode": "SCALP|DAY_TRADE",
-  "regime": "enum",
+  "market_family": "METAL|FOREX|SYNTHETIC_INDEX|UNKNOWN",
+  "intraday_mode": "SCALP|DAY_TRADE|NONE",
+  "regime": "REGIME_TRENDING_UP|REGIME_TRENDING_DOWN|REGIME_RANGING|REGIME_VOLATILITY_EXPANSION_UP|REGIME_VOLATILITY_EXPANSION_DOWN|REGIME_COMPRESSION|REGIME_TRANSITION_OR_UNCERTAIN|REGIME_NEWS_BLACKOUT|REGIME_UNTRADEABLE_SPREAD_OR_LIQUIDITY",
   "regime_confidence": "0-100",
   "direction": "BUY|SELL|NONE",
   "strategy": "string",
@@ -17,10 +17,12 @@
   "stop": "number|null",
   "targets": [],
   "risk_percent": "number",
-  "news_state": "string",
-  "session_state": "string",
+  "news_state": "CLEAR|BLACKOUT|UNKNOWN",
+  "session_state": "SESSION_TIME_REMAINING_UNKNOWN|SESSION_TIME_REMAINING_HIGH|SESSION_TIME_REMAINING_LOW",
   "reasons_passed": [],
   "reasons_rejected": [],
   "ea_version": "string",
-  "git_commit": "string"
+  "git_commit": "string",
+  "order_id": "string|null",
+  "deal_id": "string|null"
 }

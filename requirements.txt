@@ -1,16 +1,63 @@
-pandas
-numpy
-matplotlib
-scipy
-scikit-learn
-statsmodels
-jupyterlab
-MetaTrader5
-pyarrow
-pydantic
-requests
-lxml
-openpyxl
-onnx
-onnxruntime
-skl2onnx
+# Pinned to the exact versions installed and tested against in the
+# TASK-028 development session (2026-07-21/22), Python 3.13.14, via
+# `.venv` at the repo root. A Codex review (2026-07-21, finding #14;
+# reiterated 2026-07-22, finding #15) noted every dependency was
+# previously unpinned/under-declared with no resolved lock file -- this
+# file remains the direct-dependency pin list; the FULL resolved
+# transitive closure (every package actually installed, via a real
+# `pip freeze` in `03_SOURCE_CODE/Python/`) is now committed as
+# `03_SOURCE_CODE/Python/requirements-lock.txt`. Re-pin deliberately
+# when a dependency is intentionally upgraded; don't let it drift
+# silently.
+#
+# **Clean-install command, actually using the lock file (Codex review
+# finding, 2026-07-22, third round: no documented install command used
+# requirements-lock.txt at all, defeating its purpose as a reproducible-
+# environment artifact):**
+#   python -m venv .venv
+#   .venv\Scripts\python.exe -m pip install -r 03_SOURCE_CODE\Python\requirements-lock.txt
+# This installs the EXACT tested transitive closure (this file,
+# requirements.txt, is the direct-dependency intent/rationale record --
+# regenerate requirements-lock.txt via a real `pip freeze` after any
+# deliberate upgrade here, don't hand-edit it).
+pandas==3.0.3
+numpy==2.5.1
+scipy==1.18.0
+pydantic==2.13.4
+
+# Quality gates -- installed and exercised for real (2026-07-22): ruff
+# 0.15.22 (linter), mypy 2.3.0 (type checker, `--ignore-missing-imports`,
+# `mypy analysis data_collection` -> "Success: no issues found in 23
+# source files"). Neither was previously declared here despite both
+# being used as claimed gates -- a Codex review finding.
+ruff==0.15.22
+mypy==2.3.0
+
+# Declared but NOT installed/exercised by any test in this session --
+# version numbers below are unverified lower bounds, not pins. Pin these
+# for real once a script/notebook in this project actually depends on
+# them and is tested against a specific version.
+matplotlib>=3.8
+scikit-learn>=1.4
+statsmodels>=0.14
+jupyterlab>=4.0
+MetaTrader5>=5.0.45
+pyarrow>=15.0
+requests>=2.31
+lxml>=5.0
+openpyxl>=3.1
+onnx>=1.15
+onnxruntime>=1.17
+skl2onnx>=1.16
+
+# Testing (TASK-028) -- installed and exercised (340 tests passing as of
+# the 2026-07-22 remediation commits).
+pytest==9.1.1
+
+# Lightweight notebook execution -- used to actually run paired notebooks
+# from a clean kernel (reproducibility contract test plan item 4) without
+# requiring the full jupyterlab UI stack in an automated/CI context.
+# Installed and exercised (all 11 committed notebooks executed for real).
+nbformat==5.10.4
+nbclient==0.11.0
+ipykernel==7.3.0

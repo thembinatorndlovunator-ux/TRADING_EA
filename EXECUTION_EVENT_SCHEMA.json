@@ -1,0 +1,15 @@
+{
+  "event_id": "string",
+  "event_type": "SYNC_FILL|SYNC_FILL_LIVE_REMAINDER|SYNC_FILL_UNRESOLVED|ASYNC_FILL_CONFIRMED|ASYNC_FILL_LIVE_REMAINDER|ASYNC_PARTIAL_FILL_THEN_CANCELLED|ASYNC_NEVER_FILLED",
+  "signal_id": "string|null",
+  "intent_id": "string|null",
+  "order_id": "string|null",
+  "order_ticket": "integer",
+  "deal_id": "string|null",
+  "timestamp_utc": "ISO-8601",
+  "symbol": "string",
+  "filled": "boolean",
+  "volume": "number|null",
+  "price": "number|null",
+  "outcome_note": "string"
+}
